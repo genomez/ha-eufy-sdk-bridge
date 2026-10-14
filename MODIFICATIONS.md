@@ -70,3 +70,8 @@ Line-ending-only differences are normalized without claiming behavioral changes.
 - `docker-compose.yml`
 - `docs/docker-compose.md`
 - `scripts/publish-multiarch.sh`
+
+
+## Safety candidate, 2026-10-14
+
+Packaging-only version and frozen local SDK dependency update. Base source commit: `400fb42ab79631ba51d344abb1da262474961098`. Use only an owner-approved local candidate or an exact matching published artifact with its checksum and corresponding sources.

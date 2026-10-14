@@ -1,6 +1,6 @@
 {
-  "name": "ha-eufy-sdk-bridge",
-  "version": "0.3.0",
+  "name": "@genomez/ha-eufy-sdk-bridge",
+  "version": "0.3.1-s1.experimental.2",
   "private": true,
   "type": "module",
   "description": "WebSocket + HTTP bridge exposing the eufy-sdk SDK to a frontend (Home Assistant, a web UI, anything), with go2rtc for live video.",
@@ -18,7 +18,7 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
-    "@mega-yfue/eufy-sdk": "0.2.0",
+    "@mega-yfue/eufy-sdk": "file:../artifacts/genomez-eufy-sdk-0.2.1-s1.experimental.2.tgz",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -32,5 +32,18 @@
     "url": "https://github.com/genomez/ha-eufy-sdk-bridge/issues"
   },
   "homepage": "https://github.com/genomez/ha-eufy-sdk-bridge/tree/s1-experimental",
-  "_fork_modification_notice": "Modified for genomez S1 experimental source preview, 2026-10-14."
+  "_fork_modification_notice": "Modified for genomez S1 experimental source preview, 2026-10-14.",
+  "license": "Apache-2.0",
+  "files": [
+    "server.mjs",
+    "streams.mjs",
+    "go2rtc-config.mjs",
+    "src",
+    "bin",
+    "LICENSE",
+    "MODIFICATIONS.md",
+    "EXPERIMENTAL.md",
+    "SOURCE_MANIFEST.json",
+    "BUILD_PROVENANCE.json"
+  ]
 }

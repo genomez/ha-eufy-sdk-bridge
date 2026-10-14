@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "400fb42ab79631ba51d344abb1da262474961098",
+  "repository": "https://github.com/genomez/ha-eufy-sdk-bridge",
+  "reviewedImplementationPatches": {},
+  "implementationUnmodified": true,
+  "packagingVersion": "0.3.1-s1.experimental.2",
+  "privateQualificationArtifactsUsed": false,
+  "sourceDate": "2026-10-14",
+  "changeDescription": "Packaging-only version and frozen local SDK dependency update."
+}
