@@ -1,16 +1,33 @@
 {
   "schemaVersion": 1,
-  "releaseDate": "2026-10-14",
-  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.2",
+  "releaseDate": "2026-10-15",
+  "version": "0.3.1-s1.experimental.4",
+  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.4",
   "candidateSourceManifest": "SOURCE_MANIFEST.json",
   "candidatePreparationReceiptsAreHistorical": true,
-  "repositoryPreservedFiles": [],
   "knownLimitations": [
     "Synthetic verification does not establish physical hardware or live-media acceptance."
   ],
   "verification": {
-    "tests": 95
+    "tests": 103,
+    "passed": 103
   },
   "npmPublication": false,
-  "changeScope": "Bridge implementation is unchanged; package metadata pins the revised SDK tarball."
+  "changeScope": "Records SDK error origins (lastOrigin, byOrigin, recent) in cached diagnostics; package metadata pins the experimental.4 SDK tarball.",
+  "publicationDocumentationOverrides": {
+    "README.md": {
+      "candidateSha256": "438aed65e485b1d39de13860a3bed7002ab75bc1c4d0684be008105c8e16654d",
+      "publicationSha256": "c9e395a03f4ae3846b444f27fbb7562db3e0c3a66b0e503f89c21366949b23e3",
+      "reason": "Replace local-preparation status with the published prerelease link; implementation unchanged."
+    },
+    "EXPERIMENTAL.md": {
+      "candidateSha256": "92283eb435dfb413719cfd819bbb8663c670cb6d8f2c4394d65261852cc59de0",
+      "publicationSha256": "5d2e08bb534bc7e821df25759920e6aa2cdd11abebe3faad9ca27448b7e85486",
+      "reason": "Replace local-preparation status with the published prerelease link; implementation unchanged."
+    },
+    "PUBLICATION.json": {
+      "candidateSha256": "d501f7b1ca9461d9635fcb17355992f6ec348089318bd12f22b7f60fa5677a3f",
+      "reason": "Rewritten at publication; records this publication's scope."
+    }
+  }
 }

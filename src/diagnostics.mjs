@@ -393,6 +393,30 @@ export function sdkErrorKind(error) {
   return readFailures.get(message) ?? "other";
 }
 
+const sdkErrorOrigins = new Set([
+  "device_registry",
+  "p2p",
+  "rtc_session",
+  "mqtt",
+  "command_execution",
+  "state_refresh",
+  "realtime_startup",
+  "cloud_poll",
+  "push_connection",
+  "realtime_subscription",
+  "image",
+]);
+
+function sdkErrorOrigin(context) {
+  try {
+    if (!context || typeof context !== "object" || Array.isArray(context)) return "unknown";
+    const origin = Object.getOwnPropertyDescriptor(context, "origin")?.value;
+    return sdkErrorOrigins.has(origin) ? origin : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 const routingDecisions = new Set([
   "response",
   "wrong_link",
@@ -543,7 +567,7 @@ export function createDiagnostics(ctx, now = Date.now) {
   let errors, commands, detections, windows;
   function reset() {
     windows = createCommandWindows();
-    errors = { count: 0, lastAtMs: null, lastKind: null };
+    errors = { count: 0, lastAtMs: null, lastKind: null, lastOrigin: null, byOrigin: {}, recent: [] };
     detections = { total: 0, recent: [] };
     commands = {
       attempts: 0,
@@ -588,11 +612,15 @@ export function createDiagnostics(ctx, now = Date.now) {
       });
       if (detections.recent.length > 96) detections.recent.shift();
     },
-    recordSdkError(error) {
+    recordSdkError(error, context) {
       scope();
       errors.count++;
       errors.lastAtMs = now();
       errors.lastKind = sdkErrorKind(error);
+      errors.lastOrigin = sdkErrorOrigin(context);
+      errors.byOrigin[errors.lastOrigin] = (errors.byOrigin[errors.lastOrigin] ?? 0) + 1;
+      errors.recent.push({ atMs: errors.lastAtMs, kind: errors.lastKind, origin: errors.lastOrigin });
+      if (errors.recent.length > 10) errors.recent.shift();
       return "sdk_" + errors.lastKind;
     },
     recordCommand(outcome, error) {
@@ -760,7 +788,11 @@ export function createDiagnostics(ctx, now = Date.now) {
           evicted: detections.total - detections.recent.length,
           recent: detections.recent.map((row) => ({ ...row })),
         },
-        sdkErrors: { ...errors },
+        sdkErrors: {
+          ...errors,
+          byOrigin: { ...errors.byOrigin },
+          recent: errors.recent.map((row) => ({ ...row })),
+        },
         propertyCommands: { ...commands },
       };
       if (collect) windows.collect(snapshot, snapshot.observedAtMs);

@@ -1,11 +1,17 @@
 {
   "schemaVersion": 1,
-  "baseCommit": "400fb42ab79631ba51d344abb1da262474961098",
+  "baseCommit": "8776214255029b9a7654f1f627426e8eda9be869",
   "repository": "https://github.com/genomez/ha-eufy-sdk-bridge",
-  "reviewedImplementationPatches": {},
-  "implementationUnmodified": true,
-  "packagingVersion": "0.3.1-s1.experimental.2",
-  "privateQualificationArtifactsUsed": false,
-  "sourceDate": "2026-10-14",
-  "changeDescription": "Packaging-only version and frozen local SDK dependency update."
+  "implementationUnmodified": false,
+  "packagingVersion": "0.3.1-s1.experimental.4",
+  "sdkVersion": "0.2.1-s1.experimental.4",
+  "sourceDate": "2026-10-15",
+  "changeDescription": "Record SDK error-origin labels in diagnostics lastOrigin, byOrigin and recent; pair the exact local experimental.4 SDK package.",
+  "published": false,
+  "implementationCommit": "6a68dd44f87dd6d72753b9216bbb23e559e29269",
+  "reviewedImplementationPatches": {
+    "src/diagnostics.mjs": "a02d8bb1e0072b73a70ba4722d90b558f003d4b4dd76e71986d01e74dd1b22ff",
+    "src/service.mjs": "883d5f29f1ec44bf235e3975554707f90ba75a0f25e065bc79911fca2f0a6e50",
+    "test/sdk-error-origins.test.mjs": "c0d79664417eb570b0945bb8e889303b0b8afb8cb30b00bfc7d6a449af46c07e"
+  }
 }

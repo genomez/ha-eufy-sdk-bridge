@@ -70,9 +70,9 @@ export function createBridgeService({
   const listeners = [
     [
       "error",
-      (error) => {
+      (error, context) => {
         pilotLog("service_1");
-        pilotLog(ctx.recordSdkError(error));
+        pilotLog(ctx.recordSdkError(error, context));
         if (error?.name === "SessionExpiredError" && !state.flags.stopping) ctx.maybeRecoverSession(error);
       },
     ],

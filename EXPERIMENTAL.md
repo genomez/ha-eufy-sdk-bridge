@@ -36,3 +36,12 @@ Target contributions at `s1-experimental`. The existing default branch belongs t
 ## Safety candidate, 2026-10-14
 
 Packaging-only version and frozen local SDK dependency update. Base source commit: `400fb42ab79631ba51d344abb1da262474961098`. Use only an owner-approved local candidate or an exact matching published artifact with its checksum and corresponding sources.
+
+
+## Renewal package preparation, 2026-10-14
+
+Bridge implementation remains the public experimental.2 source. The exact local SDK experimental.3 package adds one guarded renewal retry after a verified lease-blocked timeout. This source preparation is unpublished; qualification and publication are separate steps.
+
+## Error-origin package preparation, 2026-10-15
+
+Version `0.3.1-s1.experimental.4` records SDK error-event origins in `lastOrigin`, `byOrigin` and `recent` diagnostics (`src/diagnostics.mjs`, `src/service.mjs`), with synthetic regression coverage. The exact local SDK dependency is `0.2.1-s1.experimental.4`. Runtime defaults and renewal behavior are retained. Published 2026-10-15 as an experimental prerelease: [s1-runtime-0.4.1.experimental.4](https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.4). Not yet tested on physical hardware.
