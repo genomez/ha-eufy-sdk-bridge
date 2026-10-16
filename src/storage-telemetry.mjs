@@ -5,6 +5,33 @@ export const STORAGE_TIMEOUT_MS = 15_000;
 const PROFILE = "T9000/4.4.0.4 app-compared MiB";
 const MIB = 1_048_576;
 
+function failureCategory(error) {
+  let message;
+  try {
+    message = error?.message;
+  } catch {
+    return "other";
+  }
+  switch (message) {
+    case "Storage candidate session busy":
+      return "busy";
+    case "Storage candidate already attempted on this session":
+      return "consumed_session";
+    case "Storage candidate deadline expired":
+    case "Storage candidate aborted or deadline expired":
+      return "timeout";
+    case "Storage candidate has invalid allowlisted field":
+    case "Storage candidate has invalid medium object":
+      return "invalid_quantity";
+    case "Storage candidate session ownership changed":
+    case "Storage telemetry ownership changed":
+    case "Storage candidate session retired":
+      return "ownership_changed";
+    default:
+      return "other";
+  }
+}
+
 function number(value) {
   if (typeof value === "string" && value.length <= 64 && /^\d+(?:\.\d+)?$/.test(value)) value = Number(value);
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
@@ -51,6 +78,24 @@ export function createStorageTelemetry(
   let started = false;
   let flight;
   let epoch = 0;
+
+  function attemptDiagnostics(sn, entry) {
+    const prior = admitted.get(sn);
+    return {
+      lastAttemptAtMs: entry?.lastAttemptAtMs ?? null,
+      lastFailureCategory: entry?.lastFailureCategory ?? null,
+      consecutiveFailures: entry?.consecutiveFailures ?? 0,
+      nextEligibleAtMs:
+        prior === undefined ? null : Math.floor(now() + Math.max(0, STORAGE_INTERVAL_MS - (monotonic() - prior))),
+    };
+  }
+
+  function recordFailure(sn, entry, category) {
+    entry.lastFailureCategory = category;
+    entry.consecutiveFailures = Math.min(Number.MAX_SAFE_INTEGER, (entry.consecutiveFailures ?? 0) + 1);
+    if (entries.get(sn) === entry && owner(sn)?.token === entry.token)
+      ctx.broadcast?.({ event: "storageTelemetry", deviceSn: sn });
+  }
 
   function owner(sn) {
     try {
@@ -109,6 +154,7 @@ export function createStorageTelemetry(
         supported: true,
         enabled: ctx.cfg.storageTelemetry === true,
         status: "unavailable",
+        ...attemptDiagnostics(record.sn),
         observedAtMs: null,
         unitProfile: null,
         correlation: null,
@@ -146,6 +192,7 @@ export function createStorageTelemetry(
       supported: true,
       enabled,
       status,
+      ...attemptDiagnostics(record.sn, entry),
       observedAtMs: reading?.observedAtMs ?? null,
       unitProfile: reading ? PROFILE : null,
       correlation: reading ? "time-associated" : null,
@@ -187,6 +234,7 @@ export function createStorageTelemetry(
         if (prior !== undefined && clock - prior < STORAGE_INTERVAL_MS) continue;
         // A skipped/busy/failed admission waits for the next hour; no immediate retry.
         admitted.set(sn, clock);
+        entry.lastAttemptAtMs = now();
         entry.controller = new AbortController();
         try {
           const result = await eufy.readStorageTelemetry(sn, {
@@ -204,28 +252,38 @@ export function createStorageTelemetry(
             entries.get(sn) !== entry ||
             entry.controller.signal.aborted ||
             owner(sn)?.token !== entry.token
-          )
+          ) {
+            recordFailure(sn, entry, owner(sn)?.token !== entry.token ? "ownership_changed" : "other");
             continue;
+          }
           const observation = result?.observation;
           const receivedAt = observation?.receivedAtMs;
           const values = storageValues(observation);
+          if (!values) {
+            recordFailure(sn, entry, "invalid_quantity");
+            continue;
+          }
           if (
-            !values ||
             !Number.isSafeInteger(receivedAt) ||
             receivedAt < 0 ||
             receivedAt > now() ||
             now() - receivedAt > STORAGE_TIMEOUT_MS ||
             (entry.reading && receivedAt <= entry.reading.observedAtMs)
-          )
+          ) {
+            recordFailure(sn, entry, "other");
             continue;
+          }
           entry.reading = {
             values,
             observedAtMs: receivedAt,
             receivedMono: monotonic() - (now() - receivedAt),
           };
+          entry.lastFailureCategory = null;
+          entry.consecutiveFailures = 0;
           ctx.broadcast?.({ event: "storageTelemetry", deviceSn: sn });
-        } catch {
+        } catch (error) {
           // Existing values keep their original age. Optional failures do not affect ordinary health.
+          recordFailure(sn, entry, failureCategory(error));
         } finally {
           entry.controller = undefined;
         }

@@ -198,3 +198,26 @@ test("service forwards SDK error context while preserving legacy errors and sess
   assert.equal(recoveries, 1);
   assert.equal(service.httpServer.listening, false);
 });
+
+test("RTC readback diagnostics expose only sanitized numeric counters", () => {
+  const f = fixture();
+  const row = {
+    outcome: "success",
+    readbackAttempts: 1,
+    confirmedByReadback: 1,
+    serial: "private",
+    payload: { value: 0 },
+  };
+  f.eufy.getRtcCommandDiagnostics = () => ({ recent: [row], lastFailure: row });
+  let commands = f.diagnostics(false).rtcCommands;
+  assert.equal(commands.recent[0].readbackAttempts, 1);
+  assert.equal(commands.recent[0].confirmedByReadback, 1);
+  assert.equal(commands.lastFailure.confirmedByReadback, 1);
+  assert.equal("serial" in commands.recent[0], false);
+  assert.equal("payload" in commands.recent[0], false);
+  row.readbackAttempts = -1;
+  row.confirmedByReadback = "1";
+  commands = f.diagnostics(false).rtcCommands;
+  assert.equal(commands.recent[0].readbackAttempts, null);
+  assert.equal(commands.recent[0].confirmedByReadback, null);
+});

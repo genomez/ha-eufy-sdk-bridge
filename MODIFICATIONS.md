@@ -84,3 +84,7 @@ Bridge implementation remains the public experimental.2 source. The exact local 
 ## Error-origin candidate, 2026-10-15
 
 Version `0.3.1-s1.experimental.4` records SDK error-event origins in `lastOrigin`, `byOrigin` and `recent` diagnostics (`src/diagnostics.mjs`, `src/service.mjs`), with synthetic regression coverage. The exact local SDK dependency is `0.2.1-s1.experimental.4`. Runtime defaults and renewal behavior are retained; image qualification and publication remain separate. Original attribution and licenses are preserved.
+
+## Experimental.5 candidate, 2026-10-16
+
+Version `0.3.1-s1.experimental.5`: Storage collection attempt/failure status and whole-millisecond next-attempt time; opt-in command-session keepalive configuration and diagnostics; pair the exact experimental.5 SDK package. The runtime image enables keepalive at 29000 ms. Local packaging and prior hardware evidence do not establish final image acceptance. Original attribution and licenses are preserved.

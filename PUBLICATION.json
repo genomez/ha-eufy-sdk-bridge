@@ -1,32 +1,36 @@
 {
   "schemaVersion": 1,
-  "releaseDate": "2026-10-15",
-  "version": "0.3.1-s1.experimental.4",
-  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.4",
+  "releaseDate": "2026-10-16",
+  "version": "0.3.1-s1.experimental.5",
+  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.5",
   "candidateSourceManifest": "SOURCE_MANIFEST.json",
   "candidatePreparationReceiptsAreHistorical": true,
   "knownLimitations": [
-    "Synthetic verification does not establish physical hardware or live-media acceptance."
+    "The final image passed an in-image smoke test; it has not itself been run on hardware.",
+    "Earlier one-S1 keepalive soak does not establish broad hardware acceptance; live view is excluded."
   ],
   "verification": {
-    "tests": 103,
-    "passed": 103
+    "tests": 130,
+    "passed": 130,
+    "sdkBuild": "../sdk/dist/index.js at monorepo 4ec3989; resolver hook overrides the read-only shared dependency"
   },
   "npmPublication": false,
-  "changeScope": "Records SDK error origins (lastOrigin, byOrigin, recent) in cached diagnostics; package metadata pins the experimental.4 SDK tarball.",
+  "changeScope": "Storage collection attempt/failure status and whole-millisecond next-attempt time; opt-in command-session keepalive configuration and diagnostics; pair the exact experimental.5 SDK package. The runtime image enables keepalive at 29000 ms.",
   "publicationDocumentationOverrides": {
     "README.md": {
       "candidateSha256": "438aed65e485b1d39de13860a3bed7002ab75bc1c4d0684be008105c8e16654d",
-      "publicationSha256": "c9e395a03f4ae3846b444f27fbb7562db3e0c3a66b0e503f89c21366949b23e3",
+      "preparedSha256": "50cb5aa7469f76135afa8dbb05a0c5d77b4fc7a504ef9763d77b1518f7beaac3",
+      "publicationSha256": "012ce8f9ca3b4cde5b5416f564f635e96d1073d12e37b60b105806259da909b0",
       "reason": "Replace local-preparation status with the published prerelease link; implementation unchanged."
     },
     "EXPERIMENTAL.md": {
-      "candidateSha256": "92283eb435dfb413719cfd819bbb8663c670cb6d8f2c4394d65261852cc59de0",
-      "publicationSha256": "5d2e08bb534bc7e821df25759920e6aa2cdd11abebe3faad9ca27448b7e85486",
+      "candidateSha256": "404487cfa82ff77b11945acad8981696e06c27c515c52c006e920eff6ab3d91f",
+      "preparedSha256": "51cc0adc8f624f740c61223db7c1c972954a5f4768bd3589f2b947f3e2481df3",
+      "publicationSha256": "333c7e9781370d2d87475916ccdd644b0ae13622b793a45cc2d282440cfb31eb",
       "reason": "Replace local-preparation status with the published prerelease link; implementation unchanged."
     },
     "PUBLICATION.json": {
-      "candidateSha256": "d501f7b1ca9461d9635fcb17355992f6ec348089318bd12f22b7f60fa5677a3f",
+      "preparedSha256": "9bdf7a532ecc73fa6e2fd3954cdd3fece3d41f755cc31ae03294bf6a317ed7ef",
       "reason": "Rewritten at publication; records this publication's scope."
     }
   }

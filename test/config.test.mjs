@@ -47,3 +47,16 @@ test("openudid is undefined by default and taken from BRIDGE_OPENUDID when set",
   assert.equal(loadConfig({ ...base, BRIDGE_OPENUDID: "abcd1234abcd1234" }).cfg.openudid, "abcd1234abcd1234");
   assert.equal(loadConfig({ ...base, BRIDGE_OPENUDID: "" }).cfg.openudid, undefined); // empty → default
 });
+
+test("RTC command keepalive defaults off and parses like the session refresh interval", () => {
+  assert.equal(loadConfig(base).cfg.rtcCommandKeepaliveMs, undefined);
+  for (const value of ["", "29000", "0", "-1", "1.5", "invalid"]) {
+    const { cfg } = loadConfig({
+      ...base,
+      BRIDGE_RTC_COMMAND_KEEPALIVE_MS: value,
+      BRIDGE_RTC_SESSION_REFRESH_MS: value,
+    });
+    assert.equal(cfg.rtcCommandKeepaliveMs, cfg.rtcSessionRefreshMs);
+  }
+  assert.equal(loadConfig({ ...base, BRIDGE_RTC_COMMAND_KEEPALIVE_MS: "29000" }).cfg.rtcCommandKeepaliveMs, 29_000);
+});

@@ -4,7 +4,7 @@
 
 Experimental S1/T9000 SDK host, state and media bridge source.
 
-**Experimental prerelease `0.3.1-s1.experimental.4`.** Runtime and corresponding source: [s1-runtime-0.4.1.experimental.4](https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.4). Read [EXPERIMENTAL.md](EXPERIMENTAL.md) for qualification evidence, known limitations and privacy requirements before using this source.
+**Experimental prerelease `0.3.1-s1.experimental.5`.** Runtime and corresponding source: [s1-runtime-0.4.1.experimental.5](https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.5). Read [EXPERIMENTAL.md](EXPERIMENTAL.md) for qualification evidence, known limitations and privacy requirements before using this source.
 
 This is an independently maintained experimental branch derived from the [upstream project](https://github.com/mega-yfue/ha-eufy-sdk-bridge) and [danymexi's S1 work](https://github.com/danymexi/eufy-sdk). It is not an official upstream release. Upstream copyright and license notices are preserved.
 

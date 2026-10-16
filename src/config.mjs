@@ -87,6 +87,9 @@ export function loadConfig(env = process.env) {
     rtcShard: env.BRIDGE_RTC_SHARD || undefined,
     rtcIcePolicy: env.BRIDGE_RTC_ICE_POLICY || undefined,
     rtcSessionRefreshMs: env.BRIDGE_RTC_SESSION_REFRESH_MS ? Number(env.BRIDGE_RTC_SESSION_REFRESH_MS) : undefined,
+    rtcCommandKeepaliveMs: env.BRIDGE_RTC_COMMAND_KEEPALIVE_MS
+      ? Number(env.BRIDGE_RTC_COMMAND_KEEPALIVE_MS)
+      : undefined,
     rtcStateRefreshMs: env.BRIDGE_RTC_STATE_REFRESH_MS ? Number(env.BRIDGE_RTC_STATE_REFRESH_MS) : undefined,
     // Separate default-off admission policy; entity/view reads never enable collection.
     storageTelemetry: env.BRIDGE_S1_STORAGE_TELEMETRY === "1",

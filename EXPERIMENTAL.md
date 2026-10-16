@@ -44,4 +44,14 @@ Bridge implementation remains the public experimental.2 source. The exact local 
 
 ## Error-origin package preparation, 2026-10-15
 
-Version `0.3.1-s1.experimental.4` records SDK error-event origins in `lastOrigin`, `byOrigin` and `recent` diagnostics (`src/diagnostics.mjs`, `src/service.mjs`), with synthetic regression coverage. The exact local SDK dependency is `0.2.1-s1.experimental.4`. Runtime defaults and renewal behavior are retained. Published 2026-10-15 as an experimental prerelease: [s1-runtime-0.4.1.experimental.4](https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.4). Not yet tested on physical hardware.
+Version `0.3.1-s1.experimental.4` records SDK error-event origins in `lastOrigin`, `byOrigin` and `recent` diagnostics (`src/diagnostics.mjs`, `src/service.mjs`), with synthetic regression coverage. The exact local SDK dependency is `0.2.1-s1.experimental.4`. Runtime defaults and renewal behavior are retained; image qualification and publication remain separate.
+
+## Experimental.5, 2026-10-16
+
+Version `0.3.1-s1.experimental.5` is an experimental prerelease, published 2026-10-16 with runtime [s1-runtime-0.4.1.experimental.5](https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.5). Storage collection attempt/failure status and whole-millisecond next-attempt time; opt-in command-session keepalive configuration and diagnostics; pair the exact experimental.5 SDK package. The runtime image enables keepalive at 29000 ms.
+
+The keepalive is opt-in in source; the paired experimental.5 Linux amd64 runtime enables it every 29 seconds. An earlier implementation test on one S1 ran about 9.5 hours with 1,138/1,138 echoes and no keepalive drops. This is limited prior hardware evidence; the final experimental.5 image passed an in-image smoke test but has not itself been run on hardware. One night does not establish that keepalive prevents outages. Live view is outside this release qualification.
+
+## Runtime release
+
+This source accompanies runtime `0.4.1-s1.experimental.5` and unchanged integration `0.3.1.dev2`, Linux amd64. Release: [s1-runtime-0.4.1.experimental.5](https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.5). No live-view acceptance is included.

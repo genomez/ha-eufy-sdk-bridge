@@ -156,6 +156,8 @@ function commandEvidence(raw) {
     "invalidResultPayloads",
     "matchedAcks",
     "matchedResults",
+    "readbackAttempts",
+    "confirmedByReadback",
   ])
     result[key] = number(raw[key]);
   result.headerSamples = Array.isArray(raw.headerSamples)
@@ -719,6 +721,13 @@ export function createDiagnostics(ctx, now = Date.now) {
           rtcRenewals.failureRetention = null;
         }
       }
+      const keepalive = ctx.eufy.getRtcKeepaliveDiagnostics?.();
+      let rtcKeepalive = null;
+      if (keepalive) {
+        rtcKeepalive = { enabled: keepalive.enabled === true };
+        for (const key of ["sent", "echoed", "missedEchoDrops", "sendFailureDrops", "lastEchoAtMs"])
+          rtcKeepalive[key] = number(keepalive[key]) ?? 0;
+      }
       const thumbnail = ctx.eufy.getThumbnailDiagnostics?.();
       const flags = ctx.state.flags;
       const reads = ctx.eufy.getRtcReadDiagnostics?.();
@@ -782,6 +791,7 @@ export function createDiagnostics(ctx, now = Date.now) {
         rtcCommands: rtcCommands(ctx.eufy.getRtcCommandDiagnostics?.()),
         rtcObservations: rtcObservationSnapshot,
         rtcRenewals,
+        rtcKeepalive,
         eventRouting: eventRouting(ctx.eufy.getEventRoutingDiagnostics?.()),
         detectionProjection: {
           total: detections.total,
