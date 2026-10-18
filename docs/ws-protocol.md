@@ -1,5 +1,7 @@
 # ha-eufy-sdk-bridge — WebSocket protocol
 
+Modified for genomez S1 experimental source preview, 2026-10-16.
+
 The bridge exposes control, state, auth and events over one WebSocket, and video/snapshots over sibling
 HTTP endpoints. This is the reference for what a frontend (the HACS integration, a web UI, anything)
 sends and receives.
@@ -104,7 +106,8 @@ Every device the account exposes. _(Requires `auth.state == "ok"`.)_
       "codec": "camera",
       "capabilities": ["video","snapshot","motion","camera","rtsp","battery","light","ptz","audio","info"],
       "state": { "battery": 74, "motion": false, "light": true, "statusLed": true },
-      "stream": "/stream/EXAMPLE-CAM-0001"
+      "stream": "/stream/EXAMPLE-CAM-0001",
+      "power": "wired"
     },
     { "sn": "EXAMPLE-SENSOR-0002", "name": "Entry Sensor", "model": "T8900",
       "modelName": "Entry Sensor", "codec": "sensor",
@@ -120,6 +123,10 @@ Every device the account exposes. _(Requires `auth.state == "ok"`.)_
 - `stream` is present only on devices with live video (cameras/doorbells).
 - `streaming` (cameras/doorbells only) is `true` while a live P2P feed is actually open right now — the
   same signal the `streamState` event carries, so a frontend can seed a "Streaming" sensor from the list.
+- `power` (cameras/doorbells only) is `"battery"` or `"wired"`, using the SDK's live-media power
+  classification. Mains-only models can still report the `battery` capability or a sentinel level;
+  a zero, missing or suppressed level does not override this field. Solar charging still means battery
+  hardware. `state.powerSource` and `state.powerSourceInfo` retain their charge-input/settings meanings.
 - `canReboot` is `true` on HomeBase/station devices, which accept `device.reboot`.
 - A device that failed to resolve appears as `{ "sn": "…", "error": "…" }`.
 
@@ -322,12 +329,12 @@ Complete a pending Solix 2FA (only when `state == "2fa"`). The code is never log
 
 | event   | payload                                 | when                               |
 | ------- | --------------------------------------- | ---------------------------------- |
-| `hello` | `{ schemaVersion, auth: { state, … } }` | on connect                         |
+| `hello` | `{ schemaVersion, auth: { state, … }, webrtcRelay: boolean }` | on connect                         |
 | `auth`  | `{ state, image?, method?, retry? }`    | auth state changed                 |
 | `ready` | `{ schemaVersion }`                     | login complete + devices/go2rtc up |
 
 ```json
-{ "event": "hello", "schemaVersion": 1, "auth": { "state": "ok" } }
+{ "event": "hello", "schemaVersion": 1, "auth": { "state": "ok" }, "webrtcRelay": false }
 { "event": "auth", "state": "require_2fa", "method": "email" }
 { "event": "ready", "schemaVersion": 1 }
 ```
@@ -380,6 +387,9 @@ Fired when a camera's live P2P feed opens (`active: true`) or is torn down / idl
 | `GET /healthz`       | `{ ok, schemaVersion, auth: { state }, streaming: [sn,…] }` — always available (even before auth) |
 | `GET /snapshot/<sn>` | a JPEG still (`image/jpeg`). _Requires auth._                                                     |
 | `GET /stream/<sn>`   | live Annex-B H.264/H.265 (`video/H264`) — what go2rtc pulls. _Requires auth._                     |
+
+`/healthz` also reports `lastActivitySec`, the age of the last observed device activity. Quiet devices
+can leave it high while polling succeeds; it is not a poll-stall indicator and there is no `stalled` field.
 
 go2rtc (bundled) turns `/stream/<sn>` into RTSP / WebRTC / MSE / HLS, so the frontend never speaks the
 raw video protocol.

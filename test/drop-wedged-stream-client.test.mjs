@@ -1,4 +1,4 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-14. */
+/** Modified for genomez S1 experimental source preview, 2026-10-17. */
 // A stream client whose P2P session died must not be reused. streams.mjs caches one client per camera
 // and never expires it, so a wedged session turns into a permanent "P2P unreachable" for that camera —
 // observed for hours while the eufy app held a live view of the SAME camera, and cured only by a bridge
@@ -23,6 +23,7 @@ function setup() {
   const ctx = {
     ...config,
     state,
+    resolveMediaTopology: async () => ({ onT9000: false }),
     eufy: {
       getDevices: async () => [
         { sn: "CAM1", stationSn: "BASE1" },

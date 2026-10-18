@@ -1,3 +1,4 @@
+/** Modified for genomez S1 experimental source preview, 2026-10-17. */
 import { pilotLog } from "./pilot-log.mjs";
 import { createDiagnostics } from "./diagnostics.mjs";
 import { createEventLoopEvidence } from "./event-loop-evidence.mjs";
@@ -19,6 +20,7 @@ import { createSolix } from "./solix.mjs";
 import { createHttpHandler } from "./http-routes.mjs";
 import { createWsServer } from "./ws-server.mjs";
 import { closeStreamClients } from "../streams.mjs";
+import { createWebRtcRelay } from "./webrtc-relay.mjs";
 
 export function createBridgeService({
   config,
@@ -27,6 +29,7 @@ export function createBridgeService({
   configureContext,
   handleHttp,
   allowCommand,
+  webrtcProof,
   signal,
 }) {
   const eufy = createClient(config, sdkOptions);
@@ -47,6 +50,12 @@ export function createBridgeService({
   );
   Object.assign(ctx, createStorageTelemetry(ctx));
   configureContext?.(ctx);
+  // Explicit opt-in from an embedding host or the CLI's default-off environment setting.
+  if (webrtcProof) ctx.webrtcRelay = createWebRtcRelay({
+    getTopology: (sn) => ctx.resolveMediaTopology(sn),
+    sendEvent: (owner, event) => ctx.send(owner, event),
+    ...webrtcProof,
+  });
   const route = createHttpHandler(ctx);
   const sockets = new Set();
   const httpServer = http.createServer((req, res) => {
@@ -68,6 +77,12 @@ export function createBridgeService({
   });
   Object.assign(ctx, createWsServer(ctx, httpServer, { allowCommand }));
   const listeners = [
+    [
+      "rtcLateEffect",
+      (event) => {
+        if (typeof event === "string") pilotLog(`command_late_effect_${event}`);
+      },
+    ],
     [
       "error",
       (error, context) => {
@@ -137,6 +152,7 @@ export function createBridgeService({
   function stop() {
     if (stopping) return stopping;
     state.flags.stopping = true;
+    ctx.webrtcRelay?.stop();
     timing.stop();
     const storageStopping = ctx.stopStorageTelemetry?.();
     ctx.stopEventImageRefreshes?.();

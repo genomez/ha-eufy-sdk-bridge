@@ -15,7 +15,7 @@ if (!config.cfg.email || !config.cfg.password) {
 }
 if (config.DEBUG) pilotLog("server_2");
 if (config.EVENT_LOG) pilotLog("server_3");
-const service = createBridgeService({ config });
+const service = createBridgeService({ config, webrtcProof: config.cfg.webrtcRelay ? {} : undefined });
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const storageProbe = attachStorageProbe(service.ctx, {
   sdkFile: fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")),

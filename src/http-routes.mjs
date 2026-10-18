@@ -1,4 +1,6 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-14. */
+/** Modified for genomez S1 experimental source preview, 2026-10-17. */
+import { redactSecrets } from "./redact.mjs";
+import { onBatteryPower } from "./power.mjs";
 import { eventImageStoreFor, eventImageHeaders } from "./event-image-store.mjs";
 import { publicError } from "./pilot-log.mjs";
 import { createMediaDiagnostics } from "./t9000-media-diagnostics.mjs";
@@ -10,9 +12,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { streamClientFor, dropStreamClient } from "../streams.mjs";
 import { createLiveStillTap } from "./live-still.mjs";
+import { WEBRTC_ERRORS, webrtcError } from "./webrtc-relay.mjs";
 
 function json(res, code, body) {
-  const s = JSON.stringify(body);
+  const s = redactSecrets(JSON.stringify(body));
   res.writeHead(code, {
     "content-type": "application/json",
     "content-length": Buffer.byteLength(s),
@@ -47,15 +50,6 @@ export function createHttpHandler(ctx) {
   // a stream that keeps opening "by itself" can be traced to the real viewer (an HA card, a recording,
   // a WebRTC/HLS client) rather than the go2rtc ffmpeg the bridge sees. Best-effort: on any error (go2rtc
   // disabled / not ready) the immediate-requester line already logged is the fallback.
-  /** Whether `sn` hangs off a HomeBase Professional (T9000) â€” its live has no P2P and no stream client. */
-  async function isOnT9000(sn) {
-    const devs = await eufy.getDevices();
-    const dev = devs.find((d) => d.sn === sn);
-    if (!dev?.stationSn || dev.stationSn === dev.sn) return false;
-    const station = devs.find((d) => d.sn === dev.stationSn);
-    return /^T9000/i.test(station?.model ?? "");
-  }
-
   const lastConsumerLog = new Map(); // sn -> ts of the last probe
   async function logStreamConsumers(sn, observation) {
     try {
@@ -70,7 +64,7 @@ export function createHttpHandler(ctx) {
       const consumers = (data?.consumers ?? data?.[sn]?.consumers ?? []).filter(Boolean);
       if (!consumers.length) {
         ctx.eventLog?.(
-          `/stream ${sn} â€” go2rtc reports NO consumers (a leftover ffmpeg retry / probe, not a live viewer)`,
+          `/stream ${sn} - go2rtc lists no consumer yet (normal on a cold start)`,
         );
         return;
       }
@@ -119,7 +113,10 @@ export function createHttpHandler(ctx) {
         mediaDiagnostics
           ? {
               ...(ctx.diagnostics?.() ?? { schemaVersion: 1, available: false }),
-              t9000Media: mediaDiagnostics.snapshot(),
+              t9000Media: {
+                ...mediaDiagnostics.snapshot(),
+                topologySnapshot: ctx.topologySnapshotDiagnostics?.() ?? { hits: 0, misses: 0, refreshes: 0, rejections: 0 },
+              },
             }
           : (ctx.diagnostics?.() ?? { schemaVersion: 1, available: false }),
       );
@@ -134,8 +131,7 @@ export function createHttpHandler(ctx) {
         streaming: [...streaming],
         idleSuspended: [...idleSuspended], // cameras auto-off for no recent detection (awaiting next one)
         streamIdleMs: cfg.streamIdleMs, // 0 = idle auto-off disabled
-        lastActivitySec: idleSec, // seconds since the last poll heartbeat / realtime event
-        stalled: flags.ready && idleSec * 1000 >= ctx.stallThresholdMs(),
+        lastActivitySec: idleSec, // event age only; unchanged successful polls can be silent
         pushConnected: flags.pushConnected, // FCM push channel â€” events (motion/doorbell/â€¦) ride this
         pushIdleSec: flags.pushConnected ? 0 : Math.round((Date.now() - flags.pushSince) / 1000),
       });
@@ -208,7 +204,8 @@ export function createHttpHandler(ctx) {
         if (!cam) return json(res, 404, { error: "no camera on this device" });
         // A battery camera pays a radio wake for every still; a mains one does not. Same test the idle
         // watcher uses (see stream-idle.mjs), so "which cameras are expensive" is decided in one way.
-        const onBattery = (device.describe?.()?.capabilities ?? []).includes("battery");
+        const manifest = device.describe?.();
+        const onBattery = onBatteryPower(manifest?.model, manifest?.capabilities);
         let wantLive = cfg.snapshotLive === "auto" ? !onBattery : cfg.snapshotLive;
         switch (snapshotMode) {
           case "live":
@@ -229,7 +226,7 @@ export function createHttpHandler(ctx) {
         if (!wantLive && snapshotMode === "stored") {
           why = "live burst disabled (mode=stored)";
         } else if (!wantLive && snapshotMode === "auto") {
-          why = "live burst disabled by explicit mode=auto for battery-capable camera";
+          why = "live burst disabled by explicit mode=auto for battery camera";
         }
         if (wantLive) {
           try {
@@ -297,12 +294,13 @@ export function createHttpHandler(ctx) {
         return json(res, 503, {
           error: "stream idle-suspended â€” no recent detection, waiting for motion or a fresh viewer",
         });
-      // Failure-backoff: a recent open failed (P2P unreachable), and go2rtc retries every ~30s. Serve a
+      // Failure-backoff: a recent open failed, and go2rtc retries every ~30s. Serve a
       // fast 503 without opening a P2P session, so a camera that can't connect isn't woken on every retry.
       const backoff = ctx.streamBackoffMs?.(sn) ?? 0;
       if (backoff > 0)
         return json(res, 503, {
-          error: `stream backing off after a failed open â€” retry in ${Math.ceil(backoff / 1000)}s (P2P unreachable)`,
+          error: `stream backing off after a failed open - retry in ${Math.ceil(backoff / 1000)}s`,
+          failureCategory: "open_failed",
         });
       // Observe the response, not IncomingMessage.close: a completed GET request can close while its
       // response is still streaming. Register before acquisition so a disconnected caller cannot leave
@@ -318,6 +316,8 @@ export function createHttpHandler(ctx) {
       let usedStreamClient = false;
       let acquiredStreamClient;
       let truncatedResponse = false;
+      let feedLease;
+      let acquisitionSettled = false;
       const cleanup = () => {
         if (closed) return;
         closed = true;
@@ -346,6 +346,8 @@ export function createHttpHandler(ctx) {
           feed.unpipe(res);
           feed.destroy();
         }
+        // Cancellation while openReadable is pending cannot release a late feed.
+        if (acquisitionSettled && !feed) feedLease?.finish();
         if (still)
           void Promise.resolve()
             .then(() => still.flush())
@@ -399,17 +401,23 @@ export function createHttpHandler(ctx) {
         return;
       }
       try {
+        feedLease = await ctx.webrtcRelay?.acquireFeed(sn);
+        if (stopAcquisition()) return;
         // T9000 media shares the main client's RTC transport; a second client is unnecessary and can
         // contend with the existing station session. Other cameras retain their dedicated P2P client.
-        onT9000 = await isOnT9000(sn);
+        const topology = feedLease ?? await ctx.resolveMediaTopology?.(sn);
+        if (!topology) throw webrtcError("webrtc_unsupported");
+        onT9000 = topology.onT9000;
         if (stopAcquisition()) return;
         if (onT9000 && mediaDiagnostics) mediaAttempt = mediaDiagnostics.begin(sn, mediaRequest);
         usedStreamClient = !onT9000;
         const client = onT9000 ? eufy : await openStreamClient(sn, cfg);
         if (usedStreamClient) acquiredStreamClient = client;
         if (stopAcquisition()) return;
-        const cam = (await client.getDevice(sn)).camera?.();
+        const device = onT9000 && topology?.device ? topology.device : await client.getDevice(sn);
+        const cam = device.camera?.();
         if (stopAcquisition()) return;
+        topology?.assertCurrent?.();
         if (!cam?.openReadable) {
           mediaAttempt?.finish("no_live_capability");
           json(res, 404, { error: "no live video on this device" });
@@ -421,7 +429,11 @@ export function createHttpHandler(ctx) {
           signal: abort.signal,
           ...(budget ? { batteryBudgetMs: budget } : {}),
         });
+        // The actual Readable close is authoritative, including after owner loss/stop.
+        feed.once("close", () => feedLease?.finish());
+        if (feed.closed) feedLease?.finish();
         if (stopAcquisition()) return;
+        topology?.assertCurrent?.();
         mediaAttempt?.acquired();
         if (feed.destroyed || feed.readableEnded) throw new Error("live video ended before acquisition completed");
         feed.on("error", onFeedError);
@@ -451,10 +463,12 @@ export function createHttpHandler(ctx) {
           active.feeds ??= new Set([active.feed]);
           active.feeds.add(feed);
         } else {
+          const manifest = device.describe?.();
           activeStreams.set(sn, {
             feed,
             feeds: new Set([feed]),
             startedAt: Date.now(),
+            battery: !manifest || onBatteryPower(manifest.model, manifest.capabilities),
           });
         }
         registered = true;
@@ -467,14 +481,19 @@ export function createHttpHandler(ctx) {
         return;
       } catch (e) {
         if (stopAcquisition()) return;
+        const admissionError = WEBRTC_ERRORS.has(e?.code);
         mediaAttempt?.fail(e, "acquire");
         const superseded =
           e?.name === "StreamClientSupersededError" ||
           (usedStreamClient && acquiredStreamClient && dropClient(sn, acquiredStreamClient) === false);
-        if (!superseded) ctx.noteStreamFailure?.(sn);
-        if (!res.headersSent) json(res, superseded ? 503 : 502, { error: publicError(e) });
+        if (!superseded && !admissionError) ctx.noteStreamFailure?.(sn);
+        if (!res.headersSent) json(res, superseded || admissionError ? 503 : 502,
+          admissionError ? { error: "WebRTC operation failed", code: e.code } : { error: publicError(e) });
         cleanup();
         return;
+      } finally {
+        acquisitionSettled = true;
+        if (!feed) feedLease?.finish();
       }
     }
 

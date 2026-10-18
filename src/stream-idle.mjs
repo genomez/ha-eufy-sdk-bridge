@@ -1,6 +1,7 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-14. */
+/** Modified for genomez S1 experimental source preview, 2026-10-16. */
 import { pilotLog } from "./pilot-log.mjs";
-// Battery-saving stream lifecycle. Keep a camera's P2P live feed only while it's worth streaming: if no
+import { onBatteryPower } from "./power.mjs";
+// Battery-saving stream lifecycle. Keep a battery camera's P2P live feed only while it's worth streaming: if no
 // detection arrives for cfg.streamIdleMs, tear the feed down AND suspend reopening (go2rtc's ffmpeg
 // source then retries into a 503). The suspension lifts on the next detection OR once the consumer stops
 // pulling — so a stuck 24/7 consumer keeps the radio off while a viewer that returns is served at once.
@@ -69,7 +70,7 @@ export function createStreamIdle(ctx) {
     }
     for (const d of devices) {
       const sn = d.sn;
-      if (!(d.capabilities ?? []).includes("battery")) continue; // battery cameras only
+      if (!onBatteryPower(d.model, d.capabilities)) continue; // battery cameras only
       if (d.state?.rtspStream !== true) continue; // only if currently publishing
       if (activeStreams.has(sn)) {
         rtspLastActive.set(sn, now);
@@ -91,12 +92,14 @@ export function createStreamIdle(ctx) {
     }
   }
 
-  /** Periodic sweep: auto-off any active feed whose last detection (or open, whichever is later) is stale. */
+  /** Periodic sweep: auto-off a battery feed whose last detection (or open, whichever is later) is stale. */
   function streamIdleTick() {
     if (!cfg.streamIdleMs) return;
     const now = Date.now();
-    // Auto-off any actively-pulled feed that has seen no detection for the whole idle window.
+    // Leave mains feeds streaming for continuous consumers. Unknown power retains the conservative
+    // battery policy; a successful device manifest explicitly marks a mains feed with battery=false.
     for (const [sn, st] of activeStreams) {
+      if (st.battery === false) continue;
       const lastSeen = Math.max(st.startedAt, lastDetect.get(sn) ?? 0);
       if (now - lastSeen >= cfg.streamIdleMs) {
         pilotLog("stream_idle_5");

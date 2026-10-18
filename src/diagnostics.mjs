@@ -1,3 +1,4 @@
+/** Modified for genomez S1 experimental source preview, 2026-10-17. */
 import { emptyCachedPropertyEvidence } from "./cached-property-evidence.mjs";
 import { commandFailureEvent } from "./pilot-log.mjs";
 import { createCommandWindows } from "./command-windows.mjs";
@@ -187,6 +188,15 @@ function rtcCommands(raw) {
     completed: number(raw.completed),
     failures: number(raw.failures),
     evicted: number(raw.evicted),
+    lateEffect:
+      raw.lateEffect && typeof raw.lateEffect === "object" && !Array.isArray(raw.lateEffect)
+        ? Object.fromEntries(
+            ["scheduled", "confirmed", "expired", "superseded", "readFailures", "pendingAccepted"].map((key) => [
+              key,
+              number(raw.lateEffect[key]),
+            ]),
+          )
+        : null,
     lastFailure: commandEvidence(raw.lastFailure),
     recent: Array.isArray(raw.recent) ? raw.recent.slice(-32).map(commandEvidence).filter(Boolean) : [],
   };

@@ -1,37 +1,40 @@
 {
   "schemaVersion": 1,
-  "releaseDate": "2026-10-16",
-  "version": "0.3.1-s1.experimental.5",
-  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.5",
+  "preparationDate": "2026-10-18",
+  "version": "0.3.1-s1.experimental.6",
+  "status": "prepared_locally_not_published",
+  "published": false,
+  "npmPublication": false,
+  "runtimeSourceRelease": "__RUNTIME_RELEASE_URL__",
   "candidateSourceManifest": "SOURCE_MANIFEST.json",
   "candidatePreparationReceiptsAreHistorical": true,
+  "acceptedMonorepoCommit": "c254aac11d4ad8e599cd14fa89e5e47e33264516",
+  "integrationVersion": "0.3.1-s1.experimental.6",
+  "addonVersion": "0.4.1-s1.experimental.6",
+  "relayDefault": false,
+  "keepaliveMs": 29000,
   "knownLimitations": [
-    "The final image passed an in-image smoke test; it has not itself been run on hardware.",
-    "Earlier one-S1 keepalive soak does not establish broad hardware acceptance; live view is excluded."
+    "Accepted Linux amd64 image passed isolated smoke checks; this exact release has no claimed physical-device, live HA/HACS installation or overnight soak acceptance.",
+    "Earlier dated dev3 companion references are preserved as historical source records."
   ],
   "verification": {
-    "tests": 130,
-    "passed": 130,
-    "sdkBuild": "../sdk/dist/index.js at monorepo 4ec3989; resolver hook overrides the read-only shared dependency"
+    "tests": 238,
+    "passed": 238,
+    "sdkResolution": "Freshly built accepted RC9 SDK bundle; test-only resolver overrides shared historical dependency."
   },
-  "npmPublication": false,
-  "changeScope": "Storage collection attempt/failure status and whole-millisecond next-attempt time; opt-in command-session keepalive configuration and diagnostics; pair the exact experimental.5 SDK package. The runtime image enables keepalive at 29000 ms.",
   "publicationDocumentationOverrides": {
     "README.md": {
-      "candidateSha256": "438aed65e485b1d39de13860a3bed7002ab75bc1c4d0684be008105c8e16654d",
-      "preparedSha256": "50cb5aa7469f76135afa8dbb05a0c5d77b4fc7a504ef9763d77b1518f7beaac3",
-      "publicationSha256": "012ce8f9ca3b4cde5b5416f564f635e96d1073d12e37b60b105806259da909b0",
-      "reason": "Replace local-preparation status with the published prerelease link; implementation unchanged."
+      "candidateSha256": "3282c87fe2429dbc1e5b2f96d0bc89656cb968c2c2fa307e0d5303a52b10a121",
+      "preparedSha256": "05cc2d66776c0f0f1e067b6b309a8ef24f57be9ef3ab927858a06a6df1964125",
+      "reason": "Add current unpublished preparation and intended corresponding-source location; preserve dated records and implementation bytes."
     },
     "EXPERIMENTAL.md": {
-      "candidateSha256": "404487cfa82ff77b11945acad8981696e06c27c515c52c006e920eff6ab3d91f",
-      "preparedSha256": "51cc0adc8f624f740c61223db7c1c972954a5f4768bd3589f2b947f3e2481df3",
-      "publicationSha256": "333c7e9781370d2d87475916ccdd644b0ae13622b793a45cc2d282440cfb31eb",
-      "reason": "Replace local-preparation status with the published prerelease link; implementation unchanged."
+      "candidateSha256": "fcbaeffb8b728123cbdf3b09af69c983e9612ca3d42b5d675f03b16e6e49b222",
+      "preparedSha256": "67f116b5804b16171234e03e11590c7150ec5f0918f59dd040f7f7039e534a8d",
+      "reason": "Add current unpublished preparation and intended corresponding-source location; preserve dated records and implementation bytes."
     },
     "PUBLICATION.json": {
-      "preparedSha256": "9bdf7a532ecc73fa6e2fd3954cdd3fece3d41f755cc31ae03294bf6a317ed7ef",
-      "reason": "Rewritten at publication; records this publication's scope."
+      "reason": "Added publication preparation and documentation exception receipt; absent from monorepo bridge subtree."
     }
   }
 }

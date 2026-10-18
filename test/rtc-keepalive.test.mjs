@@ -1,3 +1,4 @@
+/** Modified for genomez S1 experimental source preview, 2026-10-16. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createEufy } from "../src/client.mjs";
@@ -25,6 +26,7 @@ test("command keepalive config is passed to the SDK without enabling it by defau
     const client = createEufy(config, { store: { load: () => undefined }, pushStore: { load: () => undefined } });
     assert.equal(client.opts.rtc.commandKeepaliveMs, value === undefined ? undefined : Number(value));
     assert.equal(client.opts.rtc.sessionRefreshMs, undefined);
+    assert.equal(client.opts.rtc.commandTimeoutMs, 14000);
   }
 });
 

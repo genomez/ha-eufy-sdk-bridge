@@ -1,4 +1,4 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-14. */
+/** Modified for genomez S1 experimental source preview, 2026-10-16. */
 import { pilotLog } from "./pilot-log.mjs";
 // Environment → the immutable config + constants the whole bridge reads. Side-effect free (no mkdir,
 // no process.exit) so it can be imported from tests; server.mjs owns the startup guards.
@@ -82,6 +82,8 @@ export function loadConfig(env = process.env) {
     // instead of the one bundled here. Default ON to match existing behavior; set GO2RTC_ENABLE=0 to skip
     // spawning it.
     go2rtcEnable: env.GO2RTC_ENABLE == null ? true : truthy(env.GO2RTC_ENABLE),
+    // Native WebRTC relay is opt-in; only the exact environment value "1" enables it.
+    webrtcRelay: env.BRIDGE_WEBRTC_RELAY === "1",
     // T9000 (HomeBase Professional) control channel: the mega shard the RTC signalling signs on when the
     // SDK cannot derive it (e.g. `ie-pr`), and the ICE policy (`relay` default; never host-only).
     rtcShard: env.BRIDGE_RTC_SHARD || undefined,
@@ -97,9 +99,9 @@ export function loadConfig(env = process.env) {
     // Cloud poll interval (ms). Unset → the SDK default (600000 = 10 min). Changeable live via the
     // config.set WS command. 0 disables polling.
     pollMs: env.EUFY_POLL_MS ? Number(env.EUFY_POLL_MS) : undefined,
-    // Auto-off a live stream after this many ms with no detection event. A battery camera bleeds power
+    // Auto-off a battery camera's live stream after this many ms with no detection event. It bleeds power
     // while its P2P live session is up, and go2rtc holds /stream open as long as anything consumes it —
-    // so keep the feed only while detections are recent. Default 5 min; 0 disables.
+    // so keep its feed only while detections are recent. Mains feeds stay up. Default 5 min; 0 disables.
     streamIdleMs: env.STREAM_IDLE_MS != null ? Number(env.STREAM_IDLE_MS) : 300_000,
     // Battery-saver: a BATTERY camera left with the device's native `rtspStream` publish ON encodes
     // continuously and drains, even when nobody consumes it. If a battery device has rtspStream=true and

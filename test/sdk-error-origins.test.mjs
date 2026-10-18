@@ -1,3 +1,4 @@
+/** Modified for genomez S1 experimental source preview, 2026-10-17. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -220,4 +221,50 @@ test("RTC readback diagnostics expose only sanitized numeric counters", () => {
   commands = f.diagnostics(false).rtcCommands;
   assert.equal(commands.recent[0].readbackAttempts, null);
   assert.equal(commands.recent[0].confirmedByReadback, null);
+});
+
+test("RTC late-effect diagnostics preserve finite counters and rejected station codes only", () => {
+  const f = fixture();
+  const lateEffect = { scheduled: 5, confirmed: 2, expired: 1, superseded: 1, readFailures: 3, pendingAccepted: 4 };
+  const failure = { outcome: "rejected", rejectionCode: -108, serial: "private-station", payload: "private-payload" };
+  f.eufy.getRtcCommandDiagnostics = () => ({
+    lateEffect: { ...lateEffect, serial: "private-station", desired: true },
+    recent: [failure],
+    lastFailure: failure,
+  });
+  const commands = f.diagnostics(false).rtcCommands;
+  assert.deepEqual(commands.lateEffect, lateEffect);
+  assert.equal(commands.recent[0].outcome, "rejected");
+  assert.equal(commands.recent[0].rejectionCode, -108);
+  assert.equal(commands.lastFailure.outcome, "rejected");
+  assert.equal(commands.lastFailure.rejectionCode, -108);
+  assert.doesNotMatch(JSON.stringify(commands), /private-|desired|serial|payload/);
+  commands.lateEffect.confirmed = 999;
+  assert.equal(f.diagnostics(false).rtcCommands.lateEffect.confirmed, 2);
+});
+
+test("RTC late-effect diagnostics discard malformed counts and support older SDKs", () => {
+  const f = fixture();
+  for (const invalid of [-1, 1.5, Number.NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "5", {}, undefined]) {
+    f.eufy.getRtcCommandDiagnostics = () => ({
+      lateEffect: Object.fromEntries(
+        ["scheduled", "confirmed", "expired", "superseded", "readFailures", "pendingAccepted"].map((key) => [
+          key,
+          invalid,
+        ]),
+      ),
+    });
+    assert.deepEqual(f.diagnostics(false).rtcCommands.lateEffect, {
+      scheduled: null,
+      confirmed: null,
+      expired: null,
+      superseded: null,
+      readFailures: null,
+      pendingAccepted: null,
+    });
+  }
+  for (const lateEffect of [undefined, null, "private-station", []]) {
+    f.eufy.getRtcCommandDiagnostics = () => ({ lateEffect });
+    assert.equal(f.diagnostics(false).rtcCommands.lateEffect, null);
+  }
 });

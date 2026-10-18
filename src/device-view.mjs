@@ -1,6 +1,8 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-14. */
+/** Modified for genomez S1 experimental source preview, 2026-10-17. */
+import { createMediaTopology } from "./media-topology.mjs";
 import { publicError } from "./pilot-log.mjs";
 import { ordinaryPropertyValue } from "./property-value.mjs";
+import { onBatteryPower } from "./power.mjs";
 import {
   cachedPropertyParamTypes,
   cachedPropertyRowLimit,
@@ -22,11 +24,41 @@ export function createDeviceView(ctx) {
   let account = eufy.api?.auth?.userId;
   let epoch = 0;
   let listing;
+  let mediaScope;
+  let mediaGeneration;
+  const topology = createMediaTopology({
+    scope: topologyScope,
+    generation: topologyGeneration,
+    available: mediaAvailable,
+    refresh: () => ctx.deviceList(),
+    fallback: legacyMediaTopology,
+    conflicts: () => eufy.getInventoryConflicts?.() ?? [],
+  });
+
+  function mediaAvailable() {
+    return typeof eufy.getInventoryScope === "function" &&
+      !ctx.state.flags.stopping && !ctx.state.flags.sessionLost && !ctx.state.flags.recovering;
+  }
+
+  /** Raw-roster live-view classification when the validated snapshot cannot bind a camera. */
+  async function legacyMediaTopology(sn) {
+    const rows = await eufy.getDevices();
+    checkAccount();
+    if (!mediaAvailable()) return null;
+    const cameras = rows.filter((row) => row.sn === sn);
+    if (cameras.length !== 1) return null;
+    const station = cameras[0].stationSn;
+    if (!station || station === sn) return { station: sn, onT9000: false };
+    const parents = rows.filter((row) => row.sn === station);
+    if (parents.length !== 1) return null;
+    return { station, onT9000: /^T9000/i.test(parents[0].model ?? "") };
+  }
 
   /** Drop account-owned model references without letting late lookups repopulate them. */
   function clearDeviceModels() {
     epoch++;
     retained.clear();
+    topology.invalidate();
     ctx.clearStorageTelemetry?.();
   }
 
@@ -41,18 +73,20 @@ export function createDeviceView(ctx) {
   /** Retain the latest live model; overlapping reads share one SDK lookup, later reads still refresh. */
   async function getDevice(sn) {
     checkAccount();
+    const sdkEpoch = eufy.getInventoryScope?.().epoch;
     const prior = resolving.get(sn);
     if (prior) {
-      if (prior.epoch === epoch && !prior.removed) return prior.promise;
+      if (prior.epoch === epoch && prior.sdkEpoch === sdkEpoch && !prior.removed) return prior.promise;
       await prior.promise.catch(() => {});
       return getDevice(sn);
     }
-    const entry = { epoch, removed: false };
+    const entry = { epoch, sdkEpoch, removed: false };
     entry.promise = Promise.resolve()
       .then(() => eufy.getDevice(sn))
       .then((dev) => {
         checkAccount();
-        if (entry.epoch !== epoch || entry.removed) throw new Error("Device lookup superseded");
+        if (entry.epoch !== epoch || entry.sdkEpoch !== eufy.getInventoryScope?.().epoch || entry.removed)
+          throw new Error("Device lookup superseded");
         retained.set(sn, dev);
         return dev;
       })
@@ -66,13 +100,15 @@ export function createDeviceView(ctx) {
   /** Share one current roster across a list operation and retire models no longer present. */
   function listDevices() {
     checkAccount();
-    if (listing?.epoch === epoch) return listing.promise;
-    const entry = { epoch };
+    const sdkEpoch = eufy.getInventoryScope?.().epoch;
+    if (listing?.epoch === epoch && listing.sdkEpoch === sdkEpoch) return listing.promise;
+    const entry = { epoch, sdkEpoch };
     entry.promise = Promise.resolve()
       .then(() => eufy.getDevices())
       .then((devices) => {
         checkAccount();
-        if (entry.epoch !== epoch) throw new Error("Device list superseded");
+        if (entry.epoch !== epoch || entry.sdkEpoch !== eufy.getInventoryScope?.().epoch)
+          throw new Error("Device list superseded");
         const present = new Set(devices.map((dev) => dev.sn));
         ctx.syncStorageTelemetryDevices?.(devices);
         for (const sn of retained.keys()) if (!present.has(sn)) retained.delete(sn);
@@ -129,6 +165,8 @@ export function createDeviceView(ctx) {
       decodedProperties: decodedProperties(dev, m),
       stream: isCamera ? `/stream/${m.sn}` : undefined,
       streaming: isCamera ? streaming.has(m.sn) : undefined, // live P2P feed active right now?
+      // Share the SDK media budget's hardware classification, independent of a level/charging reading.
+      power: isCamera ? (onBatteryPower(m.model, m.capabilities) ? "battery" : "wired") : undefined,
       canReboot: m.codec === "station", // HomeBase-only; drives a Reboot button in HA
     };
   }
@@ -382,7 +420,8 @@ export function createDeviceView(ctx) {
 
   async function deviceList() {
     const devices = await listDevices();
-    return Promise.all(
+    const capturedScope = topologyScope();
+    const summaries = await Promise.all(
       devices.map((d) =>
         describeRecord(d).catch((e) => ({
           sn: d.sn,
@@ -390,6 +429,29 @@ export function createDeviceView(ctx) {
         })),
       ),
     );
+    topology.publish(summaries.map((summary, index) => ({
+      ...summary,
+      inventoryStationSn: devices[index].stationSn ?? devices[index].sn,
+      inventoryModel: devices[index].model,
+      channel: devices[index].raw?.device_channel,
+    })), retained, capturedScope);
+    return summaries;
+  }
+
+  function topologyScope() {
+    checkAccount();
+    const sdkScope = eufy.getInventoryScope?.();
+    if (!mediaScope || mediaScope.epoch !== epoch || mediaScope.sdkScope !== sdkScope)
+      mediaScope = { epoch, sdkScope };
+    return mediaScope;
+  }
+
+  function topologyGeneration() {
+    checkAccount();
+    const sdkEpoch = eufy.getInventoryScope?.().epoch;
+    if (!mediaGeneration || mediaGeneration.epoch !== epoch || mediaGeneration.sdkEpoch !== sdkEpoch)
+      mediaGeneration = { epoch, sdkEpoch };
+    return mediaGeneration;
   }
 
   return {
@@ -402,5 +464,7 @@ export function createDeviceView(ctx) {
     propertySpecs,
     decodedProperties,
     deviceList,
+    resolveMediaTopology: topology.resolve,
+    topologySnapshotDiagnostics: topology.diagnostics,
   };
 }

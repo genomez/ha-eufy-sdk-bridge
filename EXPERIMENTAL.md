@@ -1,3 +1,9 @@
+## Experimental.6 publication preparation, 2026-10-18
+
+Version `0.3.1-s1.experimental.6` is prepared locally and remains unpublished. Intended runtime and corresponding-source release: `__RUNTIME_RELEASE_URL__`. The companion integration is `0.3.1-s1.experimental.6`, paired with add-on `0.4.1-s1.experimental.6`. Update both components; relay defaults to false and command keepalive remains 29000 ms independently. Only JSON boolean true enables relay. No npm publication is planned.
+
+The accepted Linux amd64 image passed isolated smoke checks; this exact release has no claimed physical-device, live HA/HACS installation or overnight soak acceptance. Earlier dated preparation, dev3 pairing, source-preview restrictions and implementation qualification records below are historical. Current source is the accepted review.9 RC9 package; original licenses, attribution and modification notices are preserved.
+
 # Experimental source preview
 
 This branch is for source review and development. It is not a supported installation or a published binary release. No npm package, container image, HACS release or add-on-store release accompanies it.
@@ -46,12 +52,45 @@ Bridge implementation remains the public experimental.2 source. The exact local 
 
 Version `0.3.1-s1.experimental.4` records SDK error-event origins in `lastOrigin`, `byOrigin` and `recent` diagnostics (`src/diagnostics.mjs`, `src/service.mjs`), with synthetic regression coverage. The exact local SDK dependency is `0.2.1-s1.experimental.4`. Runtime defaults and renewal behavior are retained; image qualification and publication remain separate.
 
-## Experimental.5, 2026-10-16
+## Experimental.5 preparation, 2026-10-16
 
-Version `0.3.1-s1.experimental.5` is an experimental prerelease, published 2026-10-16 with runtime [s1-runtime-0.4.1.experimental.5](https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.5). Storage collection attempt/failure status and whole-millisecond next-attempt time; opt-in command-session keepalive configuration and diagnostics; pair the exact experimental.5 SDK package. The runtime image enables keepalive at 29000 ms.
+Version `0.3.1-s1.experimental.5` is prepared locally and has not been published. Storage collection attempt/failure status and whole-millisecond next-attempt time; opt-in command-session keepalive configuration and diagnostics; pair the exact experimental.5 SDK package. The runtime image enables keepalive at 29000 ms.
 
-The keepalive is opt-in in source; the paired experimental.5 Linux amd64 runtime enables it every 29 seconds. An earlier implementation test on one S1 ran about 9.5 hours with 1,138/1,138 echoes and no keepalive drops. This is limited prior hardware evidence; the final experimental.5 image passed an in-image smoke test but has not itself been run on hardware. One night does not establish that keepalive prevents outages. Live view is outside this release qualification.
+The keepalive is opt-in in source; the paired experimental.5 Linux amd64 runtime enables it every 29 seconds. An earlier implementation test on one S1 ran about 9.5 hours with 1,138/1,138 echoes and no keepalive drops. This is limited prior hardware evidence, not verification of the final experimental.5 image. One night does not establish that keepalive prevents outages. Live view is outside this release qualification.
 
-## Runtime release
+## Experimental.6 preparation, 2026-10-16
 
-This source accompanies runtime `0.4.1-s1.experimental.5` and unchanged integration `0.3.1.dev2`, Linux amd64. Release: [s1-runtime-0.4.1.experimental.5](https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.5). No live-view acceptance is included.
+Version `0.3.1-s1.experimental.6` is prepared locally and has not been published. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
+
+The relay remains off by default in source. The proposed add-on option is `webrtc_relay: false`; enabling it sets `BRIDGE_WEBRTC_RELAY=1`. The planned image retains command keepalive at 29000 ms. Companion integration 0.3.1.dev3 uses native live view only when the bridge advertises the relay. Earlier source-preview streaming restrictions above describe historical inputs. Owner-reported review.3/review.4 tests passed on several wired cameras and one battery camera, including switching and busy behavior; this is prior test-build evidence, not acceptance of the final .6 image.
+
+## Experimental.6 release candidate refresh, 2026-10-16
+
+Version `0.3.1-s1.experimental.6` now binds the rebuilt SDK `0.2.1-s1.experimental.6` package containing the two state-freshness fixes (`a408a51`, `980f9a1`). Bridge implementation remains unchanged from `87a3f27`. The lock integrity, package provenance and complete source inventory identify this local input. The companion integration includes a short floodlight debounce after successful commands. Relay default-off and version proposals await owner approval; final image qualification and the owner overnight soak remain pending. Original licenses and attribution are preserved.
+
+## Experimental.6 upstream ports, 2026-10-16
+
+Use the SDK classifier for snapshot auto-live, native RTSP auto-off, feed idle-off and camera summaries. Summaries expose exactly power=battery or power=wired without changing powerSource/powerSourceInfo. Wired feeds are exempt from idle-off; unresolved manifests conservatively retain battery feed policy. HTTP JSON and WS send/broadcast redact gateway token= assignment echoes; structured token fields are unchanged, and the source sanitizer plus finite pilot logs are retained. Quiet device activity no longer triggers disconnect/re-login; sessionLost, explicit push disconnect, auth-policy holds and requestLogin remain. Remove the inferred health stalled field, report open_failed backoff category, and describe empty cold-start consumer lists accurately. Native relay, capability advertisement, admission/refusal, station release and stream cleanup are retained.
+
+Narrow adaptations from upstream commits:
+
+- `8f2d230f24d5289aabfebdc30f3df8bb4c5777d9`: Shared power policy and battery-only idle-off.
+- `dcaf277da97e007c164964ab850938d102f262bc`: Camera summary power field.
+- `3269108b96da8c1b1be6f6f5715a44c058f9bf46`: Token assignment echo redaction at HTTP/WS egress.
+- `94ec9ea9e3ea8b958b3a17b289faf99135aebe5c`: No activity-silence recovery inference; preserve local auth holds.
+- `e4b0903ca82b0dff871f59ef5a46afcab641a013`: Closed open_failed backoff category without P2P-only diagnosis.
+- `768438e45d28d87c36fc87ac194bc453747a1f8a`: Cold-start empty-viewer wording.
+
+The prior packaging and implementation statements above are historical. Version remains unchanged. These local source ports do not establish final-image or hardware qualification. Apache-2.0 licenses, copyright, contributor attribution and existing notices are preserved; changed source/test files carry dated modification headers.
+
+## Experimental.6 upstream-port package refresh, 2026-10-16
+
+Bridge implementation `02afeda1846e01e07ba154c48fd8401564eb1fb5` and the exact rebuilt SDK `0.2.1-s1.experimental.6` are paired by lock SHA-512 integrity, package SHA-256 and complete source inventory. Earlier unchanged-bridge/package statements above are historical. Bridge version remains `0.3.1-s1.experimental.6`. Licenses, attribution and existing notices remain intact; final-image and hardware qualification remain pending.
+
+## Experimental.6 watchdog packaging refresh, 2026-10-16
+
+Implementation `0d6b16f5e9760dc8f4d4d6966bc6aee5b5e5ce79` changes `src/watchdog.mjs` and its tests: quiet device activity does not trigger re-login. When enabled station refreshes keep failing without a success for 30 minutes, recovery re-logs in; repeated failures back off through 30 minutes, 1 hour, 2 hours, 4 hours and a 6-hour cap. A successful refresh resets the backoff. Session-loss and push-disconnect recovery, auth holds and lifecycle gates remain. Both changed files already carry the dated 2026-10-16 modification notice. This record supersedes the earlier implementation input and 192-test packaging receipt; the local bridge suite now passes 197 tests. SDK implementation and package binding are unchanged. Final image qualification and publication remain pending.
+
+## Experimental.6 package refresh, 2026-10-17
+
+This replaces the earlier review.7 candidate with review.9 input `681efd9` (implementation `d4335b9`, on review.8 `f6a59d9`). Runtime source is unchanged. Includes bounded pending acceptance for eligible correlated floodlight late replies with authoritative correction, supported S1 camera sirens, standard doorbell ring events and faster demand-only live-view admission, alongside the battery stream fix and native relay. The add-on relay option defaults to false; command keepalive remains 29000 independently. Package versions are SDK `0.2.1-s1.experimental.6` and bridge `0.3.1-s1.experimental.6`. Earlier candidate status statements above are historical. Original licenses and attribution remain. This is local packaging; publication and final device/soak qualification are pending.

@@ -6,6 +6,17 @@ import { loadConfig } from "../src/config.mjs";
 
 const base = { EUFY_EMAIL: "x@y.z", EUFY_PASSWORD: "pw" };
 
+test("native WebRTC relay is OFF by default", () => {
+  assert.equal(loadConfig(base).cfg.webrtcRelay, false);
+});
+
+test("BRIDGE_WEBRTC_RELAY enables only the exact string 1", () => {
+  assert.equal(loadConfig({ ...base, BRIDGE_WEBRTC_RELAY: "1" }).cfg.webrtcRelay, true);
+  for (const value of ["", "0", "true", "yes", "on", "TRUE", " 1", "1 ", "01", 1, true, null]) {
+    assert.equal(loadConfig({ ...base, BRIDGE_WEBRTC_RELAY: value }).cfg.webrtcRelay, false);
+  }
+});
+
 test("event pre-warm is OFF by default", () => {
   assert.equal(loadConfig(base).cfg.prewarm, false); // → client passes prewarmEvents: []
 });

@@ -1,4 +1,4 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-14. */
+/** Modified for genomez S1 experimental source preview, 2026-10-17. */
 // A watched battery stream must not be cut every ~55s. The SDK bounds a battery session to a budget (45s)
 // plus a grace (10s) and stops it unless the caller extends it; /stream consumes a Readable, which has no
 // way to extend, so the only lever is the budget the session is opened with. STREAM_BATTERY_BUDGET_MS
@@ -22,6 +22,7 @@ function setup(env = {}) {
   const ctx = {
     ...config,
     state,
+    resolveMediaTopology: async () => ({ onT9000: false }),
     eufy: {
       getDevices: async () => [
         { sn: "CAM1", stationSn: "BASE1" },

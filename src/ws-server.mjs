@@ -1,4 +1,5 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-14. */
+/** Modified for genomez S1 experimental source preview, 2026-10-16. */
+import { redactSecrets } from "./redact.mjs";
 import { pilotLog, publicError, commandFailureEvent } from "./pilot-log.mjs";
 // The WebSocket control plane: state, events, and auth over one socket. Attaches to the shared HTTP
 // server so a client can reach /ws to drive 2FA/captcha before the bridge is authenticated. Owns the
@@ -7,6 +8,7 @@ import { pilotLog, publicError, commandFailureEvent } from "./pilot-log.mjs";
 import { WebSocketServer } from "ws";
 import { listLightEffects } from "@mega-yfue/eufy-sdk";
 import { SOLIX_CONTROLS, SOLIX_DISABLED } from "./solix.mjs";
+import { WEBRTC_ERRORS } from "./webrtc-relay.mjs";
 
 // Commands that require an authenticated eufy session â€” gated in one place before dispatch. (auth.* and
 // solix.* run before this gate, so a client can drive 2FA/captcha and Solix while eufy is still pending.)
@@ -30,11 +32,11 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
   const { flags, clients } = ctx.state;
 
   const send = (ws, obj) => {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+    if (ws.readyState === ws.OPEN) ws.send(redactSecrets(JSON.stringify(obj)));
   };
   const broadcast = (obj) => {
     if (ctx.filterBroadcast && !ctx.filterBroadcast(obj)) return;
-    const s = JSON.stringify(obj);
+    const s = redactSecrets(JSON.stringify(obj));
     for (const ws of clients) if (ws.readyState === ws.OPEN) ws.send(s);
   };
 
@@ -51,8 +53,12 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
       event: "hello",
       schemaVersion: SCHEMA_VERSION,
       auth: ctx.authStatus(),
+      webrtcRelay: Boolean(ctx.webrtcRelay),
     });
-    ws.on("close", () => clients.delete(ws));
+    ws.on("close", () => {
+      ctx.webrtcRelay?.ownerLost(ws);
+      clients.delete(ws);
+    });
     ws.on("message", (raw) => handleMessage(ws, raw).catch((e) => pilotLog("ws_server_1")));
   });
 
@@ -63,7 +69,30 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
     } catch {
       return send(ws, { ok: false, error: "bad json" });
     }
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) return send(ws, { ok: false, error: "bad json" });
     const { id, cmd } = msg;
+    const isWebRtc = typeof cmd === "string" && cmd.startsWith("webrtc.");
+    // Closed-schema errors and no debug interpolation of signaling/private payloads.
+    if (isWebRtc) {
+      try {
+        if (allowCommand && !allowCommand(msg)) throw { code: "webrtc_failed" };
+        const relay = ctx.webrtcRelay;
+        if (!relay) throw { code: "webrtc_unsupported" };
+        if (cmd === "webrtc.open" && (!flags.ready || flags.sessionLost || flags.stopping || ctx.authPolicy?.blocked))
+          throw { code: "webrtc_closed" };
+        let result;
+        switch (cmd) {
+          case "webrtc.open": result = await relay.open(ws, msg); break;
+          case "webrtc.candidate": result = relay.candidate(ws, msg); break;
+          case "webrtc.close": result = relay.close(ws, msg); break;
+          default: throw { code: "webrtc_failed" };
+        }
+        return send(ws, { id, ok: true, ...result });
+      } catch (error) {
+        const code = WEBRTC_ERRORS.has(error?.code) ? error.code : "webrtc_failed";
+        return send(ws, { id, ok: false, error: "WebRTC operation failed", code });
+      }
+    }
     if (allowCommand && !allowCommand(msg)) return send(ws, { id, ok: false, error: "command denied" });
     if (DEBUG) {
       const bits = [`cmd=${cmd}`];
@@ -267,7 +296,10 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
 
   let closing;
   function closeWebSocketServer() {
-    for (const ws of clients) ws.terminate();
+    for (const ws of clients) {
+      ctx.webrtcRelay?.ownerLost(ws);
+      ws.terminate();
+    }
     closing ??= new Promise((resolve, reject) => wss.close((error) => (error ? reject(error) : resolve())));
     return closing;
   }

@@ -1,3 +1,4 @@
+/** Modified for genomez S1 experimental source preview, 2026-10-17. */
 // A finite event vocabulary; no identifiers, payloads or exception text enter stdout.
 const events = new Set([
   "command_started",
@@ -11,6 +12,12 @@ const events = new Set([
   "command_connect_timeout",
   "command_unsupported",
   "command_other_error",
+  "command_late_effect_scheduled",
+  "command_late_effect_pending_accepted",
+  "command_late_effect_confirmed",
+  "command_late_effect_expired",
+  "command_late_effect_superseded",
+  "command_late_effect_read_failed",
   "forced_shutdown",
   "server_1",
   "server_2",
