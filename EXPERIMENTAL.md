@@ -1,6 +1,6 @@
-## Experimental.6 publication preparation, 2026-10-18
+## Experimental.6 source delivery, 2026-10-18
 
-Version `0.3.1-s1.experimental.6` is prepared locally and remains unpublished. Intended runtime and corresponding-source release: `__RUNTIME_RELEASE_URL__`. The companion integration is `0.3.1-s1.experimental.6`, paired with add-on `0.4.1-s1.experimental.6`. Update both components; relay defaults to false and command keepalive remains 29000 ms independently. Only JSON boolean true enables relay. No npm publication is planned.
+Version `0.3.1-s1.experimental.6` corresponding source is published. Runtime and corresponding-source release: `https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.6`. The companion integration is `0.3.1-s1.experimental.6`, paired with add-on `0.4.1-s1.experimental.6`. Update both components; relay defaults to false and command keepalive remains 29000 ms independently. Only JSON boolean true enables relay. No npm publication is planned.
 
 The accepted Linux amd64 image passed isolated smoke checks; this exact release has no claimed physical-device, live HA/HACS installation or overnight soak acceptance. Earlier dated preparation, dev3 pairing, source-preview restrictions and implementation qualification records below are historical. Current source is the accepted review.9 RC9 package; original licenses, attribution and modification notices are preserved.
 
@@ -54,13 +54,13 @@ Version `0.3.1-s1.experimental.4` records SDK error-event origins in `lastOrigin
 
 ## Experimental.5 preparation, 2026-10-16
 
-Version `0.3.1-s1.experimental.5` is prepared locally and has not been published. Storage collection attempt/failure status and whole-millisecond next-attempt time; opt-in command-session keepalive configuration and diagnostics; pair the exact experimental.5 SDK package. The runtime image enables keepalive at 29000 ms.
+Version `0.3.1-s1.experimental.5` corresponding source is published. Storage collection attempt/failure status and whole-millisecond next-attempt time; opt-in command-session keepalive configuration and diagnostics; pair the exact experimental.5 SDK package. The runtime image enables keepalive at 29000 ms.
 
 The keepalive is opt-in in source; the paired experimental.5 Linux amd64 runtime enables it every 29 seconds. An earlier implementation test on one S1 ran about 9.5 hours with 1,138/1,138 echoes and no keepalive drops. This is limited prior hardware evidence, not verification of the final experimental.5 image. One night does not establish that keepalive prevents outages. Live view is outside this release qualification.
 
 ## Experimental.6 preparation, 2026-10-16
 
-Version `0.3.1-s1.experimental.6` is prepared locally and has not been published. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
+Version `0.3.1-s1.experimental.6` corresponding source is published. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
 
 The relay remains off by default in source. The proposed add-on option is `webrtc_relay: false`; enabling it sets `BRIDGE_WEBRTC_RELAY=1`. The planned image retains command keepalive at 29000 ms. Companion integration 0.3.1.dev3 uses native live view only when the bridge advertises the relay. Earlier source-preview streaming restrictions above describe historical inputs. Owner-reported review.3/review.4 tests passed on several wired cameras and one battery camera, including switching and busy behavior; this is prior test-build evidence, not acceptance of the final .6 image.
 
