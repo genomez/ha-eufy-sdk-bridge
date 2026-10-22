@@ -1,4 +1,4 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-16. */
+/** Modified for genomez S1 experimental source preview, 2026-10-18. */
 // Construct the one EufyMega SDK client the bridge logs in with. Kept tiny and dependency-light so the
 // heavier modules depend on the instance via `ctx.eufy`, not on how it was built. Event wiring that
 // needs other modules (error → session recovery, push liveness) lives in server.mjs, after ctx is whole.
@@ -28,7 +28,7 @@ export function createEufy({ cfg, DEBUG_P2P }, options = {}) {
     rtcShard: cfg.rtcShard,
     rtc: {
       icePolicy: cfg.rtcIcePolicy,
-      commandTimeoutMs: 14000,
+      commandTimeoutMs: 14000, // Legacy whole-call bound; the negotiated scalar profile opts in per invocation.
       stateRefreshMs: cfg.rtcStateRefreshMs,
       sessionRefreshMs: cfg.rtcSessionRefreshMs,
       commandKeepaliveMs: cfg.rtcCommandKeepaliveMs,

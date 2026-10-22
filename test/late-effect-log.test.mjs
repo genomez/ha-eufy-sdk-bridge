@@ -1,4 +1,4 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-17. */
+/** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -6,7 +6,28 @@ import { pilotLog, commandFailureEvent } from "../src/pilot-log.mjs";
 import { createBridgeService } from "../src/service.mjs";
 import { loadConfig } from "../src/config.mjs";
 
-const outcomes = ["scheduled", "confirmed", "expired", "superseded", "read_failed", "pending_accepted"];
+const outcomes = [
+  "scheduled",
+  "confirmed",
+  "expired",
+  "superseded",
+  "read_failed",
+  "pending_accepted",
+  "retry_eligible",
+  "retry_queued",
+  "retry_sent",
+  "retry_confirmed",
+  "retry_superseded",
+  ...[
+    "read_failed",
+    "no_qualified_first_read",
+    "deadline",
+    "disconnected",
+    "cancelled",
+    "already_used",
+    "already_matches",
+  ].map((reason) => `retry_skipped_${reason}`),
+];
 
 function capture(operation) {
   const output = [];

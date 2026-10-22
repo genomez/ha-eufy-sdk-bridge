@@ -1,9 +1,11 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-17. */
+/** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { emptyCachedPropertyEvidence } from "./cached-property-evidence.mjs";
 import { commandFailureEvent } from "./pilot-log.mjs";
 import { createCommandWindows } from "./command-windows.mjs";
 import { eventLoopEvidence } from "./event-loop-evidence.mjs";
 import { transportEvidence, postTimeoutEvidence, commandStageTimingEvidence } from "./transport-evidence.mjs";
+import { boundedStatuses } from "./bounded-state-writes.mjs";
+import { rtcConnectionEvidence, ownCloudPollEvidence } from "./rtc-connection-evidence.mjs";
 
 const readFailures = new Map([
   ["RTC information read timed out", "information_read_timeout"],
@@ -111,6 +113,7 @@ function pushLifecycle(raw) {
   };
 }
 const commandOutcomes = new Set([
+  ...boundedStatuses,
   "success",
   "ack_timeout",
   "expired_before_send",
@@ -126,7 +129,7 @@ function commandEvidence(raw) {
   const result = {
     outcome: raw.outcome,
     scope: ["station", "attached"].includes(raw.scope) ? raw.scope : null,
-    phase: ["acquisition", "queue", "exchange"].includes(raw.phase) ? raw.phase : null,
+    phase: ["preparation", "acquisition", "queue", "exchange"].includes(raw.phase) ? raw.phase : null,
     envelope: [1350, 1700].includes(raw.envelope) ? raw.envelope : null,
     rejectionCode:
       Number.isInteger(raw.rejectionCode) && raw.rejectionCode >= -2147483648 && raw.rejectionCode <= 2147483647
@@ -179,8 +182,53 @@ function commandEvidence(raw) {
   result.transportBeforeSend = transportEvidence(raw.transportBeforeSend);
   result.transportAtFinish = transportEvidence(raw.transportAtFinish);
   result.postTimeout = postTimeoutEvidence(raw.postTimeout, headerSample);
+  result.profileVersion = raw.profileVersion === "bounded-state-v1" ? raw.profileVersion : null;
+  result.origin = ["caller", "retry", "correction"].includes(raw.origin) ? raw.origin : null;
+  result.terminalReason = boundedStatuses.has(raw.terminalReason) ? raw.terminalReason : null;
+  result.effect = ["unconfirmed", "unknown", "confirmed_report"].includes(raw.effect) ? raw.effect : null;
+  for (const key of [
+    "intent",
+    "parentAttempt",
+    "preparationWaitMs",
+    "acquisitionWaitMs",
+    "queueWaitMs",
+    "admissionElapsedMs",
+    "activeExchangeMs",
+    "queueDepthAtEnqueue",
+    "targetsAheadAtEnqueue",
+    "admissionBudgetMs",
+    "activeBudgetMs",
+    "totalBudgetMs",
+    "admissionRemainingAtSendMs",
+    "totalRemainingAtSendMs",
+    "authorizingRead",
+    "originalRelativeSendAgeMs",
+  ])
+    result[key] = number(raw[key]);
+  for (const key of ["sendAttempted", "channelAccepted"]) result[key] = boolean(raw[key]);
+  for (const key of ["readStartedAgeMs", "readFinishedAgeMs"]) {
+    const age = number(raw[key]);
+    result[key] = age !== null && age <= 45000 ? age : null;
+  }
+  if (result.sendAttemptedAtMs === null) {
+    result.admissionRemainingAtSendMs = null;
+    result.totalRemainingAtSendMs = null;
+  }
   return result;
 }
+const retrySkipReasons = [
+  "read_failed",
+  "no_qualified_first_read",
+  "deadline",
+  "disconnected",
+  "cancelled",
+  "already_used",
+  "already_matches",
+];
+const numericProjection = (raw, keys) =>
+  raw && typeof raw === "object" && !Array.isArray(raw)
+    ? Object.fromEntries(keys.map((key) => [key, number(raw[key])]))
+    : null;
 function rtcCommands(raw) {
   if (!raw || typeof raw !== "object") return null;
   return {
@@ -188,14 +236,97 @@ function rtcCommands(raw) {
     completed: number(raw.completed),
     failures: number(raw.failures),
     evicted: number(raw.evicted),
-    lateEffect:
-      raw.lateEffect && typeof raw.lateEffect === "object" && !Array.isArray(raw.lateEffect)
-        ? Object.fromEntries(
-            ["scheduled", "confirmed", "expired", "superseded", "readFailures", "pendingAccepted"].map((key) => [
-              key,
-              number(raw.lateEffect[key]),
+    epoch: number(raw.epoch),
+    commandHealth: numericProjection(raw.commandHealth, [
+      "activations",
+      "suppressedSends",
+      "fastRefusals",
+      "cooldownExpiries",
+      "entries",
+      "activeDegraded",
+      "capacity",
+    ]),
+    queueWait: numericProjection(raw.queueWait, [
+      "observations",
+      "totalMs",
+      "maxMs",
+      "lastMs",
+      "le100",
+      "le1000",
+      "le5000",
+      "le15000",
+      "le60000",
+      "gt60000",
+    ]),
+    schedulerTotals: numericProjection(raw.schedulerTotals, [
+      "queued",
+      "active",
+      "highWater",
+      "coalesced",
+      "queueFull",
+      "expiredBeforeSend",
+      "cancelledBeforeSend",
+      "cancelledAfterSend",
+      "supersededBeforeSend",
+      "closedBeforeSend",
+      "closedAfterSend",
+      "readTurns",
+      "readDeferrals",
+      "readExpired",
+      "retryDeferrals",
+      "invariantViolations",
+      "oldestWaitMs",
+    ]),
+    scheduler: Array.isArray(raw.scheduler)
+      ? raw.scheduler
+          .slice(-32)
+          .map((row) =>
+            numericProjection(row, [
+              "station",
+              "queued",
+              "active",
+              "highWater",
+              "coalesced",
+              "queueFull",
+              "expiredBeforeSend",
+              "cancelledBeforeSend",
+              "cancelledAfterSend",
+              "supersededBeforeSend",
+              "closedBeforeSend",
+              "closedAfterSend",
+              "readTurns",
+              "readDeferrals",
+              "readExpired",
+              "retryDeferrals",
+              "invariantViolations",
+              "oldestWaitMs",
             ]),
           )
+          .filter(Boolean)
+      : [],
+    lateEffect:
+      raw.lateEffect && typeof raw.lateEffect === "object" && !Array.isArray(raw.lateEffect)
+        ? {
+            ...Object.fromEntries(
+              [
+                "scheduled",
+                "confirmed",
+                "expired",
+                "superseded",
+                "readFailures",
+                "pendingAccepted",
+                ...["retryEligible", "retryQueued", "retrySent", "retryConfirmed", "retrySuperseded"].filter(
+                  (key) => key in raw.lateEffect,
+                ),
+              ].map((key) => [key, number(raw.lateEffect[key])]),
+            ),
+            ...(raw.lateEffect.retrySkipped &&
+            typeof raw.lateEffect.retrySkipped === "object" &&
+            !Array.isArray(raw.lateEffect.retrySkipped)
+              ? { retrySkipped: numericProjection(raw.lateEffect.retrySkipped, retrySkipReasons) }
+              : {}),
+            ...(Number.isSafeInteger(raw.lateEffect.epoch) ? { epoch: number(raw.lateEffect.epoch) } : {}),
+          }
         : null,
     lastFailure: commandEvidence(raw.lastFailure),
     recent: Array.isArray(raw.recent) ? raw.recent.slice(-32).map(commandEvidence).filter(Boolean) : [],
@@ -576,8 +707,21 @@ function thumbnailCounters(raw, sdk = false) {
 /** Cached diagnostics; reading this snapshot never opens a device or cloud connection. */
 export function createDiagnostics(ctx, now = Date.now) {
   let account = ctx.eufy.api?.auth?.userId;
-  let errors, commands, detections, windows;
+  let errors, commands, detections, windows, contrary;
   function reset() {
+    contrary = {
+      contrary: 0,
+      matched: 0,
+      expired: 0,
+      superseded: 0,
+      closed: 0,
+      recovery_settled: 0,
+      suspended: 0,
+      detection_exhausted: 0,
+      verification_exhausted: 0,
+      confirmationsCompleted: 0,
+      confirmationsFailed: 0,
+    };
     windows = createCommandWindows();
     errors = { count: 0, lastAtMs: null, lastKind: null, lastOrigin: null, byOrigin: {}, recent: [] };
     detections = { total: 0, recent: [] };
@@ -607,6 +751,29 @@ export function createDiagnostics(ctx, now = Date.now) {
     }
   }
   const api = {
+    recordLateContraryEffect(state) {
+      scope();
+      if (
+        [
+          "contrary",
+          "matched",
+          "expired",
+          "superseded",
+          "closed",
+          "recovery_settled",
+          "suspended",
+          "detection_exhausted",
+          "verification_exhausted",
+        ].includes(state)
+      )
+        contrary[state] = Math.min(Number.MAX_SAFE_INTEGER, contrary[state] + 1);
+    },
+    recordLightConfirmation(outcome) {
+      scope();
+      const key =
+        outcome === "completed" ? "confirmationsCompleted" : outcome === "failed" ? "confirmationsFailed" : null;
+      if (key) contrary[key] = Math.min(Number.MAX_SAFE_INTEGER, contrary[key] + 1);
+    },
     recordDetection(event, input, output) {
       if (!["personDetected", "strangerDetected"].includes(event)) return;
       scope();
@@ -696,6 +863,7 @@ export function createDiagnostics(ctx, now = Date.now) {
         stateRefresh.lastOperationFailure = observation(raw.lastOperationFailure, "client");
         stateRefresh.schedules = observations(raw.schedules, "schedule");
         stateRefresh.lastFailureKind = refreshKinds.has(raw.lastFailureKind) ? raw.lastFailureKind : null;
+        stateRefresh.cloudPoll = ownCloudPollEvidence(raw);
       }
       const renewal = ctx.eufy.getRtcSessionRefreshDiagnostics?.();
       let rtcRenewals = null;
@@ -797,7 +965,21 @@ export function createDiagnostics(ctx, now = Date.now) {
         },
         pushLifecycle: pushLifecycle(ctx.eufy.getPushLifecycleDiagnostics?.()),
         stateRefresh,
+        watchdog: (() => {
+          try {
+            return ctx.getWatchdogDiagnostics?.() ?? null;
+          } catch {
+            return null;
+          }
+        })(),
         rtcReads,
+        rtcConnections: (() => {
+          try {
+            return rtcConnectionEvidence(ctx.eufy.getRtcConnectionDiagnostics?.());
+          } catch {
+            return null;
+          }
+        })(),
         rtcCommands: rtcCommands(ctx.eufy.getRtcCommandDiagnostics?.()),
         rtcObservations: rtcObservationSnapshot,
         rtcRenewals,
@@ -814,6 +996,7 @@ export function createDiagnostics(ctx, now = Date.now) {
           recent: errors.recent.map((row) => ({ ...row })),
         },
         propertyCommands: { ...commands },
+        lateContraryEffects: { ...contrary },
       };
       if (collect) windows.collect(snapshot, snapshot.observedAtMs);
       return collect ? { ...snapshot, completedCommandWindows: windows.snapshot() } : snapshot;

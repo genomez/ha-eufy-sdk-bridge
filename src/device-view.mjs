@@ -1,8 +1,9 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-17. */
+/** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { createMediaTopology } from "./media-topology.mjs";
 import { publicError } from "./pilot-log.mjs";
 import { ordinaryPropertyValue } from "./property-value.mjs";
 import { onBatteryPower } from "./power.mjs";
+import { commandHealth } from "./command-health.mjs";
 import {
   cachedPropertyParamTypes,
   cachedPropertyRowLimit,
@@ -36,8 +37,12 @@ export function createDeviceView(ctx) {
   });
 
   function mediaAvailable() {
-    return typeof eufy.getInventoryScope === "function" &&
-      !ctx.state.flags.stopping && !ctx.state.flags.sessionLost && !ctx.state.flags.recovering;
+    return (
+      typeof eufy.getInventoryScope === "function" &&
+      !ctx.state.flags.stopping &&
+      !ctx.state.flags.sessionLost &&
+      !ctx.state.flags.recovering
+    );
   }
 
   /** Raw-roster live-view classification when the validated snapshot cannot bind a camera. */
@@ -148,6 +153,12 @@ export function createDeviceView(ctx) {
     const m = dev.describe();
     const isCamera = m.capabilities.includes("camera") || m.capabilities.includes("video");
     const storageTelemetry = ctx.storageTelemetryFor?.(record, dev);
+    let health;
+    try {
+      health = commandHealth(eufy.propertyCommandHealth?.(m.sn, "light"));
+    } catch {
+      // Optional cached health must not break the ordinary device snapshot.
+    }
     return {
       sn: m.sn,
       // The station this device hangs off and its channel there (null for a station itself / unknown).
@@ -159,6 +170,7 @@ export function createDeviceView(ctx) {
       codec: m.codec,
       firmwareVersion: firmwareVersion(dev),
       ...(storageTelemetry ? { storageTelemetry } : {}),
+      ...(health ? { commandHealth: health } : {}),
       capabilities: m.capabilities,
       state: propertyState(dev), // stored SDK values retained for existing consumers
       ...decodedReadings(dev, m),
@@ -386,6 +398,7 @@ export function createDeviceView(ctx) {
       unit: p.unit, // "%", "°C", "dBm", …
       kind: p.kind, // percent | celsius | dbm | seconds | …
       writable: p.writable, // a setter exists (device.set accepts it)
+      ...(p.boundedStateWrites === true ? { boundedStateWrites: true } : {}),
       enumValues: p.enumValues, // { raw: label } for enums
       description: p.description,
       // Keep diagnostics identifiable to consumers without publishing their payloads as state.
@@ -429,20 +442,23 @@ export function createDeviceView(ctx) {
         })),
       ),
     );
-    topology.publish(summaries.map((summary, index) => ({
-      ...summary,
-      inventoryStationSn: devices[index].stationSn ?? devices[index].sn,
-      inventoryModel: devices[index].model,
-      channel: devices[index].raw?.device_channel,
-    })), retained, capturedScope);
+    topology.publish(
+      summaries.map((summary, index) => ({
+        ...summary,
+        inventoryStationSn: devices[index].stationSn ?? devices[index].sn,
+        inventoryModel: devices[index].model,
+        channel: devices[index].raw?.device_channel,
+      })),
+      retained,
+      capturedScope,
+    );
     return summaries;
   }
 
   function topologyScope() {
     checkAccount();
     const sdkScope = eufy.getInventoryScope?.();
-    if (!mediaScope || mediaScope.epoch !== epoch || mediaScope.sdkScope !== sdkScope)
-      mediaScope = { epoch, sdkScope };
+    if (!mediaScope || mediaScope.epoch !== epoch || mediaScope.sdkScope !== sdkScope) mediaScope = { epoch, sdkScope };
     return mediaScope;
   }
 

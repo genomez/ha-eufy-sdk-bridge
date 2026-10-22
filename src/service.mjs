@@ -1,4 +1,4 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-17. */
+/** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { pilotLog } from "./pilot-log.mjs";
 import { createDiagnostics } from "./diagnostics.mjs";
 import { createEventLoopEvidence } from "./event-loop-evidence.mjs";
@@ -21,6 +21,7 @@ import { createHttpHandler } from "./http-routes.mjs";
 import { createWsServer } from "./ws-server.mjs";
 import { closeStreamClients } from "../streams.mjs";
 import { createWebRtcRelay } from "./webrtc-relay.mjs";
+import { lateContraryEvent } from "./late-contrary-effects.mjs";
 
 export function createBridgeService({
   config,
@@ -51,11 +52,12 @@ export function createBridgeService({
   Object.assign(ctx, createStorageTelemetry(ctx));
   configureContext?.(ctx);
   // Explicit opt-in from an embedding host or the CLI's default-off environment setting.
-  if (webrtcProof) ctx.webrtcRelay = createWebRtcRelay({
-    getTopology: (sn) => ctx.resolveMediaTopology(sn),
-    sendEvent: (owner, event) => ctx.send(owner, event),
-    ...webrtcProof,
-  });
+  if (webrtcProof)
+    ctx.webrtcRelay = createWebRtcRelay({
+      getTopology: (sn) => ctx.resolveMediaTopology(sn),
+      sendEvent: (owner, event) => ctx.send(owner, event),
+      ...webrtcProof,
+    });
   const route = createHttpHandler(ctx);
   const sockets = new Set();
   const httpServer = http.createServer((req, res) => {
@@ -77,6 +79,16 @@ export function createBridgeService({
   });
   Object.assign(ctx, createWsServer(ctx, httpServer, { allowCommand }));
   const listeners = [
+    [
+      "lateContraryEffect",
+      (raw) => {
+        const effect = lateContraryEvent(raw);
+        if (!effect || state.flags.stopping) return;
+        pilotLog(`command_late_contrary_${effect.state}`);
+        ctx.recordLateContraryEffect?.(effect.state);
+        ctx.broadcast({ event: "lateContraryEffect", ...effect });
+      },
+    ],
     [
       "rtcLateEffect",
       (event) => {
@@ -152,6 +164,7 @@ export function createBridgeService({
   function stop() {
     if (stopping) return stopping;
     state.flags.stopping = true;
+    ctx.stopBoundedStateWrites?.();
     ctx.webrtcRelay?.stop();
     timing.stop();
     const storageStopping = ctx.stopStorageTelemetry?.();

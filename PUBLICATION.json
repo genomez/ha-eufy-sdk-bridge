@@ -1,43 +1,52 @@
 {
   "schemaVersion": 1,
-  "preparationDate": "2026-10-18",
-  "version": "0.3.1-s1.experimental.6",
-  "status": "published-source-delivery",
-  "published": true,
-  "npmPublication": false,
-  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.6",
-  "candidateSourceManifest": "SOURCE_MANIFEST.json",
-  "candidatePreparationReceiptsAreHistorical": true,
-  "acceptedMonorepoCommit": "c254aac11d4ad8e599cd14fa89e5e47e33264516",
-  "integrationVersion": "0.3.1-s1.experimental.6",
-  "addonVersion": "0.4.1-s1.experimental.6",
+  "version": "0.3.1-s1.experimental.7",
+  "status": "prepared-locally-unpublished",
+  "published": false,
+  "acceptedMonorepoCommit": "6deea127459f368edb24d7d3df59dcaf60d5b508",
+  "preparationBaseCommit": "bee38ea57ec29b5d40f82314bf76896f582bf90c",
+  "addonVersion": "0.4.1-s1.experimental.7",
+  "integrationVersion": "0.3.1-s1.experimental.7",
   "relayDefault": false,
   "keepaliveMs": 29000,
-  "knownLimitations": [
-    "Accepted Linux amd64 image passed isolated smoke checks; this exact release has no claimed physical-device, live HA/HACS installation or overnight soak acceptance.",
-    "Earlier dated dev3 companion references are preserved as historical source records."
-  ],
-  "verification": {
-    "tests": 238,
-    "passed": 238,
-    "sdkResolution": "Freshly built accepted RC9 SDK bundle; test-only resolver overrides shared historical dependency."
-  },
-  "publicationDocumentationOverrides": {
-    "README.md": {
-      "candidateSha256": "3282c87fe2429dbc1e5b2f96d0bc89656cb968c2c2fa307e0d5303a52b10a121",
-      "preparedSha256": "05cc2d66776c0f0f1e067b6b309a8ef24f57be9ef3ab927858a06a6df1964125",
-      "reason": "Add current unpublished preparation and intended corresponding-source location; preserve dated records and implementation bytes.",
-      "publicationSha256": "31ce154d60c36aa5280aa6d9e3aa2bcdd7a523e9c2533f9004e79a8b95d7976c"
+  "runtimeSourceRelease": null,
+  "registryManifestDigest": null,
+  "correspondingSourceArchive": null,
+  "sourceExceptions": {
+    "BUILD_PROVENANCE.json": {
+      "inputSha256": "385040ca91f1967d455422c12634a5e24f7d59452c34d478866a7d3f759964e3",
+      "preparedSha256": "5d105babedec0fadf2fe3b2180fad52fc5e899c8e9666e650ca0d98ec4d5e095",
+      "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
     },
     "EXPERIMENTAL.md": {
-      "candidateSha256": "fcbaeffb8b728123cbdf3b09af69c983e9612ca3d42b5d675f03b16e6e49b222",
-      "preparedSha256": "67f116b5804b16171234e03e11590c7150ec5f0918f59dd040f7f7039e534a8d",
-      "reason": "Add current unpublished preparation and intended corresponding-source location; preserve dated records and implementation bytes.",
-      "publicationSha256": "c109b5301e661761d419ae49015ef8c383bdfb5a54a8bdf5231f092d09a47f14"
+      "inputSha256": "fcbaeffb8b728123cbdf3b09af69c983e9612ca3d42b5d675f03b16e6e49b222",
+      "preparedSha256": "69eb7875322db60702a95775b688d3c163b49a12424f03c1e32d8665d99a4e5a",
+      "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
     },
-    "PUBLICATION.json": {
-      "reason": "Added publication preparation and documentation exception receipt; absent from monorepo bridge subtree."
+    "MODIFICATIONS.md": {
+      "inputSha256": "430514d22285ac8828570d52cd0689efb9de45aae2c48471f12dc2edad24f926",
+      "preparedSha256": "38e88f5a92c1dde6cf286a85e93cbce61fa92cf742ef882414c0133c853e5eff",
+      "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
+    },
+    "README.md": {
+      "inputSha256": "3282c87fe2429dbc1e5b2f96d0bc89656cb968c2c2fa307e0d5303a52b10a121",
+      "preparedSha256": "593b7394bed936efb05e2a550e527e00891fa73b34b1febf5ccd8e5316acb228",
+      "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
+    },
+    "package-lock.json": {
+      "inputSha256": "1950e8a470c2488f53df657c4cce63fbbef3a89dbd568d3a7a65322243b3ce10",
+      "preparedSha256": "617d4654237e6e94569eab3fa32248cb1055b6efa4ea0744eca03ead50a6e8a2",
+      "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
+    },
+    "package.json": {
+      "inputSha256": "0b8cdfcde57b1580b96f0d8635376749d02b74f38c4dfc3e2825212dc2ce878f",
+      "preparedSha256": "89fbc19e0e395d13738a57db97001fc570d07613ece7e15f062284065c106d98",
+      "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
+    },
+    "test/helpers/sdk-resolve.mjs": {
+      "inputSha256": "a05807c6f191ea26c55ab9b877e337e8bfcc244a60676d7cb3cf48cd6ca45cbd",
+      "preparedSha256": "4fa7e12af4764a538c3bb13b0ec62cd47fa85ee532c26d35a4fb1e5634a35ee9",
+      "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
     }
-  },
-  "publicationDate": "2026-10-18"
+  }
 }

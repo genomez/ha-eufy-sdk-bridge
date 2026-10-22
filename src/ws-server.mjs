@@ -1,4 +1,4 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-16. */
+/** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { redactSecrets } from "./redact.mjs";
 import { pilotLog, publicError, commandFailureEvent } from "./pilot-log.mjs";
 // The WebSocket control plane: state, events, and auth over one socket. Attaches to the shared HTTP
@@ -9,6 +9,8 @@ import { WebSocketServer } from "ws";
 import { listLightEffects } from "@mega-yfue/eufy-sdk";
 import { SOLIX_CONTROLS, SOLIX_DISABLED } from "./solix.mjs";
 import { WEBRTC_ERRORS } from "./webrtc-relay.mjs";
+import { createBoundedStateWrites, boundedStateWritesCapability } from "./bounded-state-writes.mjs";
+import { createLightConfirmations, lateContraryEffectsCapability } from "./late-contrary-effects.mjs";
 
 // Commands that require an authenticated eufy session â€” gated in one place before dispatch. (auth.* and
 // solix.* run before this gate, so a client can drive 2FA/captcha and Solix while eufy is still pending.)
@@ -30,6 +32,14 @@ const AUTHED_COMMANDS = new Set([
 export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
   const { cfg, eufy, SCHEMA_VERSION, DEBUG, dbg } = ctx;
   const { flags, clients } = ctx.state;
+  const bounded = createBoundedStateWrites({
+    eufy,
+    available: () => flags.ready && !flags.sessionLost && !flags.stopping && !ctx.authPolicy?.blocked,
+  });
+  const confirmations = createLightConfirmations({
+    eufy,
+    available: () => flags.ready && !flags.sessionLost && !flags.stopping && !ctx.authPolicy?.blocked,
+  });
 
   const send = (ws, obj) => {
     if (ws.readyState === ws.OPEN) ws.send(redactSecrets(JSON.stringify(obj)));
@@ -54,8 +64,16 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
       schemaVersion: SCHEMA_VERSION,
       auth: ctx.authStatus(),
       webrtcRelay: Boolean(ctx.webrtcRelay),
+      ...(typeof eufy.setPropertyWithReceipt === "function"
+        ? { boundedStateWrites: boundedStateWritesCapability }
+        : {}),
+      ...(typeof eufy.confirmLateContraryEffect === "function"
+        ? { lateContraryEffects: lateContraryEffectsCapability }
+        : {}),
     });
     ws.on("close", () => {
+      bounded.ownerLost(ws);
+      confirmations.ownerLost(ws);
       ctx.webrtcRelay?.ownerLost(ws);
       clients.delete(ws);
     });
@@ -71,6 +89,56 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return send(ws, { ok: false, error: "bad json" });
     const { id, cmd } = msg;
+    if (cmd === "device.confirmLight") {
+      const safeId =
+        Number.isSafeInteger(id) || (typeof id === "string" && id.length > 0 && id.length <= 128) ? id : undefined;
+      try {
+        if (allowCommand && !allowCommand(msg)) throw { code: "light_confirmation_invalid" };
+        const confirmation = await confirmations.execute(ws, msg);
+        ctx.recordLightConfirmation?.("completed");
+        pilotLog("light_confirmation_completed");
+        return send(ws, { id: safeId, ok: true, confirmation });
+      } catch (error) {
+        const allowed = new Set([
+          "light_confirmation_invalid",
+          "light_confirmation_closed",
+          "light_confirmation_unsupported",
+          "light_confirmation_busy",
+          "light_confirmation_failed",
+        ]);
+        const code = allowed.has(error?.code) ? error.code : "light_confirmation_failed";
+        ctx.recordLightConfirmation?.("failed");
+        pilotLog(code);
+        return send(ws, { id: safeId, ok: false, error: "Light confirmation failed", code });
+      }
+    }
+    if (
+      cmd === "boundedStateClock" ||
+      cmd === "boundedStateCancel" ||
+      (cmd === "device.set" && msg.execution !== undefined)
+    ) {
+      const boundedId =
+        Number.isSafeInteger(id) || (typeof id === "string" && id.length > 0 && id.length <= 128) ? id : undefined;
+      try {
+        if (allowCommand && !allowCommand(msg)) throw { code: "command_validation_failed" };
+        if (cmd === "boundedStateClock") return send(ws, { id: boundedId, ok: true, ...bounded.clock(ws, msg) });
+        if (cmd === "boundedStateCancel") return send(ws, { id: boundedId, ok: true, ...bounded.cancel(ws, msg) });
+        pilotLog("command_started");
+        ctx.recordCommand?.("started");
+        const receipt = await bounded.execute(ws, msg);
+        const accepted = ["acknowledged", "pending_accepted"].includes(receipt.status);
+        ctx.recordCommand?.(accepted ? "completed" : "failed", { code: `command_${receipt.status}` });
+        pilotLog(accepted ? "command_completed" : `command_${receipt.status}`);
+        return send(ws, { id: boundedId, ok: true, receipt });
+      } catch (error) {
+        const code = commandFailureEvent(error);
+        if (cmd === "device.set") {
+          ctx.recordCommand?.("failed", error);
+          pilotLog(code);
+        }
+        return send(ws, { id: boundedId, ok: false, error: "Bounded command failed", code });
+      }
+    }
     const isWebRtc = typeof cmd === "string" && cmd.startsWith("webrtc.");
     // Closed-schema errors and no debug interpolation of signaling/private payloads.
     if (isWebRtc) {
@@ -82,10 +150,17 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
           throw { code: "webrtc_closed" };
         let result;
         switch (cmd) {
-          case "webrtc.open": result = await relay.open(ws, msg); break;
-          case "webrtc.candidate": result = relay.candidate(ws, msg); break;
-          case "webrtc.close": result = relay.close(ws, msg); break;
-          default: throw { code: "webrtc_failed" };
+          case "webrtc.open":
+            result = await relay.open(ws, msg);
+            break;
+          case "webrtc.candidate":
+            result = relay.candidate(ws, msg);
+            break;
+          case "webrtc.close":
+            result = relay.close(ws, msg);
+            break;
+          default:
+            throw { code: "webrtc_failed" };
         }
         return send(ws, { id, ok: true, ...result });
       } catch (error) {
@@ -296,6 +371,8 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
 
   let closing;
   function closeWebSocketServer() {
+    bounded.stop();
+    confirmations.stop();
     for (const ws of clients) {
       ctx.webrtcRelay?.ownerLost(ws);
       ws.terminate();
@@ -304,5 +381,14 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
     return closing;
   }
 
-  return { send, broadcast, handleMessage, closeWebSocketServer };
+  return {
+    send,
+    broadcast,
+    handleMessage,
+    closeWebSocketServer,
+    stopBoundedStateWrites() {
+      bounded.stop();
+      confirmations.stop();
+    },
+  };
 }

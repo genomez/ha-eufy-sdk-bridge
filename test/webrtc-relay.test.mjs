@@ -268,6 +268,41 @@ test("forwarded offer holds station after close, through late answer and actual 
   relay.close(nextOwner, { sessionId: "next" });
 });
 
+test("offer can settle after the 25-second IDR allowance and canceled offers stay retired past 45 seconds", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const { relay, sockets } = setup();
+  const owner = {};
+  const previous = await relay.acquireFeed("B");
+  const startedAt = Date.now();
+  const pending = relay.open(owner, offer());
+  await tick();
+  t.mock.timers.tick(11_749); await tick();
+  assert.equal(sockets.length, 0);
+  previous.finish();
+  t.mock.timers.tick(250); await tick();
+  await tick(); sockets[0].open();
+  t.mock.timers.tick(29_999); await tick();
+  sockets[0].answer();
+  assert.deepEqual(await pending, { sdp: "synthetic answer" });
+  assert.equal(Date.now() - startedAt, 41_998);
+  relay.close(owner, { sessionId: "one" });
+  assert.equal(sockets[0].closes, 1);
+
+  const canceled = outcome(relay.open(owner, offer("canceled")));
+  await tick(); sockets[1].open();
+  t.mock.timers.tick(24_999); await tick();
+  relay.close(owner, { sessionId: "canceled" });
+  await code(canceled, "webrtc_closed");
+  t.mock.timers.tick(45_001); await tick();
+  assert.equal(sockets[1].closes, 0);
+  await code(relay.open(owner, offer("canceled")), "webrtc_closed");
+  sockets[1].answer(); sockets[1].answer();
+  assert.equal(sockets[1].closes, 1);
+  assert.equal(sockets.length, 2);
+  const feed = await relay.acquireFeed("B"); feed.finish();
+  relay.stop();
+});
+
 test("no answer or failure leaves the tombstoned forwarded offer reserved, even if feed closed", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const { relay, sockets } = setup();

@@ -1,3 +1,5 @@
+import { commandHealthEvent } from "./command-health.mjs";
+
 const subscriptions = new WeakMap();
 
 /** Subscribe state/event forwarding without starting services, warmups or timers; return cleanup. */
@@ -11,6 +13,10 @@ export function wireDeviceEvents(ctx) {
     listeners.push([event, listener]);
   };
   on("deviceState", ctx.bumpActivity);
+  on("commandHealth", (raw) => {
+    const health = commandHealthEvent(raw);
+    if (health) ctx.broadcast({ event: "commandHealth", ...health });
+  });
   on("propertiesObserved", (payload) => {
     const bridgeObservedAtMs = Date.now();
     if (

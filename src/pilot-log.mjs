@@ -1,7 +1,22 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-17. */
+/** Modified for genomez S1 experimental source preview, 2026-10-18. */
 // A finite event vocabulary; no identifiers, payloads or exception text enter stdout.
 const events = new Set([
   "command_started",
+  "command_late_contrary_contrary",
+  "command_late_contrary_matched",
+  "command_late_contrary_expired",
+  "command_late_contrary_superseded",
+  "command_late_contrary_closed",
+  "command_late_contrary_recovery_settled",
+  "command_late_contrary_suspended",
+  "command_late_contrary_detection_exhausted",
+  "command_late_contrary_verification_exhausted",
+  "light_confirmation_completed",
+  "light_confirmation_failed",
+  "light_confirmation_invalid",
+  "light_confirmation_closed",
+  "light_confirmation_unsupported",
+  "light_confirmation_busy",
   "command_completed",
   "command_ack_timeout",
   "command_expired_before_send",
@@ -12,12 +27,33 @@ const events = new Set([
   "command_connect_timeout",
   "command_unsupported",
   "command_other_error",
+  "command_validation_failed",
+  "command_clock_unavailable",
+  "command_duplicate_request",
+  "command_queue_full",
+  "command_superseded_before_send",
+  "command_cancelled_before_send",
+  "command_cancelled_after_send",
+  "command_closed_before_send",
+  "command_closed_after_send",
   "command_late_effect_scheduled",
   "command_late_effect_pending_accepted",
   "command_late_effect_confirmed",
   "command_late_effect_expired",
   "command_late_effect_superseded",
   "command_late_effect_read_failed",
+  "command_late_effect_retry_eligible",
+  "command_late_effect_retry_queued",
+  "command_late_effect_retry_sent",
+  "command_late_effect_retry_confirmed",
+  "command_late_effect_retry_superseded",
+  "command_late_effect_retry_skipped_read_failed",
+  "command_late_effect_retry_skipped_no_qualified_first_read",
+  "command_late_effect_retry_skipped_deadline",
+  "command_late_effect_retry_skipped_disconnected",
+  "command_late_effect_retry_skipped_cancelled",
+  "command_late_effect_retry_skipped_already_used",
+  "command_late_effect_retry_skipped_already_matches",
   "forced_shutdown",
   "server_1",
   "server_2",
@@ -91,8 +127,34 @@ export function publicError(error) {
   return names.has(error?.name) ? error.name : "Operation failed";
 }
 
+const failureEvents = new Set(
+  [
+    "ack_timeout",
+    "expired_before_send",
+    "expired_after_send",
+    "rejected",
+    "not_sent",
+    "session_closed",
+    "connect_timeout",
+    "unsupported",
+    "other_error",
+    "validation_failed",
+    "clock_unavailable",
+    "duplicate_request",
+    "queue_full",
+    "superseded_before_send",
+    "cancelled_before_send",
+    "cancelled_after_send",
+    "closed_before_send",
+    "closed_after_send",
+  ].map((status) => `command_${status}`),
+);
+
 /** Classify known command failures without exporting exception text or attached data. */
 export function commandFailureEvent(error) {
+  if (typeof error?.code === "string" && failureEvents.has(error.code)) return error.code;
+  if (typeof error?.status === "string" && failureEvents.has(`command_${error.status}`))
+    return `command_${error.status}`;
   const message = typeof error?.message === "string" ? error.message : "";
   if (message === "RTC command ACK timed out; outcome unknown") return "command_ack_timeout";
   if (message === "RTC command timed out before send") return "command_expired_before_send";

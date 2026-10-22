@@ -1,4 +1,4 @@
-/** Modified for genomez S1 experimental source preview, 2026-10-17. */
+/** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import "./fixtures/no-socket-guard.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -117,6 +117,35 @@ function fixture(eligible = true) {
         owner,
         Buffer.from(JSON.stringify({ id: 1, cmd: "device.set", sn: CAMERA, name: "light", value: false })),
       ),
+    callBounded: async () => {
+      const sentAt = Date.now();
+      await ws.handleMessage(
+        owner,
+        Buffer.from(JSON.stringify({ id: "clock", cmd: "boundedStateClock", version: 1, callerSentAtMs: sentAt })),
+      );
+      const sample = replies.at(-1);
+      return ws.handleMessage(
+        owner,
+        Buffer.from(
+          JSON.stringify({
+            id: 2,
+            cmd: "device.set",
+            sn: CAMERA,
+            name: "light",
+            value: false,
+            execution: {
+              version: 1,
+              profile: "bounded-state-v1",
+              callerExpiresAtMs: sentAt + 80000,
+              remainingBudgetMs: 79000,
+              clockToken: sample.clockToken,
+              callerReceivedAtMs: Date.now(),
+              clockUncertaintyMs: 100,
+            },
+          }),
+        ),
+      );
+    },
     close: async () => {
       stop();
       await eufy.disconnect();
@@ -124,6 +153,28 @@ function fixture(eligible = true) {
     },
   };
 }
+
+test("bounded RPC uses its actual SDK receipt and no inline information read", async () => {
+  const f = fixture();
+  try {
+    const call = f.callBounded();
+    await flush();
+    assert.equal(f.session.sent.length, 1);
+    assert.equal(parsePortalHeader(f.session.sent[0]).commandId, 1700);
+    f.session.ack(f.session.sent[0]);
+    await call;
+    const response = f.replies.find((reply) => reply.id === 2);
+    assert.equal(response.ok, true);
+    assert.equal(response.receipt.status, "acknowledged");
+    assert.equal(response.receipt.sendAttempted, true);
+    assert.equal(response.receipt.effect, "unconfirmed");
+    assert.equal(typeof response.receipt.attempt, "number");
+    assert.equal(f.session.sent.length, 1);
+    assert.doesNotMatch(JSON.stringify(response), /T8425|T9000|synthetic|sessionGeneration|sentAt/);
+  } finally {
+    await f.close();
+  }
+});
 
 for (const finalValue of [0, 1])
   test(`eligible -108 succeeds pending and forwards late real value ${finalValue}`, async (t) => {
