@@ -49,5 +49,7 @@
     "src/webrtc-relay.mjs": "8986f17cd215b443abfc24d4670b944ac03b0b8bbb5f2656dd6af5b530285157",
     "src/ws-server.mjs": "9ee5a18dd0e5b1be1966cfad586b2c3337fda0387e4748c66e3ce3c92a41151a"
   },
-  "qualification": "Same runtime implementation as review.14 r3; exact release image qualification recorded separately."
+  "qualification": "Same runtime implementation as review.14 r3; exact release image qualification recorded separately.",
+  "sdkArtifactSha256": "19bf92f2062ae103ede942896ffa1310996778b5a9a5876b9ae2c9df91c60ffe",
+  "sdkArtifactIntegrity": "sha512-C3snwnLh5pzNas5GaIR7A/wQ6ehJGjUpCIbx+6ntvlHHVCLYO8em38j9QhgBWKD+A+o+sMqgv9bDfG9PHTFOhA=="
 }

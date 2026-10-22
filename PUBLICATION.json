@@ -15,7 +15,7 @@
   "sourceExceptions": {
     "BUILD_PROVENANCE.json": {
       "inputSha256": "385040ca91f1967d455422c12634a5e24f7d59452c34d478866a7d3f759964e3",
-      "preparedSha256": "5d105babedec0fadf2fe3b2180fad52fc5e899c8e9666e650ca0d98ec4d5e095",
+      "preparedSha256": "e2c5014f394e7a2f9fe8f91c2e16b793e4d095efe976d9ebe1220156c157f0e5",
       "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
     },
     "EXPERIMENTAL.md": {
@@ -35,7 +35,7 @@
     },
     "package-lock.json": {
       "inputSha256": "1950e8a470c2488f53df657c4cce63fbbef3a89dbd568d3a7a65322243b3ce10",
-      "preparedSha256": "617d4654237e6e94569eab3fa32248cb1055b6efa4ea0744eca03ead50a6e8a2",
+      "preparedSha256": "8d9b390aa906628bcca668bbfeb1b05894b352188e1c236bb842752c3341a752",
       "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
     },
     "package.json": {
@@ -48,5 +48,7 @@
       "preparedSha256": "4fa7e12af4764a538c3bb13b0ec62cd47fa85ee532c26d35a4fb1e5634a35ee9",
       "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
     }
-  }
+  },
+  "sdkArtifactSha256": "19bf92f2062ae103ede942896ffa1310996778b5a9a5876b9ae2c9df91c60ffe",
+  "sdkArtifactIntegrity": "sha512-C3snwnLh5pzNas5GaIR7A/wQ6ehJGjUpCIbx+6ntvlHHVCLYO8em38j9QhgBWKD+A+o+sMqgv9bDfG9PHTFOhA=="
 }

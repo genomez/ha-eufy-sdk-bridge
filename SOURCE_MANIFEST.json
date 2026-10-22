@@ -22,8 +22,8 @@
       "sha256": "0a90abd221c4877af6c6bd58de9df03620e81ad9abfe79e3b0395dc17fa7d672"
     },
     "BUILD_PROVENANCE.json": {
-      "bytes": 4592,
-      "sha256": "5d105babedec0fadf2fe3b2180fad52fc5e899c8e9666e650ca0d98ec4d5e095"
+      "bytes": 4808,
+      "sha256": "e2c5014f394e7a2f9fe8f91c2e16b793e4d095efe976d9ebe1220156c157f0e5"
     },
     "CONTRIBUTING.md": {
       "bytes": 974,
@@ -42,8 +42,8 @@
       "sha256": "38e88f5a92c1dde6cf286a85e93cbce61fa92cf742ef882414c0133c853e5eff"
     },
     "PUBLICATION.json": {
-      "bytes": 2895,
-      "sha256": "dafd90711e53f7fdb5e6ffba20d0f2fd4b33a266b763ff17de15d6161d50837c"
+      "bytes": 3111,
+      "sha256": "4a26cf834cabe2375d8360d5b5a3c39445da3ac4da9447237599d683ffca9cc9"
     },
     "README.md": {
       "bytes": 3845,
@@ -75,7 +75,7 @@
     },
     "package-lock.json": {
       "bytes": 26727,
-      "sha256": "617d4654237e6e94569eab3fa32248cb1055b6efa4ea0744eca03ead50a6e8a2"
+      "sha256": "8d9b390aa906628bcca668bbfeb1b05894b352188e1c236bb842752c3341a752"
     },
     "package.json": {
       "bytes": 1371,
