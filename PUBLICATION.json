@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.7",
-  "status": "prepared-locally-unpublished",
-  "published": false,
+  "status": "published-source-delivery",
+  "published": true,
   "acceptedMonorepoCommit": "6deea127459f368edb24d7d3df59dcaf60d5b508",
   "preparationBaseCommit": "bee38ea57ec29b5d40f82314bf76896f582bf90c",
   "addonVersion": "0.4.1-s1.experimental.7",
   "integrationVersion": "0.3.1-s1.experimental.7",
   "relayDefault": false,
   "keepaliveMs": 29000,
-  "runtimeSourceRelease": null,
+  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.7",
   "registryManifestDigest": null,
   "correspondingSourceArchive": null,
   "sourceExceptions": {
@@ -50,5 +50,19 @@
     }
   },
   "sdkArtifactSha256": "19bf92f2062ae103ede942896ffa1310996778b5a9a5876b9ae2c9df91c60ffe",
-  "sdkArtifactIntegrity": "sha512-C3snwnLh5pzNas5GaIR7A/wQ6ehJGjUpCIbx+6ntvlHHVCLYO8em38j9QhgBWKD+A+o+sMqgv9bDfG9PHTFOhA=="
+  "sdkArtifactIntegrity": "sha512-C3snwnLh5pzNas5GaIR7A/wQ6ehJGjUpCIbx+6ntvlHHVCLYO8em38j9QhgBWKD+A+o+sMqgv9bDfG9PHTFOhA==",
+  "publicationDate": "2026-10-23T14:05:06.923766+00:00",
+  "sourcePreparationCommit": "ac010388e6b8c3f7db95b4ef15b1c56ce7a98f44",
+  "publicationDocumentationOverrides": {
+    "README.md": {
+      "preparedSha256": "593b7394bed936efb05e2a550e527e00891fa73b34b1febf5ccd8e5316acb228",
+      "publicationSha256": "3e030f2e72634ae72b11b75208194e0e34313e95e5cd03e7d9f5ac82d46ba878",
+      "reason": "Bind independently verified public release URL; runtime and implementation unchanged."
+    },
+    "EXPERIMENTAL.md": {
+      "preparedSha256": "69eb7875322db60702a95775b688d3c163b49a12424f03c1e32d8665d99a4e5a",
+      "publicationSha256": "3b535dca3d5d42555ca03a31cb4ac515a6ab74058b93fdb2d1c3591643a54f57",
+      "reason": "Bind independently verified public release URL; runtime and implementation unchanged."
+    }
+  }
 }

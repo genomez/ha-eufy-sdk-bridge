@@ -3,7 +3,7 @@
   "acceptedMonorepoCommit": "6deea127459f368edb24d7d3df59dcaf60d5b508",
   "publicBaseCommit": "bee38ea57ec29b5d40f82314bf76896f582bf90c",
   "version": "0.3.1-s1.experimental.7",
-  "status": "prepared-locally-unpublished",
+  "status": "published-source-delivery",
   "files": {
     ".env.example": {
       "bytes": 3067,
@@ -30,8 +30,8 @@
       "sha256": "000a5f67f803460da3e1defa805ffd27035670109c2a4d40f9c6bb6aa6b2a322"
     },
     "EXPERIMENTAL.md": {
-      "bytes": 13186,
-      "sha256": "69eb7875322db60702a95775b688d3c163b49a12424f03c1e32d8665d99a4e5a"
+      "bytes": 13343,
+      "sha256": "3b535dca3d5d42555ca03a31cb4ac515a6ab74058b93fdb2d1c3591643a54f57"
     },
     "LICENSE": {
       "bytes": 11339,
@@ -42,12 +42,12 @@
       "sha256": "38e88f5a92c1dde6cf286a85e93cbce61fa92cf742ef882414c0133c853e5eff"
     },
     "PUBLICATION.json": {
-      "bytes": 3111,
-      "sha256": "4a26cf834cabe2375d8360d5b5a3c39445da3ac4da9447237599d683ffca9cc9"
+      "bytes": 4009,
+      "sha256": "4726979dc5a77c6621303db80ea10eb44a21b1ffe11f9a07539cfe46bca33bce"
     },
     "README.md": {
-      "bytes": 3845,
-      "sha256": "593b7394bed936efb05e2a550e527e00891fa73b34b1febf5ccd8e5316acb228"
+      "bytes": 4002,
+      "sha256": "3e030f2e72634ae72b11b75208194e0e34313e95e5cd03e7d9f5ac82d46ba878"
     },
     "bin/pilot-process.mjs": {
       "bytes": 1364,
@@ -401,5 +401,6 @@
       "bytes": 7826,
       "sha256": "2f794ddb68383000f1baa7cdcd35fa7d434849bf1bd46d2b53ebcfa8b36a1d1d"
     }
-  }
+  },
+  "preparationRecordsHistorical": true
 }
