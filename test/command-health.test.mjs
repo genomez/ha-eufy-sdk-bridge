@@ -292,3 +292,16 @@ test("health revisions survive receipt and event projection and invalid revision
   for (const revision of [-1, NaN, Infinity, 1.1, "1", null, Number.MAX_SAFE_INTEGER + 1])
     assert.equal(commandHealth({ status: "healthy", cooldownRemainingMs: 0, revision }), null);
 });
+
+test("retry-skipped command degradation counts survive anonymous diagnostics and reject malformed totals", () => {
+  const raw = { command_degraded: 3, private: "private" };
+  const eufy = { getRtcCommandDiagnostics: () => ({ lateEffect: { retrySkipped: raw } }) };
+  const diagnostics = createDiagnostics({ eufy, state: createState() });
+  const counts = () => diagnostics.diagnostics(false).rtcCommands.lateEffect.retrySkipped;
+  assert.equal(counts().command_degraded, 3);
+  assert.doesNotMatch(JSON.stringify(counts()), /private/);
+  for (const invalid of [null, -1, 0.5, "1", NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    raw.command_degraded = invalid;
+    assert.equal(counts().command_degraded, null);
+  }
+});

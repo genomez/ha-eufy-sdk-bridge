@@ -4,15 +4,16 @@ import { pilotLog, publicError, commandFailureEvent } from "./pilot-log.mjs";
 // The WebSocket control plane: state, events, and auth over one socket. Attaches to the shared HTTP
 // server so a client can reach /ws to drive 2FA/captcha before the bridge is authenticated. Owns the
 // client set and the two fan-out helpers (`send`, `broadcast`) that the rest of the bridge publishes
-// through â€” returned so server.mjs can hang them on ctx for auth.mjs / boot.mjs / http-routes.mjs.
+// through — returned so server.mjs can hang them on ctx for auth.mjs / boot.mjs / http-routes.mjs.
 import { WebSocketServer } from "ws";
 import { listLightEffects } from "@mega-yfue/eufy-sdk";
 import { SOLIX_CONTROLS, SOLIX_DISABLED } from "./solix.mjs";
 import { WEBRTC_ERRORS } from "./webrtc-relay.mjs";
 import { createBoundedStateWrites, boundedStateWritesCapability } from "./bounded-state-writes.mjs";
 import { createLightConfirmations, lateContraryEffectsCapability } from "./late-contrary-effects.mjs";
+import { createRequestEvidence } from "./request-evidence.mjs";
 
-// Commands that require an authenticated eufy session â€” gated in one place before dispatch. (auth.* and
+// Commands that require an authenticated eufy session — gated in one place before dispatch. (auth.* and
 // solix.* run before this gate, so a client can drive 2FA/captcha and Solix while eufy is still pending.)
 const AUTHED_COMMANDS = new Set([
   "devices.list",
@@ -29,9 +30,10 @@ const AUTHED_COMMANDS = new Set([
   "stream.stop",
 ]);
 
-export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
+export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } = {}) {
   const { cfg, eufy, SCHEMA_VERSION, DEBUG, dbg } = ctx;
   const { flags, clients } = ctx.state;
+  const requests = createRequestEvidence(requestClocks);
   const bounded = createBoundedStateWrites({
     eufy,
     available: () => flags.ready && !flags.sessionLost && !flags.stopping && !ctx.authPolicy?.blocked,
@@ -81,6 +83,33 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
   });
 
   async function handleMessage(ws, raw) {
+    const finish = requests.begin();
+    let method = "other";
+    let outcome = "handler_failed";
+    let socketOpenAtReply = null;
+    let replyFailed = false;
+    const replySend = (socket, response) => {
+      socketOpenAtReply = socket.readyState === socket.OPEN;
+      outcome = response.ok === false ? "failed" : "success";
+      if (response.receipt && !["acknowledged", "pending_accepted"].includes(response.receipt.status))
+        outcome = "failed";
+      try {
+        return send(socket, response);
+      } catch (error) {
+        replyFailed = true;
+        throw error;
+      }
+    };
+    try {
+      return await dispatchMessage(ws, raw, replySend, (cmd) => {
+        method = cmd;
+      });
+    } finally {
+      finish(method, replyFailed ? "reply_failed" : outcome, socketOpenAtReply);
+    }
+  }
+
+  async function dispatchMessage(ws, raw, send, observeMethod) {
     let msg;
     try {
       msg = JSON.parse(raw.toString());
@@ -89,6 +118,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return send(ws, { ok: false, error: "bad json" });
     const { id, cmd } = msg;
+    observeMethod(cmd);
     if (cmd === "device.confirmLight") {
       const safeId =
         Number.isSafeInteger(id) || (typeof id === "string" && id.length > 0 && id.length <= 128) ? id : undefined;
@@ -185,7 +215,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
         ...(code ? { code } : {}),
       });
     let commandErrorCode;
-    // Reject a bad request by throwing â€” the outer catch renders it as { ok:false, error }, the same
+    // Reject a bad request by throwing — the outer catch renders it as { ok:false, error }, the same
     // client-visible result as `return fail(...)`, so the shared guards below don't thread a return.
     const reject = (message) => {
       throw new Error(message);
@@ -204,11 +234,11 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
 
       // Everything else that isn't auth/Solix-status needs an authenticated eufy session.
       if (AUTHED_COMMANDS.has(cmd) && (!flags.ready || flags.sessionLost || ctx.authPolicy?.blocked)) {
-        return fail("not authenticated â€” query auth.status and complete 2FA/captcha first");
+        return fail("not authenticated — query auth.status and complete 2FA/captcha first");
       }
 
       switch (cmd) {
-        // â”€â”€ auth â”€â”€
+        // ── auth ──
         case "auth.status":
           return reply({ auth: ctx.authStatus() });
         case "auth.submit": {
@@ -223,7 +253,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
           await ctx.requestLogin();
           return reply({ auth: ctx.authStatus() });
 
-        // â”€â”€ Anker Solix status / challenge (not device controls â€” no target device / graceful when off) â”€â”€
+        // ── Anker Solix status / challenge (not device controls — no target device / graceful when off) ──
         case "solix.status":
           return reply({
             solix: ctx.solixStatus?.() ?? {
@@ -240,7 +270,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
           return reply({ solix: ctx.solixStatus() });
         }
 
-        // â”€â”€ device control (require auth â€” gated above) â”€â”€
+        // ── device control (require auth — gated above) ──
         case "devices.list":
           return reply({ devices: await ctx.deviceList() });
         case "device.state":
@@ -257,7 +287,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
           const t0 = Date.now();
           pilotLog("command_started");
           ctx.recordCommand?.("started");
-          dbg(`device.set â†’ setProperty sn=${msg.sn} name=${msg.name} value=${JSON.stringify(msg.value)}`);
+          dbg(`device.set → setProperty sn=${msg.sn} name=${msg.name} value=${JSON.stringify(msg.value)}`);
           try {
             await eufy.setProperty(msg.sn, msg.name, msg.value);
             pilotLog("command_completed");
@@ -273,10 +303,10 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
           return reply({});
         }
         case "device.action": {
-          // Invoke a capability ACTION â€” a typed method that isn't a scalar writable property, so
+          // Invoke a capability ACTION — a typed method that isn't a scalar writable property, so
           // `device.set` can't reach it (e.g. smart_light setColor({red,green,blue}) / setEffect(id)).
           // `{ sn, action, args? }`; args is the positional argument list. Only capability-surface
-          // methods are reachable â€” the same controls the SDK intends a caller to invoke.
+          // methods are reachable — the same controls the SDK intends a caller to invoke.
           const action = String(msg.action ?? "");
           const args = Array.isArray(msg.args) ? msg.args : [];
           const dev = await (ctx.getDevice?.(msg.sn) ?? eufy.getDevice(msg.sn));
@@ -294,7 +324,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
             return fail("Requested action is unavailable", commandErrorCode);
           }
           const t0 = Date.now();
-          dbg(`device.action â†’ ${action} sn=${msg.sn} args=${JSON.stringify(args)}`);
+          dbg(`device.action → ${action} sn=${msg.sn} args=${JSON.stringify(args)}`);
           try {
             const result = await target[leaf](...args);
             dbg(`device.action OK ${action} sn=${msg.sn} (${Date.now() - t0}ms)`);
@@ -313,7 +343,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
         }
         case "event.refresh": {
           // Manual "Last event" image refresh (debug/force button): pull the newest cover NOW and nudge
-          // HA. Answers { changed } â€” true when a genuinely newer image landed.
+          // HA. Answers { changed } — true when a genuinely newer image landed.
           const changed = ctx.forceRefreshEventImage ? await ctx.forceRefreshEventImage(msg.sn) : false;
           return reply({ changed });
         }
@@ -322,10 +352,10 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
           // { refresh:true } to rebuild. Only the entries the SDK can actually drive over the wire.
           if (!effectsCache || msg.refresh) {
             // The SDK exposes the gallery as a barrel export over the public `eufy.api` (MegaHttpClient)
-            // â€” no facade forwarder needed. Widen the scan past the default 10001-10999: devices also
+            // — no facade forwarder needed. Widen the scan past the default 10001-10999: devices also
             // carry effects in the 20000 band (e.g. 20006 on a T8L02), and batchget returns only ids
             // that exist, so a wider window just enumerates more. NB: this is ~110 sequential batchget
-            // round-trips + discover/list on a cold cache â€” hence the module-level cache above.
+            // round-trips + discover/list on a cold cache — hence the module-level cache above.
             const all = await listLightEffects(eufy.api, {
               idRange: [10001, 20999],
             });
@@ -336,7 +366,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
                 name: e.name || `Effect ${e.lightId}`,
                 colors: e.colors,
               }));
-            dbg(`light.effects â†’ ${effectsCache.length} buildable effect(s)`);
+            dbg(`light.effects → ${effectsCache.length} buildable effect(s)`);
           }
           return reply({ effects: effectsCache });
         }
@@ -351,7 +381,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
           return reply({ pollMs: eufy.pollIntervalMs });
         }
         case "stream.start":
-          // Returns URLs; does NOT open the camera â€” the media connection does that.
+          // Returns URLs; does NOT open the camera — the media connection does that.
           return reply({
             path: `/stream/${msg.sn}`,
             http: `http://${cfg.selfHost}:${cfg.port}/stream/${msg.sn}`,
@@ -385,6 +415,7 @@ export function createWsServer(ctx, httpServer, { allowCommand } = {}) {
     send,
     broadcast,
     handleMessage,
+    getRequestEvidence: requests.snapshot,
     closeWebSocketServer,
     stopBoundedStateWrites() {
       bounded.stop();

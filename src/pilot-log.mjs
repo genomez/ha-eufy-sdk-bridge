@@ -54,6 +54,7 @@ const events = new Set([
   "command_late_effect_retry_skipped_cancelled",
   "command_late_effect_retry_skipped_already_used",
   "command_late_effect_retry_skipped_already_matches",
+  "command_late_effect_retry_skipped_command_degraded",
   "forced_shutdown",
   "server_1",
   "server_2",

@@ -1,4 +1,5 @@
 import { commandHealthEvent } from "./command-health.mjs";
+import { cameraHealthEvent } from "./camera-health.mjs";
 
 const subscriptions = new WeakMap();
 
@@ -16,6 +17,16 @@ export function wireDeviceEvents(ctx) {
   on("commandHealth", (raw) => {
     const health = commandHealthEvent(raw);
     if (health) ctx.broadcast({ event: "commandHealth", ...health });
+  });
+  on("cameraHealth", (raw) => {
+    const health = cameraHealthEvent(raw);
+    if (!health) return;
+    try {
+      ctx.recordCameraHealth?.(health.sn, health);
+    } catch {
+      // Instrumentation must not change forwarding.
+    }
+    ctx.broadcast({ event: "cameraHealth", ...health });
   });
   on("propertiesObserved", (payload) => {
     const bridgeObservedAtMs = Date.now();

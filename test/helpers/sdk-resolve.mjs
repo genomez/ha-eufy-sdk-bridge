@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 const root = new URL('../../../sdk/', import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL('package.json', root)));
-if (pkg.version !== '0.2.1-s1.experimental.7') throw new Error('Unexpected SDK version');
+if (pkg.version !== '0.2.1-s1.experimental.8') throw new Error('Unexpected SDK version');
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === '@mega-yfue/eufy-sdk') return { url: new URL('dist/index.js', root).href, shortCircuit: true };

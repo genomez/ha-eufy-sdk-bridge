@@ -5,7 +5,7 @@ import { eventImageStoreFor, eventImageHeaders } from "./event-image-store.mjs";
 import { publicError } from "./pilot-log.mjs";
 import { createMediaDiagnostics } from "./t9000-media-diagnostics.mjs";
 // HTTP surface: live video (go2rtc pulls /stream/<sn>), a snapshot still, the persisted last-event
-// thumbnail, and /healthz. Video is deliberately OFF the WS â€” connecting to /stream is what opens the
+// thumbnail, and /healthz. Video is deliberately OFF the WS — connecting to /stream is what opens the
 // camera, disconnecting is what stops it, so there's no "is it streaming" flag to drift. Returns the
 // request handler; server.mjs wraps it in http.createServer.
 import fs from "node:fs";
@@ -25,7 +25,7 @@ function json(res, code, body) {
 
 // go2rtc's HTTP API (the fixed `:1984` the generated go2rtc.yaml listens on). Used only to answer
 // "who is pulling this stream?": the bridge's `/stream` is always pulled by go2rtc's OWN ffmpeg, so the
-// bridge alone can't see the human behind it â€” go2rtc can (it tracks each WebRTC/RTSP/HLS consumer).
+// bridge alone can't see the human behind it — go2rtc can (it tracks each WebRTC/RTSP/HLS consumer).
 const GO2RTC_API_PORT = Number(process.env.GO2RTC_API_PORT) || 1984;
 // Throttle the go2rtc consumer probe per device (a stream can be re-requested on a tight retry loop).
 // `0` disables the probe; the immediate-requester line still logs on every request.
@@ -46,7 +46,7 @@ export function createHttpHandler(ctx) {
   const { flags } = ctx.state;
   const { streaming, idleSuspended, activeStreams, lastPullAttempt, rtspLastActive } = ctx.state;
 
-  // Ask go2rtc who is CONSUMING a stream (its remote address / user-agent / protocol) and log each â€” so
+  // Ask go2rtc who is CONSUMING a stream (its remote address / user-agent / protocol) and log each — so
   // a stream that keeps opening "by itself" can be traced to the real viewer (an HA card, a recording,
   // a WebRTC/HLS client) rather than the go2rtc ffmpeg the bridge sees. Best-effort: on any error (go2rtc
   // disabled / not ready) the immediate-requester line already logged is the fallback.
@@ -72,16 +72,16 @@ export function createHttpHandler(ctx) {
         const who = c?.remote_addr || c?.remoteAddr || "?";
         const ua = c?.user_agent || c?.userAgent || "";
         const type = c?.type || (Array.isArray(c?.medias) ? c.medias.join(",") : "") || "consumer";
-        ctx.eventLog?.(`/stream ${sn} â€” go2rtc consumer: ${type} from ${who}${ua ? ` (UA: ${ua})` : ""}`);
+        ctx.eventLog?.(`/stream ${sn} — go2rtc consumer: ${type} from ${who}${ua ? ` (UA: ${ua})` : ""}`);
       }
     } catch {
       observation?.unavailable("read_error");
-      /* go2rtc API unreachable â€” the immediate-requester line is the fallback */
+      /* go2rtc API unreachable — the immediate-requester line is the fallback */
     }
   }
 
   // Log every /stream request's IMMEDIATE requester (IP + UA). Normally that's go2rtc's own ffmpeg on
-  // localhost; anything else means something is pulling the bridge feed directly â€” itself a finding.
+  // localhost; anything else means something is pulling the bridge feed directly — itself a finding.
   // Then (throttled) ask go2rtc who the real consumer is.
   function noteStreamRequest(sn, req) {
     const ip = req.socket?.remoteAddress ?? "?";
@@ -127,12 +127,12 @@ export function createHttpHandler(ctx) {
         ok: true,
         schemaVersion: SCHEMA_VERSION,
         auth: ctx.authStatus(),
-        sessionLost: flags.sessionLost, // cloud token kicked/expired since boot â†’ re-auth in progress/needed
+        sessionLost: flags.sessionLost, // cloud token kicked/expired since boot → re-auth in progress/needed
         streaming: [...streaming],
         idleSuspended: [...idleSuspended], // cameras auto-off for no recent detection (awaiting next one)
         streamIdleMs: cfg.streamIdleMs, // 0 = idle auto-off disabled
         lastActivitySec: idleSec, // event age only; unchanged successful polls can be silent
-        pushConnected: flags.pushConnected, // FCM push channel â€” events (motion/doorbell/â€¦) ride this
+        pushConnected: flags.pushConnected, // FCM push channel — events (motion/doorbell/…) ride this
         pushIdleSec: flags.pushConnected ? 0 : Math.round((Date.now() - flags.pushSince) / 1000),
       });
     }
@@ -145,7 +145,7 @@ export function createHttpHandler(ctx) {
     // A current still: a fresh live burst, falling back to the retained push thumbnail, and finally to
     // the copy /event-image persisted on disk. That last step matters on accounts whose pushes carry no
     // thumbnail: without it every still is a 502 after a 10-20s wake, and the caller (HA, HomeKit) then
-    // falls back to pulling video â€” waking the camera again for a picture we already have on disk.
+    // falls back to pulling video — waking the camera again for a picture we already have on disk.
     if (kind === "snapshot" && sn) {
       const snapshotModes = url.searchParams.getAll("mode");
       if (snapshotModes.length > 1) {
@@ -187,7 +187,7 @@ export function createHttpHandler(ctx) {
           const newest = stats.filter(Boolean).sort((a, b) => b.at - a.at)[0];
           if (!newest) return false;
           const cached = await fs.promises.readFile(newest.file);
-          ctx.eventLog?.(`/snapshot ${sn} â†’ 200 ${newest.label} (${cached.length}B, from disk; ${why})`);
+          ctx.eventLog?.(`/snapshot ${sn} → 200 ${newest.label} (${cached.length}B, from disk; ${why})`);
           res.writeHead(200, {
             "content-type": "image/jpeg",
             "content-length": cached.length,
@@ -221,7 +221,7 @@ export function createHttpHandler(ctx) {
         let jpeg;
         let why =
           cfg.snapshotLive === "auto"
-            ? "battery camera â€” no live burst (SNAPSHOT_LIVE=auto)"
+            ? "battery camera — no live burst (SNAPSHOT_LIVE=auto)"
             : "live burst disabled (SNAPSHOT_LIVE=0)";
         if (!wantLive && snapshotMode === "stored") {
           why = "live burst disabled (mode=stored)";
@@ -237,7 +237,7 @@ export function createHttpHandler(ctx) {
           }
         } else if (await servePersisted(why)) {
           // No live burst wanted, and the disk copy holds the same picture the retained thumbnail would:
-          // answer from it straight away rather than paying a round-trip per fetch â€” on an account that
+          // answer from it straight away rather than paying a round-trip per fetch — on an account that
           // retains nothing that call costs ~0.85s and never succeeds, and HA re-fetches stills on a timer.
           return;
         }
@@ -265,7 +265,7 @@ export function createHttpHandler(ctx) {
 
     // The latest detection thumbnail the SDK downloaded + retained (no live capture). The SDK's cache is
     // in-memory (cleared on restart / watchdog recovery), so we also persist each served thumbnail to disk
-    // and fall back to it when nothing is retained â€” the "Last event" image then survives restarts.
+    // and fall back to it when nothing is retained — the "Last event" image then survives restarts.
     if (kind === "event-image" && sn) {
       let snapshot;
       try {
@@ -292,7 +292,7 @@ export function createHttpHandler(ctx) {
       // retries into this until a detection or the consumer giving up lifts it (see streamIdleTick).
       if (cfg.streamIdleMs && idleSuspended.has(sn))
         return json(res, 503, {
-          error: "stream idle-suspended â€” no recent detection, waiting for motion or a fresh viewer",
+          error: "stream idle-suspended — no recent detection, waiting for motion or a fresh viewer",
         });
       // Failure-backoff: a recent open failed, and go2rtc retries every ~30s. Serve a
       // fast 503 without opening a P2P session, so a camera that can't connect isn't woken on every retry.

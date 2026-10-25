@@ -4,6 +4,7 @@ import { isIP } from "node:net";
 const LIMIT = 32;
 const CAMERA_LIMIT = 64;
 const MAX = Number.MAX_SAFE_INTEGER;
+const MEDIA_STALL_GAP_MS = 10_000;
 const CONSUMER_LIMIT = 32;
 const FORMATS = new Set(["rtsp", "webrtc", "hls/fmp4", "hls/mpegts", "mp4", "mpegts", "mjpeg"]);
 const PROTOCOLS = new Set(["rtsp+tcp", "http", "ws"]);
@@ -176,6 +177,9 @@ export function createMediaDiagnostics({ enabled = false, now = Date.now } = {})
         requestedAtMs: stamp(),
         readableAtMs: null,
         firstByteAtMs: null,
+        lastByteAtMs: null,
+        maxGapMs: null,
+        stalls: 0,
         endedAtMs: null,
         bytes: 0,
         chunks: 0,
@@ -195,7 +199,16 @@ export function createMediaDiagnostics({ enabled = false, now = Date.now } = {})
         }),
         data: safe((chunk) => {
           if (ended || !Buffer.isBuffer(chunk) || !chunk.length) return;
-          if (row.chunks === 0) row.firstByteAtMs = stamp();
+          const atMs = stamp();
+          if (row.chunks === 0) {
+            row.firstByteAtMs = atMs;
+            row.maxGapMs = 0;
+          } else if (atMs !== null && row.lastByteAtMs !== null) {
+            const gapMs = Math.min(MAX, Math.max(0, atMs - row.lastByteAtMs));
+            row.maxGapMs = Math.max(row.maxGapMs, gapMs);
+            if (gapMs >= MEDIA_STALL_GAP_MS) row.stalls = Math.min(MAX, row.stalls + 1);
+          }
+          row.lastByteAtMs = atMs;
           row.chunks = Math.min(MAX, row.chunks + 1);
           row.bytes = Math.min(MAX, row.bytes + chunk.length);
         }),
@@ -208,6 +221,12 @@ export function createMediaDiagnostics({ enabled = false, now = Date.now } = {})
           if (ended) return;
           ended = true;
           row.endedAtMs = stamp();
+          if (
+            row.endedAtMs !== null &&
+            row.lastByteAtMs !== null &&
+            row.endedAtMs - row.lastByteAtMs >= MEDIA_STALL_GAP_MS
+          )
+            row.stalls = Math.min(MAX, row.stalls + 1);
           if (row.outcome !== "pending") return;
           row.outcome = [
             "ended",
@@ -224,7 +243,8 @@ export function createMediaDiagnostics({ enabled = false, now = Date.now } = {})
       };
     }),
     snapshot: safe(() => ({
-      schemaVersion: 2,
+      schemaVersion: 3,
+      stallGapMs: MEDIA_STALL_GAP_MS,
       limit: LIMIT,
       cameraLimit: CAMERA_LIMIT,
       consumerLimit: CONSUMER_LIMIT,

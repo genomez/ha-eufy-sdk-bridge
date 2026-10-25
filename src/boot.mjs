@@ -1,7 +1,7 @@
 /** Modified for genomez S1 experimental source preview, 2026-10-14. */
 import { pilotLog } from "./pilot-log.mjs";
 // The one-time post-login boot: wire the SDK event handlers, publish the go2rtc config, start go2rtc, arm
-// the periodic sweeps, and flip `ready`. Guarded so it runs exactly once â€” a later re-auth calls it again
+// the periodic sweeps, and flip `ready`. Guarded so it runs exactly once — a later re-auth calls it again
 // but returns immediately, so listeners and timers are never double-wired. Non-critical warm-ups are
 // kicked off after `ready` so they don't hold up serving.
 import { spawn } from "node:child_process";
@@ -11,7 +11,7 @@ import { wireDeviceEvents } from "./device-events.mjs";
 /**
  * One-shot boot diagnostic: print each camera's station + P2P channel so a same-model collision is
  * visible in the log. Two cameras on ONE HomeBase that share a raw `device_channel` (or both omit it) is
- * the signature of the bug where only one of a same-model pair streams and updates detections â€” the SDK
+ * the signature of the bug where only one of a same-model pair streams and updates detections — the SDK
  * addresses live video + inbound frames by (station, channel), so a shared channel collapses both onto
  * the first. `resolvedChannel` is the SDK's own disambiguated `EufyDevice.channel` (present once the
  * channel-disambiguation build is installed); when it differs from `raw` per camera, the fix is active.
@@ -27,8 +27,8 @@ async function logCameraChannelMap(eufy, cams) {
         sn: d.sn,
         model: d.raw?.device_model ?? "?",
         station: d.stationSn ?? d.sn,
-        raw: typeof raw === "number" ? raw : "âˆ…",
-        channel: typeof d.channel === "number" ? d.channel : "â€”",
+        raw: typeof raw === "number" ? raw : "∅",
+        channel: typeof d.channel === "number" ? d.channel : "—",
         p2p: d.p2pDid ? "yes" : "no",
       };
     });
@@ -38,7 +38,7 @@ async function logCameraChannelMap(eufy, cams) {
     (a, b) => a.station.localeCompare(b.station) || String(a.raw).localeCompare(String(b.raw)),
   ))
     pilotLog("boot_2");
-  // Flag same-station cameras sharing a raw device_channel (both-missing counts) â€” the collision signature.
+  // Flag same-station cameras sharing a raw device_channel (both-missing counts) — the collision signature.
   const byStationChannel = new Map();
   for (const r of rows) {
     const key = `${r.station}|${r.raw}`;
@@ -103,7 +103,7 @@ export function createBoot(ctx) {
       // Channel diagnostics contain device identities and are not emitted by the pilot.
       if (flags.stopping) return;
       ctx.broadcast({ event: "ready", schemaVersion: SCHEMA_VERSION });
-      // Both read the P2P DB via a shared `dbChunk` stream â€” run sequentially so their accumulators don't
+      // Both read the P2P DB via a shared `dbChunk` stream — run sequentially so their accumulators don't
       // cross-contaminate. Non-blocking so `ready` isn't held up.
       if (ctx.bootOptions?.warmup !== false)
         void (async () => {

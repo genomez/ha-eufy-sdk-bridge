@@ -26,6 +26,7 @@ const outcomes = [
     "cancelled",
     "already_used",
     "already_matches",
+    "command_degraded",
   ].map((reason) => `retry_skipped_${reason}`),
 ];
 

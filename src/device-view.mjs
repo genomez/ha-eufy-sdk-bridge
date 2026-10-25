@@ -4,6 +4,8 @@ import { publicError } from "./pilot-log.mjs";
 import { ordinaryPropertyValue } from "./property-value.mjs";
 import { onBatteryPower } from "./power.mjs";
 import { commandHealth } from "./command-health.mjs";
+import { cameraHealth } from "./camera-health.mjs";
+import { createDeviceListEvidence } from "./device-list-evidence.mjs";
 import {
   cachedPropertyParamTypes,
   cachedPropertyRowLimit,
@@ -22,6 +24,7 @@ export function createDeviceView(ctx) {
   const { streaming } = ctx.state;
   const retained = new Map();
   const resolving = new Map();
+  const deviceListObservations = createDeviceListEvidence();
   let account = eufy.api?.auth?.userId;
   let epoch = 0;
   let listing;
@@ -65,6 +68,7 @@ export function createDeviceView(ctx) {
     retained.clear();
     topology.invalidate();
     ctx.clearStorageTelemetry?.();
+    ctx.clearCameraHealth?.();
   }
 
   function checkAccount() {
@@ -103,10 +107,14 @@ export function createDeviceView(ctx) {
   }
 
   /** Share one current roster across a list operation and retire models no longer present. */
-  function listDevices() {
+  function listDevices(observation) {
     checkAccount();
     const sdkEpoch = eufy.getInventoryScope?.().epoch;
-    if (listing?.epoch === epoch && listing.sdkEpoch === sdkEpoch) return listing.promise;
+    if (listing?.epoch === epoch && listing.sdkEpoch === sdkEpoch) {
+      observation?.rosterSource("shared_listing");
+      return listing.promise;
+    }
+    observation?.rosterSource("fresh_sdk");
     const entry = { epoch, sdkEpoch };
     entry.promise = Promise.resolve()
       .then(() => eufy.getDevices())
@@ -116,6 +124,7 @@ export function createDeviceView(ctx) {
           throw new Error("Device list superseded");
         const present = new Set(devices.map((dev) => dev.sn));
         ctx.syncStorageTelemetryDevices?.(devices);
+        ctx.syncCameraHealthDevices?.(devices);
         for (const sn of retained.keys()) if (!present.has(sn)) retained.delete(sn);
         for (const [sn, pending] of resolving) if (!present.has(sn)) pending.removed = true;
         return devices;
@@ -154,10 +163,19 @@ export function createDeviceView(ctx) {
     const isCamera = m.capabilities.includes("camera") || m.capabilities.includes("video");
     const storageTelemetry = ctx.storageTelemetryFor?.(record, dev);
     let health;
+    let connectivity;
     try {
       health = commandHealth(eufy.propertyCommandHealth?.(m.sn, "light"));
     } catch {
       // Optional cached health must not break the ordinary device snapshot.
+    }
+    if (isCamera) {
+      try {
+        connectivity = cameraHealth(eufy.cameraHealth?.(m.sn));
+        if (connectivity) ctx.recordCameraHealth?.(m.sn, connectivity);
+      } catch {
+        // Optional cached health must not break the ordinary device snapshot.
+      }
     }
     return {
       sn: m.sn,
@@ -171,6 +189,7 @@ export function createDeviceView(ctx) {
       firmwareVersion: firmwareVersion(dev),
       ...(storageTelemetry ? { storageTelemetry } : {}),
       ...(health ? { commandHealth: health } : {}),
+      ...(connectivity ? { cameraHealth: connectivity } : {}),
       capabilities: m.capabilities,
       state: propertyState(dev), // stored SDK values retained for existing consumers
       ...decodedReadings(dev, m),
@@ -432,27 +451,44 @@ export function createDeviceView(ctx) {
   }
 
   async function deviceList() {
-    const devices = await listDevices();
-    const capturedScope = topologyScope();
-    const summaries = await Promise.all(
-      devices.map((d) =>
-        describeRecord(d).catch((e) => ({
-          sn: d.sn,
-          error: publicError(e),
+    const observation = deviceListObservations.start();
+    try {
+      const devices = await listDevices(observation);
+      observation.rosterSettled();
+      const capturedScope = topologyScope();
+      observation.beginDescriptions(devices.length);
+      const summaries = await Promise.all(
+        devices.map((d) => {
+          const finishDescription = observation.startDescription();
+          return describeRecord(d).then(
+            (summary) => {
+              finishDescription(false);
+              return summary;
+            },
+            (e) => {
+              finishDescription(true);
+              return { sn: d.sn, error: publicError(e) };
+            },
+          );
+        }),
+      );
+      observation.descriptionsSettled();
+      topology.publish(
+        summaries.map((summary, index) => ({
+          ...summary,
+          inventoryStationSn: devices[index].stationSn ?? devices[index].sn,
+          inventoryModel: devices[index].model,
+          channel: devices[index].raw?.device_channel,
         })),
-      ),
-    );
-    topology.publish(
-      summaries.map((summary, index) => ({
-        ...summary,
-        inventoryStationSn: devices[index].stationSn ?? devices[index].sn,
-        inventoryModel: devices[index].model,
-        channel: devices[index].raw?.device_channel,
-      })),
-      retained,
-      capturedScope,
-    );
-    return summaries;
+        retained,
+        capturedScope,
+      );
+      observation.finish();
+      return summaries;
+    } catch (error) {
+      observation.finish(true);
+      throw error;
+    }
   }
 
   function topologyScope() {
@@ -480,6 +516,7 @@ export function createDeviceView(ctx) {
     propertySpecs,
     decodedProperties,
     deviceList,
+    getDeviceListEvidence: deviceListObservations.getEvidence,
     resolveMediaTopology: topology.resolve,
     topologySnapshotDiagnostics: topology.diagnostics,
   };

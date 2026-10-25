@@ -28,7 +28,8 @@ export function createEufy({ cfg, DEBUG_P2P }, options = {}) {
     rtcShard: cfg.rtcShard,
     rtc: {
       icePolicy: cfg.rtcIcePolicy,
-      commandTimeoutMs: 14000, // Legacy whole-call bound; the negotiated scalar profile opts in per invocation.
+      // RTC command budget after SDK preparation, covering queue, acquisition and exchange waiting.
+      commandTimeoutMs: 14000,
       stateRefreshMs: cfg.rtcStateRefreshMs,
       sessionRefreshMs: cfg.rtcSessionRefreshMs,
       commandKeepaliveMs: cfg.rtcCommandKeepaliveMs,

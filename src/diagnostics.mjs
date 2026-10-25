@@ -1,11 +1,15 @@
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { emptyCachedPropertyEvidence } from "./cached-property-evidence.mjs";
+import { createCameraHealthDiagnostics } from "./camera-health.mjs";
 import { commandFailureEvent } from "./pilot-log.mjs";
 import { createCommandWindows } from "./command-windows.mjs";
 import { eventLoopEvidence } from "./event-loop-evidence.mjs";
 import { transportEvidence, postTimeoutEvidence, commandStageTimingEvidence } from "./transport-evidence.mjs";
 import { boundedStatuses } from "./bounded-state-writes.mjs";
 import { rtcConnectionEvidence, ownCloudPollEvidence } from "./rtc-connection-evidence.mjs";
+import { requestEvidence } from "./request-evidence.mjs";
+import { deviceListEvidence } from "./device-list-evidence.mjs";
+import { cloudHttpEvidence, propertyPreparationEvidence } from "./cloud-work-evidence.mjs";
 
 const readFailures = new Map([
   ["RTC information read timed out", "information_read_timeout"],
@@ -21,6 +25,14 @@ const refreshKinds = new Set([...sdkErrorKinds, "empty_response"]);
 const number = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : null);
 const boolean = (value) => (typeof value === "boolean" ? value : null);
 const signedNumber = (value) => (Number.isInteger(value) && value >= -2147483648 && value <= 2147483647 ? value : null);
+function ownDataValue(raw, key) {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(raw, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 function headerSample(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   return {
@@ -224,6 +236,7 @@ const retrySkipReasons = [
   "cancelled",
   "already_used",
   "already_matches",
+  "command_degraded",
 ];
 const numericProjection = (raw, keys) =>
   raw && typeof raw === "object" && !Array.isArray(raw)
@@ -707,8 +720,9 @@ function thumbnailCounters(raw, sdk = false) {
 /** Cached diagnostics; reading this snapshot never opens a device or cloud connection. */
 export function createDiagnostics(ctx, now = Date.now) {
   let account = ctx.eufy.api?.auth?.userId;
-  let errors, commands, detections, windows, contrary;
+  let errors, commands, detections, windows, contrary, camera;
   function reset() {
+    camera = createCameraHealthDiagnostics(now);
     contrary = {
       contrary: 0,
       matched: 0,
@@ -751,6 +765,17 @@ export function createDiagnostics(ctx, now = Date.now) {
     }
   }
   const api = {
+    recordCameraHealth(sn, health) {
+      scope();
+      camera.record(sn, health);
+    },
+    syncCameraHealthDevices(devices) {
+      scope();
+      camera.sync(devices);
+    },
+    clearCameraHealth() {
+      camera = createCameraHealthDiagnostics(now);
+    },
     recordLateContraryEffect(state) {
       scope();
       if (
@@ -845,6 +870,13 @@ export function createDiagnostics(ctx, now = Date.now) {
       let stateRefresh = null;
       if (raw) {
         stateRefresh = {};
+        const nextRetryAtMs = number(ownDataValue(raw, "nextRetryAtMs"));
+        stateRefresh.nextRetryAtMs = nextRetryAtMs > 0 ? nextRetryAtMs : null;
+        stateRefresh.retryAttempt = number(ownDataValue(raw, "retryAttempt"));
+        const retryReason = ownDataValue(raw, "retryReason");
+        stateRefresh.retryReason = ["failure_backoff", "session_recovery", "station_work"].includes(retryReason)
+          ? retryReason
+          : null;
         for (const key of ["active", "inFlight", "scheduledPaused"]) stateRefresh[key] = raw[key] === true;
         for (const key of [
           "intervalMs",
@@ -929,6 +961,34 @@ export function createDiagnostics(ctx, now = Date.now) {
       }
       const snapshot = {
         schemaVersion: 1,
+        requests: (() => {
+          try {
+            return requestEvidence(ctx.getRequestEvidence?.());
+          } catch {
+            return null;
+          }
+        })(),
+        deviceLists: (() => {
+          try {
+            return deviceListEvidence(ctx.getDeviceListEvidence?.());
+          } catch {
+            return null;
+          }
+        })(),
+        cloudHttp: (() => {
+          try {
+            return cloudHttpEvidence(ctx.eufy.getCloudHttpDiagnostics?.());
+          } catch {
+            return null;
+          }
+        })(),
+        propertyPreparation: (() => {
+          try {
+            return propertyPreparationEvidence(ctx.eufy.getPropertyPreparationDiagnostics?.());
+          } catch {
+            return null;
+          }
+        })(),
         ...(collect
           ? {
               cachedPropertyEvidence: (() => {
@@ -981,6 +1041,7 @@ export function createDiagnostics(ctx, now = Date.now) {
           }
         })(),
         rtcCommands: rtcCommands(ctx.eufy.getRtcCommandDiagnostics?.()),
+        cameraHealth: camera.snapshot(),
         rtcObservations: rtcObservationSnapshot,
         rtcRenewals,
         rtcKeepalive,

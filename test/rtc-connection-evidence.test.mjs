@@ -303,3 +303,139 @@ test("cloud poll projection is exact, bounded, accessor-safe and independently d
   });
   assert.equal(cloudPollEvidence(cp), null);
 });
+
+const retryFields = (raw) => {
+  const { nextRetryAtMs, retryAttempt, retryReason } = snapshot({ getStateRefreshDiagnostics: () => raw }).stateRefresh;
+  return { nextRetryAtMs, retryAttempt, retryReason };
+};
+const retry = () => ({ nextRetryAtMs: 60_100, retryAttempt: 2, retryReason: "failure_backoff" });
+const unknownRetry = () => ({ nextRetryAtMs: null, retryAttempt: null, retryReason: null });
+
+test("state refresh retry fields stay flat, detached and preserve existing diagnostics", () => {
+  const raw = { ...retry(), active: true, attempts: 3, cloudPoll: cloud() };
+  let reads = 0;
+  const result = snapshot({
+    getStateRefreshDiagnostics() {
+      reads++;
+      return raw;
+    },
+  }).stateRefresh;
+  assert.equal(reads, 1);
+  for (const [key, value] of Object.entries(retry())) assert.equal(result[key], value);
+  assert.equal(result.active, true);
+  assert.equal(result.attempts, 3);
+  assert.deepEqual(result.cloudPoll, cloud());
+  Object.assign(raw, { nextRetryAtMs: 70_100, retryAttempt: 3, retryReason: "session_recovery" });
+  for (const [key, value] of Object.entries(retry())) assert.equal(result[key], value);
+  Object.assign(result, { nextRetryAtMs: 80_100, retryAttempt: 4, retryReason: null });
+  assert.equal(raw.nextRetryAtMs, 70_100);
+  assert.equal(raw.retryAttempt, 3);
+  assert.equal(raw.retryReason, "session_recovery");
+});
+
+test("state refresh retry projection handles missing APIs, null state and unknown fields", () => {
+  assert.equal(snapshot({}).stateRefresh, null);
+  for (const raw of [undefined, null])
+    assert.equal(snapshot({ getStateRefreshDiagnostics: () => raw }).stateRefresh, null);
+  for (const raw of [{}, unknownRetry(), { nextRetryAtMs: undefined, retryAttempt: undefined, retryReason: undefined }])
+    assert.deepEqual(retryFields(raw), unknownRetry());
+  for (const key of Object.keys(retry())) {
+    const raw = retry();
+    delete raw[key];
+    assert.deepEqual(retryFields(raw), { ...retry(), [key]: null });
+  }
+});
+
+test("state refresh retry projection accepts safe boundaries and supported reasons", () => {
+  for (const nextRetryAtMs of [1, Number.MAX_SAFE_INTEGER])
+    for (const retryAttempt of [0, 1, Number.MAX_SAFE_INTEGER])
+      for (const retryReason of ["failure_backoff", "session_recovery", "station_work", null]) {
+        const raw = { nextRetryAtMs, retryAttempt, retryReason };
+        assert.deepEqual(retryFields(raw), raw);
+      }
+});
+
+test("state refresh retry projection rejects invalid values independently without coercion", () => {
+  const invalidNumbers = [
+    undefined,
+    null,
+    -1,
+    1.5,
+    NaN,
+    Infinity,
+    -Infinity,
+    Number.MAX_SAFE_INTEGER + 1,
+    "1",
+    "0",
+    true,
+    false,
+    1n,
+    Symbol("invalid"),
+    [],
+    {
+      valueOf() {
+        throw new Error("must not coerce");
+      },
+    },
+  ];
+  for (const key of ["nextRetryAtMs", "retryAttempt"])
+    for (const value of [...invalidNumbers, ...(key === "nextRetryAtMs" ? [0, -0] : [])])
+      assert.deepEqual(retryFields({ ...retry(), [key]: value }), { ...retry(), [key]: null });
+  for (const retryReason of [...invalidNumbers, 0, "", "unknown", "FAILURE_BACKOFF", new String("failure_backoff")])
+    assert.deepEqual(retryFields({ ...retry(), retryReason }), { ...retry(), retryReason: null });
+});
+
+test("state refresh retry projection reads only own data descriptors without invoking accessors", () => {
+  let getterReads = 0;
+  for (const [key, value] of Object.entries(retry())) {
+    const inherited = Object.create({ [key]: value });
+    Object.assign(inherited, retry());
+    delete inherited[key];
+    assert.deepEqual(retryFields(inherited), { ...retry(), [key]: null });
+    for (const descriptor of [
+      {
+        get() {
+          getterReads++;
+          return value;
+        },
+      },
+      {
+        get() {
+          getterReads++;
+          throw new Error("must not read");
+        },
+      },
+      { set(_) {} },
+    ]) {
+      const raw = retry();
+      Object.defineProperty(raw, key, descriptor);
+      assert.deepEqual(retryFields(raw), { ...retry(), [key]: null });
+    }
+    const inheritedGetter = Object.create(
+      Object.defineProperty({}, key, {
+        get() {
+          getterReads++;
+          return value;
+        },
+      }),
+    );
+    for (const [other, otherValue] of Object.entries(retry())) if (other !== key) inheritedGetter[other] = otherValue;
+    assert.deepEqual(retryFields(inheritedGetter), { ...retry(), [key]: null });
+    const nonenumerable = retry();
+    Object.defineProperty(nonenumerable, key, { value, enumerable: false });
+    assert.deepEqual(retryFields(nonenumerable), retry());
+  }
+  assert.equal(getterReads, 0);
+});
+
+test("state refresh retry projection contains descriptor failures to the affected field", () => {
+  for (const key of Object.keys(retry())) {
+    const raw = new Proxy(retry(), {
+      getOwnPropertyDescriptor(target, property) {
+        if (property === key) throw new Error("unavailable descriptor");
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    });
+    assert.deepEqual(retryFields(raw), { ...retry(), [key]: null });
+  }
+});
