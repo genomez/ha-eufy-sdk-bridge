@@ -78,5 +78,7 @@
         "reason": "Bind independently verified public release URL; runtime and implementation unchanged."
       }
     }
-  }
+  },
+  "sdkArtifactSha256": "ab4d3bb1170dcae45535058da39b7c1a821274603144f5c916068a8914398b77",
+  "sdkArtifactIntegrity": "sha512-CzlmmrHsDMArGYLg0d/NlQ5r0vP2HrCPnMzEC4e4qXa/2EgOWdwz0aWvIO/1DbNs6emdtG5XsXP11o/VBeno7Q=="
 }

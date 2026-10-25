@@ -59,5 +59,7 @@
     "qualification": "Same runtime implementation as review.14 r3; exact release image qualification recorded separately.",
     "sdkArtifactSha256": "19bf92f2062ae103ede942896ffa1310996778b5a9a5876b9ae2c9df91c60ffe",
     "sdkArtifactIntegrity": "sha512-C3snwnLh5pzNas5GaIR7A/wQ6ehJGjUpCIbx+6ntvlHHVCLYO8em38j9QhgBWKD+A+o+sMqgv9bDfG9PHTFOhA=="
-  }
+  },
+  "sdkArtifactSha256": "ab4d3bb1170dcae45535058da39b7c1a821274603144f5c916068a8914398b77",
+  "sdkArtifactIntegrity": "sha512-CzlmmrHsDMArGYLg0d/NlQ5r0vP2HrCPnMzEC4e4qXa/2EgOWdwz0aWvIO/1DbNs6emdtG5XsXP11o/VBeno7Q=="
 }

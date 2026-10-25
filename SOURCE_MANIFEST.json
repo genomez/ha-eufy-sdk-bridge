@@ -22,8 +22,8 @@
       "sha256": "0a90abd221c4877af6c6bd58de9df03620e81ad9abfe79e3b0395dc17fa7d672"
     },
     "BUILD_PROVENANCE.json": {
-      "bytes": 5463,
-      "sha256": "4b66f89052ec842322a8423eb9ecd9931fb5f6aabadc6b4de48376f1ccf480b3"
+      "bytes": 5679,
+      "sha256": "29688447163e2565a0694246c2a0cff8f53b78892f4c4c9d30b1dd1a2b69ac34"
     },
     "CONTRIBUTING.md": {
       "bytes": 974,
@@ -40,6 +40,10 @@
     "MODIFICATIONS.md": {
       "bytes": 31336,
       "sha256": "23e7df512227fe0758232c2515b4f199f9594d797ba345a45c22bc419c41ca95"
+    },
+    "PUBLICATION.json": {
+      "bytes": 4932,
+      "sha256": "bc2e02e8855ffa6d64f62a77b657f2197612622edae5dd4afdb07c97b31995a9"
     },
     "README.md": {
       "bytes": 7987,
@@ -71,7 +75,7 @@
     },
     "package-lock.json": {
       "bytes": 26727,
-      "sha256": "173f1c37b02c54d2bd81819e1b935a68ae6a0b792b92fbbcd005ae525cae799d"
+      "sha256": "8659c593541bb665d5eb1bacebd3591fc9c1bcd0e4f460d4d729d030c3d15951"
     },
     "package.json": {
       "bytes": 1371,
@@ -436,10 +440,6 @@
     "test/wiring.test.mjs": {
       "bytes": 7826,
       "sha256": "2f794ddb68383000f1baa7cdcd35fa7d434849bf1bd46d2b53ebcfa8b36a1d1d"
-    },
-    "PUBLICATION.json": {
-      "bytes": 4716,
-      "sha256": "cd5990b255213c945fdb5c5201e438fdcfd69bccada731f2707a6e4a0c106308"
     }
   }
 }
