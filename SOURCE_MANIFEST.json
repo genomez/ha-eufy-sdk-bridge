@@ -23,7 +23,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 5745,
-      "sha256": "61064c66126a35120c80c618bbbbf9e253a087032341fa4c14b37f813acb9e24"
+      "sha256": "07ee4d422fd22d2f948c519d76023692cdfb0f49ddfc7c8b38d87d87ffff4617"
     },
     "CONTRIBUTING.md": {
       "bytes": 974,
@@ -42,8 +42,8 @@
       "sha256": "bdc19cad5593e4037c2876e3e6fa2fbb6e616b2ec10c1a2446abc05854481c11"
     },
     "PUBLICATION.json": {
-      "bytes": 413,
-      "sha256": "3e4f4cc0cb268b263d350f007572e89879458ce7f74ebeb4f08165bd25ee40bc"
+      "bytes": 629,
+      "sha256": "46e3288b02eaf300c2b3bf286897a43f7495354ad761170e1169dbf941c209df"
     },
     "README.md": {
       "bytes": 10495,
@@ -75,7 +75,7 @@
     },
     "package-lock.json": {
       "bytes": 26727,
-      "sha256": "f5b03b69b9e957b6e9afe9441ab9c7571f13de024b20ece3bfe7d6e5a72c5d7b"
+      "sha256": "5374587b6bb9ffbda9239f659aad5b533976d950a82e174fa9fd93526c81e5ee"
     },
     "package.json": {
       "bytes": 1371,

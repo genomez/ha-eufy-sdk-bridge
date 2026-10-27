@@ -9,5 +9,7 @@
   "keepaliveMs": 29000,
   "lightCorrectionDefault": false,
   "registryManifestDigest": null,
-  "runtimeSourceRelease": null
+  "runtimeSourceRelease": null,
+  "sdkArtifactSha256": "39673f48efdb33ce8a91bccfaecf428cad4e128ee18a52cb56d9ab8a8b055848",
+  "sdkArtifactIntegrity": "sha512-FddGjmOWJIWXQyu8GnlvCUWOR5ZvqLk1edhRVNHR1dAVIoEO2zwenqgwZIU0ogDy77sLKeFs2nBlK94qz1Ll5g=="
 }

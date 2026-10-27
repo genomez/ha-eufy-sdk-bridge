@@ -60,7 +60,7 @@
     "sdkArtifactSha256": "19bf92f2062ae103ede942896ffa1310996778b5a9a5876b9ae2c9df91c60ffe",
     "sdkArtifactIntegrity": "sha512-C3snwnLh5pzNas5GaIR7A/wQ6ehJGjUpCIbx+6ntvlHHVCLYO8em38j9QhgBWKD+A+o+sMqgv9bDfG9PHTFOhA=="
   },
-  "sdkArtifactSha256": "ab4d3bb1170dcae45535058da39b7c1a821274603144f5c916068a8914398b77",
-  "sdkArtifactIntegrity": "sha512-CzlmmrHsDMArGYLg0d/NlQ5r0vP2HrCPnMzEC4e4qXa/2EgOWdwz0aWvIO/1DbNs6emdtG5XsXP11o/VBeno7Q==",
+  "sdkArtifactSha256": "39673f48efdb33ce8a91bccfaecf428cad4e128ee18a52cb56d9ab8a8b055848",
+  "sdkArtifactIntegrity": "sha512-FddGjmOWJIWXQyu8GnlvCUWOR5ZvqLk1edhRVNHR1dAVIoEO2zwenqgwZIU0ogDy77sLKeFs2nBlK94qz1Ll5g==",
   "exactInputCommit": "1c2b61f80e38c763554caeedd290be095e62e762"
 }
