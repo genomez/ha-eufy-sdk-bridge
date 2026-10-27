@@ -1,15 +1,26 @@
 {
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.9",
-  "status": "prepared-locally-unpublished",
-  "published": false,
+  "status": "published-runtime-and-source-delivery",
+  "published": true,
   "publicBaseCommit": "1c2b61f80e38c763554caeedd290be095e62e762",
   "exactInputCommit": "1c2b61f80e38c763554caeedd290be095e62e762",
   "relayDefault": false,
   "keepaliveMs": 29000,
   "lightCorrectionDefault": false,
-  "registryManifestDigest": null,
-  "runtimeSourceRelease": null,
+  "registryManifestDigest": "sha256:fe2fca682ecf41655402abc7ba2da970995eeed4a6010f51865409b60141bd0e",
+  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.9",
   "sdkArtifactSha256": "39673f48efdb33ce8a91bccfaecf428cad4e128ee18a52cb56d9ab8a8b055848",
-  "sdkArtifactIntegrity": "sha512-FddGjmOWJIWXQyu8GnlvCUWOR5ZvqLk1edhRVNHR1dAVIoEO2zwenqgwZIU0ogDy77sLKeFs2nBlK94qz1Ll5g=="
+  "sdkArtifactIntegrity": "sha512-FddGjmOWJIWXQyu8GnlvCUWOR5ZvqLk1edhRVNHR1dAVIoEO2zwenqgwZIU0ogDy77sLKeFs2nBlK94qz1Ll5g==",
+  "integrationRelease": "https://github.com/genomez/ha-eufy-sdk/releases/tag/0.3.1-s1.experimental.9",
+  "publicationVerifiedAt": "2026-10-27T13:41:22.391861+00:00",
+  "sourcePreparationCommit": "f9ec2278eae82baa805863cc372cbbcba3b726fd",
+  "sourcePreparationCommits": {
+    "eufy-sdk": "ff0c0c47981bede161544a1e410f55499afc5e44",
+    "ha-eufy-sdk-bridge": "f9ec2278eae82baa805863cc372cbbcba3b726fd",
+    "ha-eufy-sdk": "bf6d218faa3df8734c8bfee594ed6ae6e807e1f3"
+  },
+  "releasePreparationRecordHistorical": true,
+  "installationAcceptance": false,
+  "hacsAvailabilityVerified": false
 }
