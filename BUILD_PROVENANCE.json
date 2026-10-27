@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "version": "0.3.1-s1.experimental.8",
-  "publicBaseCommit": "fdbe7560073302d9b31885deca0055952f9d3417",
+  "version": "0.3.1-s1.experimental.9",
+  "publicBaseCommit": "1c2b61f80e38c763554caeedd290be095e62e762",
   "acceptedMonorepoCommit": "b13c23cb3ecc270d07107b726264faea37d998ce",
   "published": false,
   "changeDescription": "RTC late-viewer keyframe gating; bounded refresh backoff and recovery; isolated slow replies; camera connectivity and hub reply evidence; T8171 detection; opt-in floodlight safety with bounded confirmation and problem notices; observation-only media stall evidence.",
@@ -61,5 +61,6 @@
     "sdkArtifactIntegrity": "sha512-C3snwnLh5pzNas5GaIR7A/wQ6ehJGjUpCIbx+6ntvlHHVCLYO8em38j9QhgBWKD+A+o+sMqgv9bDfG9PHTFOhA=="
   },
   "sdkArtifactSha256": "ab4d3bb1170dcae45535058da39b7c1a821274603144f5c916068a8914398b77",
-  "sdkArtifactIntegrity": "sha512-CzlmmrHsDMArGYLg0d/NlQ5r0vP2HrCPnMzEC4e4qXa/2EgOWdwz0aWvIO/1DbNs6emdtG5XsXP11o/VBeno7Q=="
+  "sdkArtifactIntegrity": "sha512-CzlmmrHsDMArGYLg0d/NlQ5r0vP2HrCPnMzEC4e4qXa/2EgOWdwz0aWvIO/1DbNs6emdtG5XsXP11o/VBeno7Q==",
+  "exactInputCommit": "1c2b61f80e38c763554caeedd290be095e62e762"
 }

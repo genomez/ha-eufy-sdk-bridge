@@ -1,95 +1,13 @@
 {
   "schemaVersion": 1,
-  "status": "published-runtime-and-source-delivery",
-  "published": true,
-  "version": "0.3.1-s1.experimental.8",
-  "publicBaseCommit": "fdbe7560073302d9b31885deca0055952f9d3417",
-  "exactInputCommit": "b13c23cb3ecc270d07107b726264faea37d998ce",
-  "method": "prepare-source.py exact-blob tree overlay onto public baseline; integration ZIP method from prepare-integration.py",
+  "version": "0.3.1-s1.experimental.9",
+  "status": "prepared-locally-unpublished",
+  "published": false,
+  "publicBaseCommit": "1c2b61f80e38c763554caeedd290be095e62e762",
+  "exactInputCommit": "1c2b61f80e38c763554caeedd290be095e62e762",
   "relayDefault": false,
   "keepaliveMs": 29000,
   "lightCorrectionDefault": false,
-  "registryManifestDigest": "sha256:4289f94e617c0e60207edb8ddaa75d88cfdf777ad081e9e43feb915a4b2ef119",
-  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.8",
-  "historicalExperimental7": {
-    "schemaVersion": 1,
-    "version": "0.3.1-s1.experimental.7",
-    "status": "published-source-delivery",
-    "published": true,
-    "acceptedMonorepoCommit": "6deea127459f368edb24d7d3df59dcaf60d5b508",
-    "preparationBaseCommit": "bee38ea57ec29b5d40f82314bf76896f582bf90c",
-    "addonVersion": "0.4.1-s1.experimental.7",
-    "integrationVersion": "0.3.1-s1.experimental.7",
-    "relayDefault": false,
-    "keepaliveMs": 29000,
-    "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.7",
-    "registryManifestDigest": null,
-    "correspondingSourceArchive": null,
-    "sourceExceptions": {
-      "BUILD_PROVENANCE.json": {
-        "inputSha256": "385040ca91f1967d455422c12634a5e24f7d59452c34d478866a7d3f759964e3",
-        "preparedSha256": "e2c5014f394e7a2f9fe8f91c2e16b793e4d095efe976d9ebe1220156c157f0e5",
-        "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
-      },
-      "EXPERIMENTAL.md": {
-        "inputSha256": "fcbaeffb8b728123cbdf3b09af69c983e9612ca3d42b5d675f03b16e6e49b222",
-        "preparedSha256": "69eb7875322db60702a95775b688d3c163b49a12424f03c1e32d8665d99a4e5a",
-        "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
-      },
-      "MODIFICATIONS.md": {
-        "inputSha256": "430514d22285ac8828570d52cd0689efb9de45aae2c48471f12dc2edad24f926",
-        "preparedSha256": "38e88f5a92c1dde6cf286a85e93cbce61fa92cf742ef882414c0133c853e5eff",
-        "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
-      },
-      "README.md": {
-        "inputSha256": "3282c87fe2429dbc1e5b2f96d0bc89656cb968c2c2fa307e0d5303a52b10a121",
-        "preparedSha256": "593b7394bed936efb05e2a550e527e00891fa73b34b1febf5ccd8e5316acb228",
-        "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
-      },
-      "package-lock.json": {
-        "inputSha256": "1950e8a470c2488f53df657c4cce63fbbef3a89dbd568d3a7a65322243b3ce10",
-        "preparedSha256": "8d9b390aa906628bcca668bbfeb1b05894b352188e1c236bb842752c3341a752",
-        "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
-      },
-      "package.json": {
-        "inputSha256": "0b8cdfcde57b1580b96f0d8635376749d02b74f38c4dfc3e2825212dc2ce878f",
-        "preparedSha256": "89fbc19e0e395d13738a57db97001fc570d07613ece7e15f062284065c106d98",
-        "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
-      },
-      "test/helpers/sdk-resolve.mjs": {
-        "inputSha256": "a05807c6f191ea26c55ab9b877e337e8bfcc244a60676d7cb3cf48cd6ca45cbd",
-        "preparedSha256": "4fa7e12af4764a538c3bb13b0ec62cd47fa85ee532c26d35a4fb1e5634a35ee9",
-        "reason": "Version, publication documentation, provenance or source inventory refresh; implementation preserved."
-      }
-    },
-    "sdkArtifactSha256": "19bf92f2062ae103ede942896ffa1310996778b5a9a5876b9ae2c9df91c60ffe",
-    "sdkArtifactIntegrity": "sha512-C3snwnLh5pzNas5GaIR7A/wQ6ehJGjUpCIbx+6ntvlHHVCLYO8em38j9QhgBWKD+A+o+sMqgv9bDfG9PHTFOhA==",
-    "publicationDate": "2026-10-23T14:05:06.923766+00:00",
-    "sourcePreparationCommit": "ac010388e6b8c3f7db95b4ef15b1c56ce7a98f44",
-    "publicationDocumentationOverrides": {
-      "README.md": {
-        "preparedSha256": "593b7394bed936efb05e2a550e527e00891fa73b34b1febf5ccd8e5316acb228",
-        "publicationSha256": "3e030f2e72634ae72b11b75208194e0e34313e95e5cd03e7d9f5ac82d46ba878",
-        "reason": "Bind independently verified public release URL; runtime and implementation unchanged."
-      },
-      "EXPERIMENTAL.md": {
-        "preparedSha256": "69eb7875322db60702a95775b688d3c163b49a12424f03c1e32d8665d99a4e5a",
-        "publicationSha256": "3b535dca3d5d42555ca03a31cb4ac515a6ab74058b93fdb2d1c3591643a54f57",
-        "reason": "Bind independently verified public release URL; runtime and implementation unchanged."
-      }
-    }
-  },
-  "sdkArtifactSha256": "ab4d3bb1170dcae45535058da39b7c1a821274603144f5c916068a8914398b77",
-  "sdkArtifactIntegrity": "sha512-CzlmmrHsDMArGYLg0d/NlQ5r0vP2HrCPnMzEC4e4qXa/2EgOWdwz0aWvIO/1DbNs6emdtG5XsXP11o/VBeno7Q==",
-  "integrationRelease": "https://github.com/genomez/ha-eufy-sdk/releases/tag/0.3.1-s1.experimental.8",
-  "publicationVerifiedAt": "2026-10-25T19:15:48.121911+00:00",
-  "sourcePreparationCommit": "c7da7a0375238983d839242ab37b2c030078804f",
-  "sourcePreparationCommits": {
-    "eufy-sdk": "f9c1e0995ddf9bd5642cdc06c156ba8d65f9ed15",
-    "ha-eufy-sdk-bridge": "c7da7a0375238983d839242ab37b2c030078804f",
-    "ha-eufy-sdk": "6bb1365de39615d9e094b44b7665118451326e8d"
-  },
-  "releasePreparationRecordHistorical": true,
-  "installationAcceptance": false,
-  "hacsAvailabilityVerified": false
+  "registryManifestDigest": null,
+  "runtimeSourceRelease": null
 }
