@@ -53,16 +53,16 @@ test("SDK error diagnostics record each allowed origin and preserve total counts
   assert.deepEqual(errors.byOrigin, { ...Object.fromEntries(origins.map((origin) => [origin, 1])), p2p: 2 });
 });
 
-test("SDK error history evicts the first entry on the eleventh error, newest last", () => {
+test("SDK error history evicts the first entry on the thirty-third error, newest last", () => {
   const diagnostics = fixture();
-  for (let i = 0; i < 11; i++) diagnostics.recordSdkError(new Error("arbitrary failure"), { origin: "mqtt" });
+  for (let i = 0; i < 33; i++) diagnostics.recordSdkError(new Error("arbitrary failure"), { origin: "mqtt" });
   assert.deepEqual(diagnostics.errors(), {
-    count: 11,
-    lastAtMs: 110,
+    count: 33,
+    lastAtMs: 132,
     lastKind: "other",
     lastOrigin: "mqtt",
-    byOrigin: { mqtt: 11 },
-    recent: Array.from({ length: 10 }, (_, i) => ({ atMs: 101 + i, kind: "other", origin: "mqtt" })),
+    byOrigin: { mqtt: 33 },
+    recent: Array.from({ length: 32 }, (_, i) => ({ atMs: 101 + i, kind: "other", origin: "mqtt" })),
   });
 });
 

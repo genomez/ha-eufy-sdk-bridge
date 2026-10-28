@@ -149,6 +149,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     ) {
       const boundedId =
         Number.isSafeInteger(id) || (typeof id === "string" && id.length > 0 && id.length <= 128) ? id : undefined;
+      const startedAtMs = Date.now();
       try {
         if (allowCommand && !allowCommand(msg)) throw { code: "command_validation_failed" };
         if (cmd === "boundedStateClock") return send(ws, { id: boundedId, ok: true, ...bounded.clock(ws, msg) });
@@ -157,13 +158,20 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
         ctx.recordCommand?.("started");
         const receipt = await bounded.execute(ws, msg);
         const accepted = ["acknowledged", "pending_accepted"].includes(receipt.status);
-        ctx.recordCommand?.(accepted ? "completed" : "failed", { code: `command_${receipt.status}` });
+        ctx.recordCommand?.(
+          accepted ? "completed" : "failed",
+          { code: `command_${receipt.status}` },
+          { property: msg.name, elapsedMs: Math.max(0, Date.now() - startedAtMs) },
+        );
         pilotLog(accepted ? "command_completed" : `command_${receipt.status}`);
         return send(ws, { id: boundedId, ok: true, receipt });
       } catch (error) {
         const code = commandFailureEvent(error);
         if (cmd === "device.set") {
-          ctx.recordCommand?.("failed", error);
+          ctx.recordCommand?.("failed", error, {
+            property: msg.name,
+            elapsedMs: Math.max(0, Date.now() - startedAtMs),
+          });
           pilotLog(code);
         }
         return send(ws, { id: boundedId, ok: false, error: "Bounded command failed", code });
@@ -296,7 +304,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           } catch (e) {
             pilotLog("ws_server_2");
             commandErrorCode = commandFailureEvent(e);
-            ctx.recordCommand?.("failed", e);
+            ctx.recordCommand?.("failed", e, { property: msg.name, elapsedMs: Math.max(0, Date.now() - t0) });
             pilotLog(commandErrorCode);
             throw e; // outer catch surfaces it to the frontend (+ triggers session recovery if kicked)
           }

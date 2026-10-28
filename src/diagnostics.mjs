@@ -10,6 +10,17 @@ import { rtcConnectionEvidence, ownCloudPollEvidence } from "./rtc-connection-ev
 import { requestEvidence } from "./request-evidence.mjs";
 import { deviceListEvidence } from "./device-list-evidence.mjs";
 import { cloudHttpEvidence, propertyPreparationEvidence } from "./cloud-work-evidence.mjs";
+import * as sdk from "@mega-yfue/eufy-sdk";
+
+const RTC_COMMAND_FAILURE_LIMIT = 32;
+const PROPERTY_COMMAND_FAILURE_LIMIT = 16;
+const SDK_ERROR_HISTORY_LIMIT = 32;
+const propertyCommandNames = new Set(
+  Object.values(sdk.CAPABILITY_MODULES ?? {}).flatMap((module) => [
+    ...module.properties.map((property) => property.name),
+    ...Object.keys(module.members ?? {}),
+  ]),
+);
 
 const readFailures = new Map([
   ["RTC information read timed out", "information_read_timeout"],
@@ -343,6 +354,22 @@ function rtcCommands(raw) {
         : null,
     lastFailure: commandEvidence(raw.lastFailure),
     recent: Array.isArray(raw.recent) ? raw.recent.slice(-32).map(commandEvidence).filter(Boolean) : [],
+    failureRetention: commandFailureRetention(ownDataValue(raw, "failureRetention")),
+  };
+}
+
+/** Reuse the command allowlist for failure rows; absent older snapshots have unknown retention. */
+function commandFailureRetention(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const recent = ownDataValue(raw, "recentFailures");
+  return {
+    recentFailures: Array.isArray(recent)
+      ? recent
+          .slice(-RTC_COMMAND_FAILURE_LIMIT)
+          .map(commandEvidence)
+          .filter((row) => row && row.outcome !== "success")
+      : [],
+    evictedFailures: number(ownDataValue(raw, "evictedFailures")),
   };
 }
 
@@ -746,6 +773,7 @@ export function createDiagnostics(ctx, now = Date.now) {
       lastAtMs: null,
       lastOutcome: null,
       lastFailure: null,
+      failureRetention: { recentFailures: [], evictedFailures: 0 },
     };
   }
   function scope() {
@@ -824,10 +852,10 @@ export function createDiagnostics(ctx, now = Date.now) {
       errors.lastOrigin = sdkErrorOrigin(context);
       errors.byOrigin[errors.lastOrigin] = (errors.byOrigin[errors.lastOrigin] ?? 0) + 1;
       errors.recent.push({ atMs: errors.lastAtMs, kind: errors.lastKind, origin: errors.lastOrigin });
-      if (errors.recent.length > 10) errors.recent.shift();
+      if (errors.recent.length > SDK_ERROR_HISTORY_LIMIT) errors.recent.shift();
       return "sdk_" + errors.lastKind;
     },
-    recordCommand(outcome, error) {
+    recordCommand(outcome, error, metadata) {
       scope();
       if (outcome === "started") commands.attempts++;
       else if (outcome === "completed") commands.completed++;
@@ -837,6 +865,21 @@ export function createDiagnostics(ctx, now = Date.now) {
       } else return;
       commands.lastAtMs = now();
       commands.lastOutcome = outcome;
+      if (outcome === "failed") {
+        const retention = commands.failureRetention;
+        const property = ownDataValue(metadata, "property");
+        retention.recentFailures.push({
+          atMs: number(commands.lastAtMs),
+          outcome: "failed",
+          failure: commands.lastFailure,
+          property: propertyCommandNames.has(property) ? property : null,
+          elapsedMs: number(ownDataValue(metadata, "elapsedMs")),
+        });
+        if (retention.recentFailures.length > PROPERTY_COMMAND_FAILURE_LIMIT) {
+          retention.recentFailures.shift();
+          retention.evictedFailures++;
+        }
+      }
       if (outcome !== "started") capture(true);
     },
     recordObservation(deviceSn, observedAtMs, light, bridgeObservedAtMs) {
@@ -1056,7 +1099,13 @@ export function createDiagnostics(ctx, now = Date.now) {
           byOrigin: { ...errors.byOrigin },
           recent: errors.recent.map((row) => ({ ...row })),
         },
-        propertyCommands: { ...commands },
+        propertyCommands: {
+          ...commands,
+          failureRetention: {
+            recentFailures: commands.failureRetention.recentFailures.map((row) => ({ ...row })),
+            evictedFailures: commands.failureRetention.evictedFailures,
+          },
+        },
         lateContraryEffects: { ...contrary },
       };
       if (collect) windows.collect(snapshot, snapshot.observedAtMs);
