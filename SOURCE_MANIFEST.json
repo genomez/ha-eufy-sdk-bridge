@@ -23,7 +23,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 730,
-      "sha256": "2c0f69a3b8e34f4644758db8a1fcfd4d3353d503621d250ff6be6f90db3a5a38"
+      "sha256": "46bc519f6aaa94c92e54423712d57f88a6ea8adb7639c416b75205044cbe755a"
     },
     "CONTRIBUTING.md": {
       "bytes": 974,
@@ -43,7 +43,7 @@
     },
     "PUBLICATION.json": {
       "bytes": 730,
-      "sha256": "2c0f69a3b8e34f4644758db8a1fcfd4d3353d503621d250ff6be6f90db3a5a38"
+      "sha256": "46bc519f6aaa94c92e54423712d57f88a6ea8adb7639c416b75205044cbe755a"
     },
     "README.md": {
       "bytes": 15096,
@@ -62,8 +62,8 @@
       "sha256": "0d4a902656aec345ae53a11129e6130c005dd06d05fee7c88915854f92d40dca"
     },
     "docs/camera-connectivity.md": {
-      "bytes": 2456,
-      "sha256": "589946820062a85480d29fec0465014c7367a4aaddaf1e7d9131a9df83e65d4a"
+      "bytes": 2459,
+      "sha256": "32b02bbb8b2f35a03e0ec2a34e31970ac51c1d851819a8b156652c4cb5346954"
     },
     "docs/webrtc-proof.md": {
       "bytes": 11026,
@@ -79,7 +79,7 @@
     },
     "package-lock.json": {
       "bytes": 26732,
-      "sha256": "6435d6d055d8421f911c689cab2ecf417c82236d193e859a682b02facfcbf890"
+      "sha256": "cf906c00e8dfbb6569bbde805bf91d70a95719dfc14472518ca021d4d536fe61"
     },
     "package.json": {
       "bytes": 1373,

@@ -11,7 +11,7 @@
   "registryManifestDigest": null,
   "runtimeSourceRelease": null,
   "installationAcceptance": false,
-  "sdkSourceCommit": "d61e89a0aa971f07ce46e353b5eccc70906799d9",
-  "sdkArtifactSha256": "390fe9b241bf684f1aedff19308d009ad82bba2d063d036caed5b36ad0c9fe70",
-  "sdkArtifactIntegrity": "sha512-yx6xRW8Xib9myuEkwFCyTyJteP4aL3bZQVvIlJPGBXTFepJn8QR1A7PCbB0rW3TppfOBwxfy2W5b8ip9gK5ROQ=="
+  "sdkSourceCommit": "ff258691b99617f7c4ae246060d5f0243cc022f0",
+  "sdkArtifactSha256": "a466b74e55f5193a4ecc0e6c4066d7ef5075ea5f9f15d1ac91f3db8b2b621973",
+  "sdkArtifactIntegrity": "sha512-w4LBjm9BfihKNEy9/Bf/Z1cfTmkCmdFWEkbH5xwWhnCWblTC9GFXxWFcmOnbIQo4b0qZCo/+VfS+YB8bhXprsg=="
 }
