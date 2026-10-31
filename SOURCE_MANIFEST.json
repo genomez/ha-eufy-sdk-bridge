@@ -3,7 +3,7 @@
   "version": "0.3.1-s1.experimental.11",
   "status": "prepared-locally-unpublished",
   "publicBaselineCommit": "2e230cc8a978bc29b14dd64837146553289140b4",
-  "exactInputCommit": "92701f99978bab55ce5dc394d34dc91c3ad48e5b",
+  "exactInputCommit": "3e028a4a8de8595ac8aacd8c54297a9c6e47e360",
   "files": {
     ".env.example": {
       "bytes": 3067,
@@ -23,31 +23,31 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 730,
-      "sha256": "1d04fdd719248fa54c8226441bf56dffdbd272991d2b5237c52d3ab727114bb1"
+      "sha256": "2c0f69a3b8e34f4644758db8a1fcfd4d3353d503621d250ff6be6f90db3a5a38"
     },
     "CONTRIBUTING.md": {
       "bytes": 974,
       "sha256": "000a5f67f803460da3e1defa805ffd27035670109c2a4d40f9c6bb6aa6b2a322"
     },
     "EXPERIMENTAL.md": {
-      "bytes": 33169,
-      "sha256": "40a56a3c386003d55a7d7138c2c7af33fcb84ec6fd83de49ab7da61498ef5803"
+      "bytes": 33810,
+      "sha256": "f0b563acce07a8797cc93d2b53ea162ceb619a4097cf6eb1ec58f1b156ac2db2"
     },
     "LICENSE": {
       "bytes": 11339,
       "sha256": "b208eae7041fb7818ebd636d0778b49e242543be9a980ac9dcbaf98449660a2b"
     },
     "MODIFICATIONS.md": {
-      "bytes": 38314,
-      "sha256": "d1afe32bdd7673c163412aa361260d1306bce037c6f8b0504a38d763f9b3fb0a"
+      "bytes": 38987,
+      "sha256": "01b75d53e753e2ecf7a9accca8d78487b6e7e48483d5c5fbe430cf78976b1e98"
     },
     "PUBLICATION.json": {
       "bytes": 730,
-      "sha256": "1d04fdd719248fa54c8226441bf56dffdbd272991d2b5237c52d3ab727114bb1"
+      "sha256": "2c0f69a3b8e34f4644758db8a1fcfd4d3353d503621d250ff6be6f90db3a5a38"
     },
     "README.md": {
-      "bytes": 14455,
-      "sha256": "2e17a4f9c41a0a63aeea863dca3409e9923767fa13e2b7dea862790a067335fe"
+      "bytes": 15096,
+      "sha256": "80577ec8f1a3d14dd38ca38f9bd100dbb686fd5ce074ff70ce508db924692a20"
     },
     "bin/pilot-process.mjs": {
       "bytes": 1364,
@@ -60,6 +60,10 @@
     "docs/bounded-state-writes.md": {
       "bytes": 5530,
       "sha256": "0d4a902656aec345ae53a11129e6130c005dd06d05fee7c88915854f92d40dca"
+    },
+    "docs/camera-connectivity.md": {
+      "bytes": 2456,
+      "sha256": "589946820062a85480d29fec0465014c7367a4aaddaf1e7d9131a9df83e65d4a"
     },
     "docs/webrtc-proof.md": {
       "bytes": 11026,
@@ -75,7 +79,7 @@
     },
     "package-lock.json": {
       "bytes": 26732,
-      "sha256": "85e73ada2610455dcbd74d9ac2bb3b882cb236ef48f28824c560412ecaca11a5"
+      "sha256": "6435d6d055d8421f911c689cab2ecf417c82236d193e859a682b02facfcbf890"
     },
     "package.json": {
       "bytes": 1373,
@@ -326,8 +330,8 @@
       "sha256": "e80e9cf049d3e9676110e499b531d212492b30cbacebfb7f4e59ca1143a42a96"
     },
     "test/failure-history.test.mjs": {
-      "bytes": 9483,
-      "sha256": "33ac9a0eadb58a74370f5fa323b0c5dd3177b0d0bfa55cf155cbecf8977d7e08"
+      "bytes": 9574,
+      "sha256": "f530b2374ba95507e615f47d1933c8ab8b6266caff5804f954417eedc72aff2c"
     },
     "test/fixtures/no-socket-guard.mjs": {
       "bytes": 558,

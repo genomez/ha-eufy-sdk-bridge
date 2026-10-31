@@ -6,45 +6,6 @@ Pair add-on `0.4.1-s1.experimental.11`, integration/bridge `0.3.1-s1.experimenta
 
 Use matching release versions and retain your existing configuration unless deliberately changing an option.
 
-## HomeBase camera connectivity
-
-HomeBase S1 (T9000) per-camera status covers T8425, T8426, T8416, T8214,
-T8134, T8170 and T8171, with mains or battery power. Owner-reported offline/recovery
-testing covers T8425, T8426, T8416, T8214, T8134 and T8170.
-T8171 is **unconfirmed: not offline-tested; assumed to behave like the other HomeBase cameras**.
-These are prior owner observations; this source candidate has only local synthetic validation.
-
-Qualification requires an unambiguous T9000 parent. Changing the parent model
-retires the held assessment and old observers. The latest HomeBase p1131=1
-(or true) means online; 0 (or false) means offline. Both hold without expiry.
-p1131=2 or 3 means unknown. Other values remain raw diagnostics. Reports are
-ordered by local receipt ordinal; unorderable conflicts stay unknown, including
-duplicates, until strictly newer evidence. Child media, push, cloud parameters
-and command outcomes do not establish or replace this assessment. Other models
-retain their existing contact-based rules.
-
-Parent transport loss or unknown makes cameras unknown. After a HomeBase
-reconnect, cameras show unknown until the next routine HomeBase status sweep
-supplies a fresh report through existing mechanisms. The default cloud polling
-interval is 600000 ms (10 minutes), scheduled after each poll completes; a
-successful poll triggers the existing station-state sweep. Allow roughly
-10 minutes plus poll/sweep time under healthy defaults. Failed or disabled
-polling, busy transport or missing child reports can leave unknown indefinitely.
-Existing optional station-state intervals retain their behavior. Reconnect adds
-no reads, timers, retries or camera wakes and never replays a write.
-
-Camera offline status never holds back light OFF: explicit OFF, retries,
-persisted startup/restored OFF, rejoin OFF and watchdog/correction OFF bypass
-the camera connectivity gate. Existing transport, cooldown, lifecycle, intent,
-ownership and deadline checks still apply, so physical delivery is not guaranteed.
-Automatic ON work retains its existing connectivity gate. The camera-health
-contract remains `enforcement: "observe_only"` and `commandsBlocked: false`.
-There is no new light option or command admission policy.
-
-Upgrade SDK, bridge, integration and add-on together as a paired release.
-Source changes alone do not update the add-on runtime mirrors; packaging,
-provenance and physical acceptance remain separate release steps.
-
 ## Changes
 
 - Diagnostics keep bounded failure-only command and property-write history, so failures remain visible when later commands succeed. The SDK error history is limited to 32 entries.
@@ -53,6 +14,10 @@ provenance and physical acceptance remain separate release steps.
 - Streaming-quality sensors behind HomeBase S1 appear only when the camera has reported the corresponding quality parameter. The separate video-quality select is unchanged.
 - After updating both components and restarting Home Assistant, 15 existing RTSP stream switches and 15 existing streaming-quality sensors on the affected installation are expected to become unavailable. Their retained entity entries can be removed in Home Assistant. Streaming-quality sensors with reported support remain available.
 - Camera-health diagnostics show the last suppressed signal-strength reading, its reason and source. This diagnostic does not change the published signal strength or prove the current radio state.
+- More cameras now show Online/Offline status from HomeBase S1 (T9000). Offline/recovery testing covers T8425, T8426, T8416, T8214, T8134 and T8170; T8171 has not yet been offline-tested.
+- Camera status holds until the HomeBase reports a change.
+- After a HomeBase reconnect, cameras show unknown until the next routine status update, about 10 minutes by default plus polling and sweep time. Failed or disabled polling or missing reports can leave status unknown longer.
+- A camera marked offline never holds back light OFF commands or retries. Existing transport and safety checks still apply. Upgrade the add-on and integration together.
 
 ## Defaults and use
 
@@ -182,9 +147,11 @@ Fixes should retain explicit stream start/stop, cleanup on navigation/removal/vi
 
 Target contributions at `s1-experimental`. The existing default branch belongs to the earlier fork history; its workflows and support claims are not those of this source preview. The inherited HACS minimum-version metadata is not a qualified compatibility range for this preview.
 
+
 ## Safety candidate, 2026-10-14
 
 Packaging-only version and frozen local SDK dependency update. Base source commit: `400fb42ab79631ba51d344abb1da262474961098`. Use only an owner-approved local candidate or an exact matching published artifact with its checksum and corresponding sources.
+
 
 ## Renewal package preparation, 2026-10-14
 
@@ -237,6 +204,7 @@ Implementation `0d6b16f5e9760dc8f4d4d6966bc6aee5b5e5ce79` changes `src/watchdog.
 
 This replaces the earlier review.7 candidate with review.9 input `681efd9` (implementation `d4335b9`, on review.8 `f6a59d9`). Runtime source is unchanged. Includes bounded pending acceptance for eligible correlated floodlight late replies with authoritative correction, supported S1 camera sirens, standard doorbell ring events and faster demand-only live-view admission, alongside the battery stream fix and native relay. The add-on relay option defaults to false; command keepalive remains 29000 independently. Package versions are SDK `0.2.1-s1.experimental.6` and bridge `0.3.1-s1.experimental.6`. Earlier candidate status statements above are historical. Original licenses and attribution remain. This is local packaging; publication and final device/soak qualification are pending.
 
+
 ## Historical input documentation and modification notices
 
 # Experimental source preview
@@ -273,9 +241,11 @@ Fixes should retain explicit stream start/stop, cleanup on navigation/removal/vi
 
 Target contributions at `s1-experimental`. The existing default branch belongs to the earlier fork history; its workflows and support claims are not those of this source preview. The inherited HACS minimum-version metadata is not a qualified compatibility range for this preview.
 
+
 ## Safety candidate, 2026-10-14
 
 Packaging-only version and frozen local SDK dependency update. Base source commit: `400fb42ab79631ba51d344abb1da262474961098`. Use only an owner-approved local candidate or an exact matching published artifact with its checksum and corresponding sources.
+
 
 ## Renewal package preparation, 2026-10-14
 
