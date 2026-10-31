@@ -1084,7 +1084,7 @@ export function createDiagnostics(ctx, now = Date.now) {
           }
         })(),
         rtcCommands: rtcCommands(ctx.eufy.getRtcCommandDiagnostics?.()),
-        cameraHealth: camera.snapshot(),
+        cameraHealth: camera.snapshot((sn) => ctx.eufy.getRssiSuppressionDiagnostics?.(sn)),
         rtcObservations: rtcObservationSnapshot,
         rtcRenewals,
         rtcKeepalive,

@@ -239,6 +239,89 @@ function eventFixture() {
   return { eufy, events, ctx };
 }
 
+test("signal suppression is cache-only, per camera and diagnostics-only", () => {
+  const f = eventFixture();
+  const raw = { reason: "sentinel_-100", source: "hub_report", receivedAtMs: now, value: -100, private: "discard" };
+  const reads = [];
+  f.eufy.getRssiSuppressionDiagnostics = (sn) => {
+    reads.push(sn);
+    return sn === "synthetic-camera" ? raw : null;
+  };
+  f.ctx.recordCameraHealth("synthetic-camera", health());
+  f.ctx.recordCameraHealth("other-camera", health());
+  const snapshot = f.ctx.diagnostics(false).cameraHealth;
+  assert.deepEqual(reads, ["synthetic-camera", "other-camera"]);
+  assert.deepEqual(snapshot.cameras[0].rssiSuppression, {
+    reason: "sentinel_-100",
+    source: "hub_report",
+    receivedAtMs: now,
+    value: -100,
+  });
+  assert.equal(snapshot.cameras[1].rssiSuppression, null);
+  assert.equal(Object.hasOwn(snapshot.recent[0], "rssiSuppression"), false);
+  assert.equal(JSON.stringify(snapshot).includes("synthetic-camera"), false);
+  assert.equal(JSON.stringify(snapshot).includes("discard"), false);
+  assert.deepEqual(cameraHealth({ ...health(), rssiSuppression: raw }, now), health());
+  assert.deepEqual(f.events, []);
+  snapshot.cameras[0].rssiSuppression.reason = "non_numeric";
+  assert.equal(f.ctx.diagnostics(false).cameraHealth.cameras[0].rssiSuppression.reason, "sentinel_-100");
+});
+
+test("signal suppression allowlist accepts the three reasons and receipt sources", () => {
+  const diagnostics = createCameraHealthDiagnostics(() => now);
+  diagnostics.record("synthetic-camera", health());
+  for (const reason of ["sentinel_-100", "non_numeric", "out_of_range"])
+    for (const source of ["hub_report", "cloud_params", "realtime_overlay"]) {
+      const raw = { reason, source, receivedAtMs: now, value: reason === "sentinel_-100" ? -100 : null };
+      assert.deepEqual(diagnostics.snapshot(() => raw).cameras[0].rssiSuppression, raw);
+    }
+});
+
+test("signal suppression allowlist fails closed on malformed records and getters", () => {
+  const diagnostics = createCameraHealthDiagnostics(() => now);
+  diagnostics.record("synthetic-camera", health());
+  const valid = { reason: "non_numeric", source: "cloud_params", receivedAtMs: now, value: null };
+  const invalid = [null, [], {}, "private", Object.create(valid)];
+  for (const key of Object.keys(valid)) {
+    const missing = { ...valid };
+    delete missing[key];
+    invalid.push(missing);
+    invalid.push(
+      Object.defineProperty({ ...valid }, key, {
+        get() {
+          throw new Error("private");
+        },
+      }),
+    );
+  }
+  for (const [key, values] of Object.entries({
+    reason: ["private", "missing", 1],
+    source: ["private", "hub", null],
+    receivedAtMs: [-1, NaN, Infinity, "1", 1.5, now + 600001],
+    value: ["private", {}, -60, -100],
+  }))
+    for (const value of values) invalid.push({ ...valid, [key]: value });
+  for (const raw of invalid) assert.equal(diagnostics.snapshot(() => raw).cameras[0].rssiSuppression, null);
+  assert.equal(
+    diagnostics.snapshot(() => {
+      throw new Error("private");
+    }).cameras[0].rssiSuppression,
+    null,
+  );
+});
+
+test("signal suppression diagnostics tolerate an older SDK and retire removed cameras", () => {
+  const f = eventFixture();
+  f.ctx.recordCameraHealth("synthetic-camera", health());
+  assert.equal(f.ctx.diagnostics(false).cameraHealth.cameras[0].rssiSuppression, null);
+  f.eufy.getRssiSuppressionDiagnostics = () => {
+    throw new Error("unavailable");
+  };
+  assert.equal(f.ctx.diagnostics(false).cameraHealth.cameras[0].rssiSuppression, null);
+  f.ctx.syncCameraHealthDevices([]);
+  assert.deepEqual(f.ctx.diagnostics(false).cameraHealth.cameras, []);
+});
+
 test("HomeBase status states and raw batch source survive snapshots, events and diagnostics", async () => {
   const events = eventFixture();
   const stop = wireDeviceEvents(events.ctx);

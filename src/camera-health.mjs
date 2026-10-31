@@ -196,7 +196,7 @@ export function createCameraHealthDiagnostics(now = Date.now) {
       const present = new Set(devices.map((device) => device.sn));
       for (const sn of latest.keys()) if (!present.has(sn)) latest.delete(sn);
     },
-    snapshot() {
+    snapshot(readRssiSuppression = () => null) {
       const outcomes = Object.fromEntries(
         states.map((state) => [state, Object.fromEntries(statuses.map((status) => [status, 0]))]),
       );
@@ -214,7 +214,24 @@ export function createCameraHealthDiagnostics(now = Date.now) {
         capacity: 1024,
         evictedTargets,
         outcomes,
-        cameras: structuredClone([...latest.values()].map((entry) => entry.row)),
+        cameras: structuredClone(
+          [...latest.entries()].map(([sn, entry]) => {
+            let rssiSuppression = null;
+            try {
+              const raw = fields(readRssiSuppression(sn), ["reason", "source", "receivedAtMs", "value"]);
+              if (
+                raw &&
+                ["sentinel_-100", "non_numeric", "out_of_range"].includes(raw.reason) &&
+                ["hub_report", "cloud_params", "realtime_overlay"].includes(raw.source) &&
+                count(raw.receivedAtMs) &&
+                raw.receivedAtMs <= now() + 600000 &&
+                raw.value === (raw.reason === "sentinel_-100" ? -100 : null)
+              )
+                rssiSuppression = raw;
+            } catch {}
+            return { ...entry.row, rssiSuppression };
+          }),
+        ),
         transitions: structuredClone(transitions),
         recent: structuredClone(recent),
       };
