@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { performance } from "node:perf_hooks";
 import { createDiagnostics } from "../src/diagnostics.mjs";
 import { createState } from "../src/state.mjs";
 import { createWsServer } from "../src/ws-server.mjs";
@@ -155,6 +156,7 @@ test("RTC failure projection bounds and sanitizes rows with the existing command
 function wsFixture(t, eufy) {
   const f = fixture(eufy);
   t.mock.method(Date, "now", f.now);
+  t.mock.method(performance, "now", f.now);
   Object.assign(f.ctx, createWsServer(f.ctx, http.createServer()));
   t.after(() => f.ctx.closeWebSocketServer());
   const replies = [];
