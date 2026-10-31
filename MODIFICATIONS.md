@@ -45,9 +45,12 @@ Modified for genomez experimental.9, 2026-10-27.
 
 Modified for genomez experimental.11, 2026-10-31.
 
+- `BUILD_PROVENANCE.json`
 - `EXPERIMENTAL.md`
 - `MODIFICATIONS.md`
+- `PUBLICATION.json`
 - `README.md`
+- `SOURCE_MANIFEST.json`
 - `package-lock.json`
 - `package.json`
 - `src/camera-health.mjs`
