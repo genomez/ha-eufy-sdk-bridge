@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.12",
-  "status": "local-build-unpublished",
-  "exactInputCommit": "1b140b62bbacbacfb46c0d2aaf7ed241491dd9c1",
+  "status": "publication-prepared-unpublished",
+  "acceptedSourceCommit": "bf67e64018ba81336af411beb36f97bb10bc903d",
   "files": {
     ".env.example": {
       "bytes": 3067,
@@ -29,24 +29,24 @@
       "sha256": "000a5f67f803460da3e1defa805ffd27035670109c2a4d40f9c6bb6aa6b2a322"
     },
     "EXPERIMENTAL.md": {
-      "bytes": 34422,
-      "sha256": "f5198fc2f644c6db8fc712e0f8ace98eb2174242025f17701eca4028416b7d49"
+      "bytes": 36753,
+      "sha256": "954e20aa077b30425e0f6980e5cd09f9f775e2b7ad3c4f17b6b3d2b5c21eb3a1"
     },
     "LICENSE": {
       "bytes": 11339,
       "sha256": "b208eae7041fb7818ebd636d0778b49e242543be9a980ac9dcbaf98449660a2b"
     },
     "MODIFICATIONS.md": {
-      "bytes": 39492,
-      "sha256": "2b65cb1a44b5e14a31b05aadc404ac3686d784360ec574373d1d5f7d45beb3d2"
+      "bytes": 42157,
+      "sha256": "a05c26714715b4f980dce32231f2d769a8eedfd86dc4ccc34767009231dd85b6"
     },
     "PUBLICATION.json": {
-      "bytes": 659,
-      "sha256": "e35478e5da1829efe321e4d3f014669fcc64012732b7d10c2d1b7c151095417d"
+      "bytes": 1239,
+      "sha256": "8a4dfda0dfa44b389be2288660bead619d6354bdf99bd4eecae2ebe2edfbbe18"
     },
     "README.md": {
-      "bytes": 15708,
-      "sha256": "cea048e635ff9867edffe4494b12f511ccf3e5a97fa4c86eacfb0dde72cc7761"
+      "bytes": 18039,
+      "sha256": "ae8f5e8ce1967b9cbead0cc2be91457df9f3126a6d6d55ebeceff391aa489e22"
     },
     "bin/pilot-process.mjs": {
       "bytes": 1364,
