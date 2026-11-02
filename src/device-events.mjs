@@ -14,6 +14,16 @@ export function wireDeviceEvents(ctx) {
     listeners.push([event, listener]);
   };
   on("deviceState", ctx.bumpActivity);
+  on("deviceMetadata", (raw) => {
+    if (typeof raw?.deviceSn !== "string" || !raw.deviceSn || raw.deviceSn.length > 128) return;
+    const value = raw.firmwareVersion;
+    if (
+      value !== null &&
+      (typeof value !== "string" || value.length > 64 || !/^[A-Za-z0-9._+-]+$/.test(value) || !/[0-9]/.test(value))
+    )
+      return;
+    ctx.broadcast({ event: "deviceMetadata", deviceSn: raw.deviceSn, firmwareVersion: value });
+  });
   on("commandHealth", (raw) => {
     const health = commandHealthEvent(raw);
     if (health) ctx.broadcast({ event: "commandHealth", ...health });

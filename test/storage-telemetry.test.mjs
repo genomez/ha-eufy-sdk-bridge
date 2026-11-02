@@ -21,7 +21,18 @@ const raw = () => ({
     system_size_data: 0,
   },
 });
-function fixture(enabled = true) {
+
+for (const firmware of ["4.4.0.4", "4.4.1.4", "4.4.2.4"]) {
+  test(`storage telemetry admits only qualified firmware ${firmware}`, async () => {
+    const f = fixture(true, firmware);
+    const supported = firmware !== "4.4.2.4";
+    assert.equal(Boolean(f.snapshot()), supported);
+    await f.tick();
+    assert.equal(f.requests(), supported ? 1 : 0);
+    if (supported) assert.equal(f.snapshot().status, "current");
+  });
+}
+function fixture(enabled = true, firmware = "4.4.0.4") {
   let wall = 1_800_000_000_000;
   let mono = 1000;
   let token = {};
@@ -32,14 +43,14 @@ function fixture(enabled = true) {
   let read = async () => ({ observation: { ...raw(), receivedAtMs: wall } });
   let callback;
   const record = { sn: "T9000TEST", model: "T9000", stationSn: "T9000TEST" };
-  const dev = { info: () => ({ firmwareVersion: "4.4.0.4" }) };
+  const dev = { info: () => ({ firmwareVersion: firmware }) };
   const state = createState();
   state.flags.ready = true;
   const ctx = {
     cfg: { storageTelemetry: enabled },
     state,
     eufy: {
-      getStorageTelemetryOwner: () => (ownerAvailable ? { token, model: "T9000", firmware: "4.4.0.4" } : undefined),
+      getStorageTelemetryOwner: () => (ownerAvailable ? { token, model: "T9000", firmware } : undefined),
       readStorageTelemetry: async (sn, options) => {
         requests++;
         assert.equal(sn, record.sn);

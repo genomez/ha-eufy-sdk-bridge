@@ -10,6 +10,7 @@ import { createDeviceView } from "../src/device-view.mjs";
 import { createDiagnostics } from "../src/diagnostics.mjs";
 import { createState } from "../src/state.mjs";
 import { createWsServer } from "../src/ws-server.mjs";
+import { EufyMega } from "@mega-yfue/eufy-sdk";
 
 const now = 1792680000000;
 const states = ["online", "suspect", "offline", "unknown"];
@@ -238,6 +239,59 @@ function eventFixture() {
   Object.assign(ctx, createDiagnostics(ctx));
   return { eufy, events, ctx };
 }
+
+test("child registry conflict forwards an ordered SDK unknown invalidation", () => {
+  const f = eventFixture();
+  const eufy = new EufyMega({ email: "synthetic@example.test", password: "synthetic", autoRealtime: false });
+  f.ctx.eufy = eufy;
+  const station = "T9000P0000000000";
+  const target = "T8425P0000000000";
+  eufy.registry.devices = [
+    { sn: station, model: "T9000", deviceClass: "homebase" },
+    { sn: target, stationSn: station, model: "T8425", deviceClass: "camera" },
+  ];
+  const stop = wireDeviceEvents(f.ctx);
+  try {
+    eufy.cameraHealthIngress.parent(station, "connected");
+    eufy.cameraHealthIngress.params(target, { 1131: "1" }, "hub_report");
+    const online = f.events.at(-1);
+    assert.equal(online.connectivity, "online");
+    eufy.registry.inventoryConflicts = new Set([target]);
+    eufy.cameraHealthIngress.roster(eufy.registry.list());
+    const invalidation = f.events.at(-1);
+    assert.equal(invalidation.event, "cameraHealth");
+    assert.equal(invalidation.sn, target);
+    assert.equal(invalidation.connectivity, "unknown");
+    assert.ok(invalidation.revision > online.revision);
+    assert.equal(invalidation.incarnation, online.incarnation);
+    assert.equal(invalidation.rawStatus.p1131, null);
+    assert.equal(eufy.cameraHealth(target), undefined);
+  } finally {
+    stop();
+    eufy.cameraHealthIngress.store.close();
+  }
+});
+
+test("firmware metadata events are scalar-only passive projections", () => {
+  const f = eventFixture();
+  const stop = wireDeviceEvents(f.ctx);
+  try {
+    for (const value of ["4.4.0.4", "4.4.1.4", null]) {
+      f.eufy.emit("deviceMetadata", { deviceSn: "synthetic-station", firmwareVersion: value, private: "discard" });
+    }
+    assert.deepEqual(
+      f.events.map((value) => value.firmwareVersion),
+      ["4.4.0.4", "4.4.1.4", null],
+    );
+    for (const value of [{}, 4, "https://example.test/version", "4\nprivate", "x".repeat(65), undefined]) {
+      f.eufy.emit("deviceMetadata", { deviceSn: "synthetic-station", firmwareVersion: value });
+    }
+    assert.equal(f.events.length, 3);
+    assert.ok(f.events.every((value) => Object.keys(value).length === 3));
+  } finally {
+    stop();
+  }
+});
 
 test("signal suppression is cache-only, per camera and diagnostics-only", () => {
   const f = eventFixture();

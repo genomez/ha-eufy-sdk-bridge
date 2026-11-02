@@ -140,7 +140,7 @@ export function createStorageTelemetry(
       retire(record.sn);
       return undefined;
     }
-    if (firmware !== "4.4.0.4") {
+    if (firmware !== "4.4.0.4" && firmware !== "4.4.1.4") {
       retire(record.sn);
       return undefined;
     }
@@ -225,7 +225,12 @@ export function createStorageTelemetry(
         )
           break;
         const current = owner(sn);
-        if (!current || current.model !== "T9000" || current.firmware !== "4.4.0.4" || current.token !== entry.token) {
+        if (
+          !current ||
+          current.model !== "T9000" ||
+          !["4.4.0.4", "4.4.1.4"].includes(current.firmware) ||
+          current.token !== entry.token
+        ) {
           entries.delete(sn);
           continue;
         }
