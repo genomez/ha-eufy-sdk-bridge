@@ -1,3 +1,7 @@
+Modified for genomez experimental.12, 2026-11-02
+
+Modified for genomez experimental.11, 2026-10-31
+
 # S1 experimental.11 — Modification notices
 
 The bridge connects the SDK runtime to Home Assistant. Use the paired add-on and integration.

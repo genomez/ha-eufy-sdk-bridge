@@ -1,8 +1,10 @@
-# S1 experimental.11 — Overview
+Current local candidate: experimental.12 (2026-11-02). Unpublished; no installation or device acceptance. Earlier release references below are historical.
+
+# S1 experimental.12 — Overview
 
 The bridge connects the SDK runtime to Home Assistant. Use the paired add-on and integration.
 
-Pair add-on `0.4.1-s1.experimental.11`, integration/bridge `0.3.1-s1.experimental.11` and SDK `0.2.1-s1.experimental.11`.
+Pair add-on `0.4.1-s1.experimental.12`, integration/bridge `0.3.1-s1.experimental.12` and SDK `0.2.1-s1.experimental.12`.
 
 Update the add-on and integration together and retain your existing configuration. This is an experimental fork, not an official upstream release.
 
