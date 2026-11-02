@@ -1,17 +1,34 @@
 {
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.11",
-  "status": "prepared-locally-unpublished",
-  "published": false,
+  "status": "published-runtime-and-source-delivery",
+  "published": true,
   "publicBaseCommit": "2e230cc8a978bc29b14dd64837146553289140b4",
   "exactInputCommit": "3e028a4a8de8595ac8aacd8c54297a9c6e47e360",
   "relayDefault": false,
   "keepaliveMs": 29000,
   "lightCorrectionDefault": false,
-  "registryManifestDigest": null,
-  "runtimeSourceRelease": null,
+  "registryManifestDigest": "sha256:28cc3774423aae12a7a328c0d39c66c317f8c5232466073c356076d1bbd50471",
+  "runtimeSourceRelease": "https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.11",
   "installationAcceptance": false,
   "sdkSourceCommit": "ff258691b99617f7c4ae246060d5f0243cc022f0",
   "sdkArtifactSha256": "a466b74e55f5193a4ecc0e6c4066d7ef5075ea5f9f15d1ac91f3db8b2b621973",
-  "sdkArtifactIntegrity": "sha512-w4LBjm9BfihKNEy9/Bf/Z1cfTmkCmdFWEkbH5xwWhnCWblTC9GFXxWFcmOnbIQo4b0qZCo/+VfS+YB8bhXprsg=="
+  "sdkArtifactIntegrity": "sha512-w4LBjm9BfihKNEy9/Bf/Z1cfTmkCmdFWEkbH5xwWhnCWblTC9GFXxWFcmOnbIQo4b0qZCo/+VfS+YB8bhXprsg==",
+  "publicationVerifiedAt": "2026-11-02T15:05:52.770890+00:00",
+  "sourcePreparationCommit": "92f7ec9627d7e49fdb9742cd50a0518dd35626fd",
+  "sourcePreparationCommits": {
+    "eufy-sdk": "ff258691b99617f7c4ae246060d5f0243cc022f0",
+    "ha-eufy-sdk-bridge": "92f7ec9627d7e49fdb9742cd50a0518dd35626fd",
+    "ha-eufy-sdk": "bcaa58e38d66b48786c33dcd5f0aba82a2890785"
+  },
+  "hacsAvailabilityVerified": false,
+  "releasePreparationRecordHistorical": true,
+  "integrationRelease": "https://github.com/genomez/ha-eufy-sdk/releases/tag/0.3.1-s1.experimental.11",
+  "sdkCorrespondingSource": {
+    "filename": "eufy-sdk-0.2.1-s1.experimental.11-source.tar.gz",
+    "bytes": 1619648,
+    "sha256": "d49311318a9522d7cdc6ebb0bddaeaa12bd7d8df383688b414ed294c2b03d465",
+    "sourceCommit": "ff258691b99617f7c4ae246060d5f0243cc022f0",
+    "members": 561
+  }
 }
