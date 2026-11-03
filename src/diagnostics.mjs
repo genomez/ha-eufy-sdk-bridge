@@ -1094,9 +1094,14 @@ export function createDiagnostics(ctx, now = Date.now) {
             if (!value) return null;
             return {
               ...Object.fromEntries(
-                ["failureTaints", "failureDrops", "normalReestablishments", "ordinaryReads", "reestablishedAgeMs"].map(
-                  (key) => [key, number(value[key])],
-                ),
+                [
+                  "failureTaints",
+                  "failureDrops",
+                  "normalReestablishments",
+                  "ordinaryReads",
+                  "reestablishedAgeMs",
+                  "latchPersistenceFailures",
+                ].map((key) => [key, number(value[key])]),
               ),
               unresolved: value.unresolved === true,
               active: value.active === true,

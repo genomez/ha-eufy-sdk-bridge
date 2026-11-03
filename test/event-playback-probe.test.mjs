@@ -241,3 +241,54 @@ test("health success cannot cure unknown release or a remaining latch", () => {
   assert.equal(classifyPlaybackHealth({ ...recovery, releaseConfirmed: false }).accepted, false);
   assert.equal(classifyPlaybackHealth({ ...health, observedMs: 59999 }).reason, "health_unverified");
 });
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createPlaybackSafetyStore } from "../src/event-playback-probe.mjs";
+
+test("dormant startup loads unresolved state with guard activation explicitly disabled", () => {
+  const original = fs.existsSync;
+  let configured;
+  try {
+    fs.existsSync = (p) => p === "/synthetic-safety";
+    const probe = attachEventPlaybackProbe(
+      {
+        eufy: {
+          rtc: {
+            configurePlaybackSafety: (...args) => {
+              configured = args;
+            },
+          },
+        },
+      },
+      { dir: "/synthetic-probe", safetyDir: "/synthetic-safety" },
+    );
+    assert.equal(probe.status, "unavailable");
+    assert.equal(configured[0], true);
+    assert.equal(configured[2], false);
+  } finally {
+    fs.existsSync = original;
+  }
+});
+
+if (process.platform === "linux")
+  test("failed late persistence followed by process-store reload is latched", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "safety-synthetic-"));
+    fs.chmodSync(dir, 0o700);
+    const safety = createPlaybackSafetyStore(dir);
+    safety.save(true);
+    safety.save(false);
+    assert.equal(safety.load(), false);
+    const write = fs.writeFileSync;
+    try {
+      fs.writeFileSync = () => {
+        throw Error("synthetic_write_failure");
+      };
+      assert.throws(() => safety.save(true));
+    } finally {
+      fs.writeFileSync = write;
+    }
+    assert.equal(safety.load(), true);
+    assert.equal(createPlaybackSafetyStore(dir).load(), true);
+  });

@@ -41,6 +41,7 @@ const booleans = [
   "ownerContinuous",
   "selectorsReserved",
   "latchPersisted",
+  "latchPersistenceFailed",
   "latchRetained",
   "latchCleared",
   "randomAccess",
@@ -155,8 +156,14 @@ export function validatePlaybackGrant(value, now, pins) {
   return value;
 }
 
-/** Flags-only, installation-wide conservative scope; no targeting identifier is persisted. */
+/**
+ * Flags-only installation-wide latch. Schema 1 is initial provisioning; schema 2 is probe-written.
+ * A probe-written clear is trusted only by this store instance after a completed durable save.
+ * Restart, uncertain writes and unavailable write access all refuse a positive clear.
+ */
 export function createPlaybackSafetyStore(dir) {
+  let clearedHere = false;
+  let uncertain = false;
   const identity = fs.lstatSync(dir);
   const guard = () => {
     const current = fs.lstatSync(dir);
@@ -172,6 +179,8 @@ export function createPlaybackSafetyStore(dir) {
   };
   const load = () => {
     guard();
+    fs.accessSync(dir, fs.constants.W_OK);
+    fs.accessSync(path.join(dir, "state.json"), fs.constants.W_OK);
     const fd = fs.openSync(
       path.join(dir, "state.json"),
       fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
@@ -183,16 +192,23 @@ export function createPlaybackSafetyStore(dir) {
       const value = JSON.parse(fs.readFileSync(fd));
       if (
         Object.keys(value).sort().join(",") !== "schema,unresolved" ||
-        value.schema !== 1 ||
+        ![1, 2].includes(value.schema) ||
         typeof value.unresolved !== "boolean"
       )
         throw new Error("probe_safety_state_invalid");
-      return value.unresolved;
+      return (
+        uncertain ||
+        value.unresolved ||
+        (value.schema === 2 && !clearedHere) ||
+        fs.readdirSync(dir).some((name) => name.startsWith("pending-"))
+      );
     } finally {
       fs.closeSync(fd);
     }
   };
   const save = (unresolved) => {
+    uncertain = true;
+    clearedHere = false;
     guard();
     if (typeof unresolved !== "boolean") throw new Error("probe_safety_state_invalid");
     const pending = path.join(dir, "pending-" + crypto.randomBytes(16).toString("hex"));
@@ -202,7 +218,7 @@ export function createPlaybackSafetyStore(dir) {
       0o600,
     );
     try {
-      fs.writeFileSync(fd, JSON.stringify({ schema: 1, unresolved }));
+      fs.writeFileSync(fd, JSON.stringify({ schema: 2, unresolved }));
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
@@ -215,6 +231,8 @@ export function createPlaybackSafetyStore(dir) {
     } finally {
       fs.closeSync(directory);
     }
+    uncertain = false;
+    clearedHere = !unresolved;
   };
   guard();
   return { load, save };
@@ -344,7 +362,7 @@ export function createEventPlaybackProbe(
 
 const dormant = (status) => ({ status, start: async () => {}, stop: async () => {} });
 
-/** Safety state is reloaded even with an expired/consumed grant. No grant creates no socket. */
+/** Dormant clear state preserves normal traffic; unresolved state retains isolation without a grant. */
 export function attachEventPlaybackProbe(
   ctx,
   {
@@ -363,7 +381,7 @@ export function attachEventPlaybackProbe(
       try {
         unresolved = safety.load();
       } catch {}
-      ctx.eufy.rtc.configurePlaybackSafety(unresolved, safety.save);
+      ctx.eufy.rtc.configurePlaybackSafety(unresolved, safety.save, false);
     }
     if (!fs.existsSync(path.join(dir, "authorization.json"))) return dormant("disabled");
     if (
@@ -401,6 +419,7 @@ export function attachEventPlaybackProbe(
       ]),
     );
     validatePlaybackGrant(store.load(), Date.now(), pins);
+    ctx.eufy.rtc.configurePlaybackSafety(safety.load(), safety.save, true);
     const probe = createEventPlaybackProbe(ctx, { store, safety, pins });
     const sockets = new Set();
     const server = net.createServer((socket) => {
@@ -476,9 +495,13 @@ export function attachEventPlaybackProbe(
     };
   } catch {
     try {
-      ctx.eufy.rtc.configurePlaybackSafety(true, () => {
-        throw Error("probe_safety_unavailable");
-      });
+      ctx.eufy.rtc.configurePlaybackSafety(
+        true,
+        () => {
+          throw Error("probe_safety_unavailable");
+        },
+        false,
+      );
     } catch {}
     return dormant("unavailable");
   }
