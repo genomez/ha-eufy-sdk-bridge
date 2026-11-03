@@ -25,11 +25,65 @@ export async function control(
     sdkFile = fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")),
     bridgeFiles = eventPlaybackProbeFiles.map((name) => ({ name, file: path.join(appDir, name) })),
     expectedSdkSha256 = eventPlaybackProbeSdkSha256,
+    ownerApproved = false,
+    recoveryFile,
     quietDeadlineNs,
     quietDeadlineMs,
   } = {},
 ) {
   if (process.platform !== "linux") throw Error("probe_platform_invalid");
+  if (action === "clear-latch") {
+    if (ownerApproved !== true) throw Error("probe_owner_approval_required");
+    const safety = createPlaybackSafetyStore(safetyDir);
+    const unlock = safety.exclusive();
+    try {
+      const fd = fs.openSync(recoveryFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      let token;
+      try {
+        const st = fs.fstatSync(fd);
+        if (!st.isFile() || st.uid !== process.getuid() || (st.mode & 0o7777) !== 0o600 || st.size > 512)
+          throw Error("probe_recovery_invalid");
+        token = JSON.parse(fs.readFileSync(fd));
+      } finally {
+        fs.closeSync(fd);
+      }
+      if (
+        Object.keys(token).sort().join(",") !== "purpose,schema,token" ||
+        token.schema !== 1 ||
+        token.purpose !== "event-playback-clear-latch" ||
+        !/^[a-f0-9]{64}$/.test(token.token)
+      )
+        throw Error("probe_recovery_invalid");
+      const claim = path.join(
+        safetyDir,
+        "recovery-" + crypto.createHash("sha256").update(token.token).digest("hex") + ".json",
+      );
+      const receipt = fs.openSync(
+        claim,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+        0o600,
+      );
+      try {
+        fs.writeFileSync(receipt, JSON.stringify({ schema: 1, outcome: "recovery_claimed" }));
+        fs.fsyncSync(receipt);
+        const directory = fs.openSync(safetyDir, fs.constants.O_RDONLY);
+        try {
+          fs.fsyncSync(directory);
+        } finally {
+          fs.closeSync(directory);
+        }
+        safety.save(false, "owner_recovery", true);
+        if (createPlaybackSafetyStore(safetyDir).load()) throw Error("probe_safety_uncertain");
+        fs.writeFileSync(receipt, "\n" + JSON.stringify({ schema: 1, outcome: "latch_cleared" }));
+        fs.fsyncSync(receipt);
+      } finally {
+        fs.closeSync(receipt);
+      }
+      return { outcome: "latch_cleared" };
+    } finally {
+      unlock();
+    }
+  }
   if (action === "prepare") {
     const fd = fs.openSync(policyFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     let policy;
@@ -59,7 +113,7 @@ export async function control(
     validatePlaybackGrant(grant, now, pins);
     if (!fs.existsSync(safetyDir)) {
       fs.mkdirSync(safetyDir, { mode: 0o700 });
-      createPlaybackSafetyStore(safetyDir).save(false);
+      createPlaybackSafetyStore(safetyDir).save(false, "prepared");
     }
     if (createPlaybackSafetyStore(safetyDir).load() !== false) throw Error("playback_slot_uncertain");
     fs.mkdirSync(dir, { mode: 0o700 });
@@ -141,6 +195,8 @@ export async function control(
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const action = process.argv[2];
   control(action, action === "prepare" ? process.argv[3] : undefined, {
+    ownerApproved: action === "clear-latch" && process.argv[3] === "--owner-approved",
+    recoveryFile: action === "clear-latch" ? process.argv[4] : undefined,
     quietDeadlineNs: action === "trigger" ? process.argv[3] : undefined,
     quietDeadlineMs: action === "trigger" ? Number(process.argv[4]) : undefined,
   }).then(

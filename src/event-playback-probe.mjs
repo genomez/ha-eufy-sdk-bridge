@@ -156,13 +156,8 @@ export function validatePlaybackGrant(value, now, pins) {
   return value;
 }
 
-/**
- * Flags-only installation-wide latch. Schema 1 is initial provisioning; schema 2 is probe-written.
- * A probe-written clear is trusted only by this store instance after a completed durable save.
- * Restart, uncertain writes and unavailable write access all refuse a positive clear.
- */
+/** Explicit durable states are shared by all readers; uncertain transactions remain fail-closed. */
 export function createPlaybackSafetyStore(dir) {
-  let clearedHere = false;
   let uncertain = false;
   const identity = fs.lstatSync(dir);
   const guard = () => {
@@ -175,67 +170,113 @@ export function createPlaybackSafetyStore(dir) {
       (current.mode & 0o7777) !== 0o700 ||
       current.uid !== process.getuid()
     )
-      throw new Error("probe_safety_directory_invalid");
+      throw Error("probe_safety_directory_invalid");
   };
-  const load = () => {
-    guard();
-    fs.accessSync(dir, fs.constants.W_OK);
-    fs.accessSync(path.join(dir, "state.json"), fs.constants.W_OK);
-    const fd = fs.openSync(
-      path.join(dir, "state.json"),
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-    );
+  const syncDirectory = () => {
+    const fd = fs.openSync(dir, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     try {
-      const st = fs.fstatSync(fd);
-      if (!st.isFile() || st.uid !== process.getuid() || (st.mode & 0o7777) !== 0o600 || st.size > 128)
-        throw new Error("probe_safety_state_invalid");
-      const value = JSON.parse(fs.readFileSync(fd));
-      if (
-        Object.keys(value).sort().join(",") !== "schema,unresolved" ||
-        ![1, 2].includes(value.schema) ||
-        typeof value.unresolved !== "boolean"
-      )
-        throw new Error("probe_safety_state_invalid");
-      return (
-        uncertain ||
-        value.unresolved ||
-        (value.schema === 2 && !clearedHere) ||
-        fs.readdirSync(dir).some((name) => name.startsWith("pending-"))
-      );
-    } finally {
-      fs.closeSync(fd);
-    }
-  };
-  const save = (unresolved) => {
-    uncertain = true;
-    clearedHere = false;
-    guard();
-    if (typeof unresolved !== "boolean") throw new Error("probe_safety_state_invalid");
-    const pending = path.join(dir, "pending-" + crypto.randomBytes(16).toString("hex"));
-    const fd = fs.openSync(
-      pending,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
-      0o600,
-    );
-    try {
-      fs.writeFileSync(fd, JSON.stringify({ schema: 2, unresolved }));
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
     }
+  };
+  const load = () => {
     guard();
-    fs.renameSync(pending, path.join(dir, "state.json"));
-    const directory = fs.openSync(dir, fs.constants.O_RDONLY);
     try {
-      fs.fsyncSync(directory);
-    } finally {
-      fs.closeSync(directory);
+      fs.accessSync(dir, fs.constants.W_OK);
+      fs.accessSync(path.join(dir, "state.json"), fs.constants.W_OK);
+      const fd = fs.openSync(
+        path.join(dir, "state.json"),
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+      );
+      try {
+        const st = fs.fstatSync(fd);
+        if (!st.isFile() || st.uid !== process.getuid() || (st.mode & 0o7777) !== 0o600 || st.size > 160) return true;
+        const value = JSON.parse(fs.readFileSync(fd));
+        if (
+          Object.keys(value).sort().join(",") !== "reason,schema,state" ||
+          value.schema !== 3 ||
+          !["clear", "unresolved"].includes(value.state) ||
+          !(
+            value.state === "clear" ? ["prepared", "qualified_release", "owner_recovery"] : ["safety_uncertainty"]
+          ).includes(value.reason)
+        )
+          return true;
+        return (
+          uncertain || value.state === "unresolved" || fs.readdirSync(dir).some((name) => name.startsWith("pending-"))
+        );
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return true;
     }
-    uncertain = false;
-    clearedHere = !unresolved;
+  };
+  const save = (unresolved, reason = unresolved ? "safety_uncertainty" : "qualified_release", recovery = false) => {
+    if (
+      typeof unresolved !== "boolean" ||
+      !(unresolved ? ["safety_uncertainty"] : ["prepared", "qualified_release", "owner_recovery"]).includes(reason)
+    )
+      throw Error("probe_safety_state_invalid");
+    uncertain = true;
+    guard();
+    if (!recovery && fs.readdirSync(dir).some((name) => name.startsWith("pending-")))
+      throw Error("probe_safety_uncertain");
+    const intent = path.join(dir, "pending-" + crypto.randomBytes(16).toString("hex"));
+    fs.mkdirSync(intent, { mode: 0o700 });
+    try {
+      syncDirectory();
+      const pending = path.join(intent, "state.json");
+      const fd = fs.openSync(
+        pending,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+        0o600,
+      );
+      try {
+        fs.writeFileSync(fd, JSON.stringify({ schema: 3, state: unresolved ? "unresolved" : "clear", reason }));
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      guard();
+      fs.renameSync(pending, path.join(dir, "state.json"));
+      syncDirectory();
+      if (recovery) {
+        for (const name of fs
+          .readdirSync(dir)
+          .filter((name) => name.startsWith("pending-") && name !== path.basename(intent))) {
+          const entry = path.join(dir, name),
+            st = fs.lstatSync(entry);
+          if (st.isDirectory() && !st.isSymbolicLink()) {
+            const files = fs.readdirSync(entry);
+            if (files.some((file) => file !== "state.json")) throw Error("probe_safety_pending_invalid");
+            if (files.length) fs.unlinkSync(path.join(entry, "state.json"));
+            fs.rmdirSync(entry);
+          } else if (st.isFile() && !st.isSymbolicLink()) fs.unlinkSync(entry);
+          else throw Error("probe_safety_pending_invalid");
+        }
+      }
+      fs.rmdirSync(intent);
+      syncDirectory();
+      uncertain = false;
+    } catch (error) {
+      try {
+        fs.mkdirSync(intent, { mode: 0o700 });
+      } catch {}
+      throw error;
+    }
+  };
+  const exclusive = () => {
+    guard();
+    const active = path.join(dir, "invocation-active");
+    fs.mkdirSync(active, { mode: 0o700 });
+    return () => {
+      guard();
+      fs.rmdirSync(active);
+    };
   };
   guard();
-  return { load, save };
+  return { load, save, exclusive };
 }
 
 /** Dual clocks share the host origin with the helper; no fresh checkpoint is minted on refusal. */
@@ -310,8 +351,9 @@ export function createEventPlaybackProbe(
       };
       pending = (async () => {
         const timer = setTimeout(() => controller.abort("deadline"), Math.max(0, deadlineMs - monotonicNow()));
-        let value;
+        let value, unlock;
         try {
+          unlock = safety.exclusive?.();
           const flags = ctx.state?.flags;
           if (
             !fresh() ||
@@ -342,10 +384,12 @@ export function createEventPlaybackProbe(
         const result = sanitizePlaybackReceipt(value);
         try {
           store.save(result);
+          return result;
         } catch {
           return sanitizePlaybackReceipt({ ...result, captureOutcome: "receipt_failed" });
+        } finally {
+          unlock?.();
         }
-        return result;
       })();
       return pending;
     },
@@ -382,7 +426,22 @@ export function attachEventPlaybackProbe(
         unresolved = safety.load();
       } catch {}
       ctx.eufy.rtc.configurePlaybackSafety(unresolved, safety.save, false);
+    } else if (fs.existsSync(dir)) {
+      throw Error("probe_safety_missing");
     }
+  } catch {
+    try {
+      ctx.eufy.rtc.configurePlaybackSafety(
+        true,
+        () => {
+          throw Error("probe_safety_unavailable");
+        },
+        false,
+      );
+    } catch {}
+    return dormant("unavailable");
+  }
+  try {
     if (!fs.existsSync(path.join(dir, "authorization.json"))) return dormant("disabled");
     if (
       !safety ||
@@ -494,15 +553,6 @@ export function attachEventPlaybackProbe(
       },
     };
   } catch {
-    try {
-      ctx.eufy.rtc.configurePlaybackSafety(
-        true,
-        () => {
-          throw Error("probe_safety_unavailable");
-        },
-        false,
-      );
-    } catch {}
     return dormant("unavailable");
   }
 }
