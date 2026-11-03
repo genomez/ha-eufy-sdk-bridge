@@ -1,5 +1,5 @@
-/** Unqualified until a separately authorized build pins the remediated SDK runtime. */
-export const eventTableProbeSdkSha256 = null;
+/** Test 1 runtime pin from the authorized offline build, 2026-11-03. */
+export const eventTableProbeSdkSha256 = "2261c9dc3bab09f22252915571e441247472ba74a124d4bb464badfd05cca682";
 export const eventTableProbeFiles = [
   "bin/event-table-probe-control.mjs",
   "bin/pilot-process.mjs",
