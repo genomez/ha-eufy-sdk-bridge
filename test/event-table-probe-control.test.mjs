@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import { control } from "../bin/event-table-probe-control.mjs";
-import { eventTableProbeFiles } from "../src/event-table-probe-pins.mjs";
+import { eventTableProbeFiles, eventTableProbeSdkSha256 } from "../src/event-table-probe-pins.mjs";
 
 test("operator prepare, trigger and readback use private synthetic files and a fake Unix socket only", async (t) => {
   const app = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -63,12 +64,16 @@ test("operator prepare, trigger and readback use private synthetic files and a f
   t.mock.method(fs, "writeFileSync", (fd, bytes) => files.set(descriptors.get(fd), Buffer.from(bytes)));
   t.mock.method(fs, "fsyncSync", () => {});
   t.mock.method(fs, "closeSync", () => {});
-  assert.deepEqual(await control("prepare", stationFile), { outcome: "grant_prepared" });
+  assert.equal(eventTableProbeSdkSha256, null);
+  await assert.rejects(control("prepare", stationFile), /probe_sdk_drift/);
+  assert.equal(dirs.size, 0);
+  const expectedSdkSha256 = crypto.createHash("sha256").update(files.get(sdkFile)).digest("hex");
+  assert.deepEqual(await control("prepare", stationFile, { expectedSdkSha256 }), { outcome: "grant_prepared" });
   const grant = JSON.parse(files.get(path.join(dir, "authorization.json")));
   assert.equal(grant.purpose, "event-table-test1");
   assert.equal(grant.nonce.length, 64);
   assert.equal(grant.expiresMs - grant.notBeforeMs, 3_600_000);
-  await assert.rejects(control("prepare", stationFile));
+  await assert.rejects(control("prepare", stationFile, { expectedSdkSha256 }));
   const receipt = {
     outcome: "empty",
     rowCount: 0,

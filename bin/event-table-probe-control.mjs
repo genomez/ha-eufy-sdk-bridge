@@ -11,7 +11,7 @@ const dir = "/data/event-table-probe";
 const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 /** Local grant preparation and one private-socket trigger; never creates an SDK client. */
-export async function control(action, stationFile) {
+export async function control(action, stationFile, { expectedSdkSha256 = eventTableProbeSdkSha256 } = {}) {
   if (process.platform !== "linux") throw new Error("probe_platform_invalid");
   if (action === "prepare") {
     if (!stationFile) throw new Error("probe_station_file_required");
@@ -31,7 +31,7 @@ export async function control(action, stationFile) {
       fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")),
       eventTableProbeFiles.map((name) => ({ name, file: path.join(appDir, name) })),
     );
-    if (pins.sdkSha256 !== eventTableProbeSdkSha256) throw new Error("probe_sdk_drift");
+    if (pins.sdkSha256 !== expectedSdkSha256) throw new Error("probe_sdk_drift");
     fs.mkdirSync(dir, { mode: 0o700 });
     const now = Date.now();
     const grant = {

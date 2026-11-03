@@ -289,3 +289,9 @@ test("private socket lifecycle, durable consumption, bounded input and redacted 
   await p.stop();
   assert.equal(socket.destroyed, true);
 });
+
+test("passive receipts preserve unknown encoded-byte measurements without inventing zero", () => {
+  const receipt = sanitizeEventTableReceipt({ outcome: "empty", compressedBytes: null, decompressedBytes: 200 });
+  assert.equal(receipt.compressedBytes, null);
+  assert.equal(receipt.decompressedBytes, 200);
+});

@@ -1,4 +1,5 @@
-export const eventTableProbeSdkSha256 = "1d7d7280e9db273e8adc81b6ae2cf6e624cd1f722e9e389c4847d1edd309be2c";
+/** Unqualified until a separately authorized build pins the remediated SDK runtime. */
+export const eventTableProbeSdkSha256 = null;
 export const eventTableProbeFiles = [
   "bin/event-table-probe-control.mjs",
   "bin/pilot-process.mjs",
