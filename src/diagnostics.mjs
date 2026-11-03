@@ -1088,6 +1088,23 @@ export function createDiagnostics(ctx, now = Date.now) {
         rtcObservations: rtcObservationSnapshot,
         rtcRenewals,
         rtcKeepalive,
+        rtcPlaybackSafety: (() => {
+          try {
+            const value = ctx.eufy.rtc?.getPlaybackSafetyDiagnostics?.();
+            if (!value) return null;
+            return {
+              ...Object.fromEntries(
+                ["failureTaints", "failureDrops", "normalReestablishments", "ordinaryReads", "reestablishedAgeMs"].map(
+                  (key) => [key, number(value[key])],
+                ),
+              ),
+              unresolved: value.unresolved === true,
+              active: value.active === true,
+            };
+          } catch {
+            return null;
+          }
+        })(),
         eventRouting: eventRouting(ctx.eufy.getEventRoutingDiagnostics?.()),
         detectionProjection: {
           total: detections.total,
