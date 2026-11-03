@@ -133,6 +133,15 @@ test("operator prepare, trigger and readback use private synthetic files and a f
   );
   files.set(path.join(dir, "result.json"), Buffer.from(JSON.stringify({ ...receipt, rows: ["synthetic-private"] })));
   assert.deepEqual(await control("readback"), receipt);
+  const dirty = structuredClone(receipt);
+  dirty.shapes.start_time.classes.push({ pattern: "\u00e9\u0661", count: 2 });
+  dirty.shapes.thumb_path.classes.push({ pattern: "a9.a", count: 1, extension: "ab123", byteLength: 8 });
+  files.set(path.join(dir, "result.json"), Buffer.from(JSON.stringify(dirty)));
+  const clean = await control("readback");
+  assert.equal(clean.shapes.start_time.classes.length, 1);
+  assert.equal(clean.shapes.start_time.other, 2);
+  assert.equal(clean.shapes.thumb_path.classes[0].extension, null);
+  assert.equal(JSON.stringify(clean).includes("ab123"), false);
   files.set(path.join(dir, "attempt.json"), Buffer.from("{}"));
   await assert.rejects(control("trigger"));
 });

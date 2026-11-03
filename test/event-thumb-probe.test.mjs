@@ -247,3 +247,40 @@ test("receipt allowlist discards arbitrary row data, paths and bytes", () => {
   assert.equal(result.tableResultCode, 0);
   assert.equal(result.imageBytes, null);
 });
+
+test("fixed shape alphabets reject Unicode letters, digits and nonallowlisted punctuation independently", () => {
+  for (const raw of ["\u00e9", "\u03a9", "\u4e2d", "\u0661", "\uff12", "\u{1d7e1}", "!", "@", "T", "Z", "\\", "\n"]) {
+    const dirty = structuredClone(shapes);
+    for (const field of ["start_time", "thumb_path"]) dirty[field].classes[0].pattern = "a9/" + raw;
+    const clean = sanitizeThumbnailShapes(dirty);
+    for (const field of ["start_time", "thumb_path"]) assert.deepEqual(clean[field], { classes: [], other: 5 });
+  }
+  const dirty = structuredClone(shapes);
+  dirty.start_time.classes[0].pattern = "a9?/-_.:,+ ";
+  assert.deepEqual(sanitizeThumbnailShapes(dirty), dirty);
+});
+test("extensions are a fixed vocabulary across refusal and persistence errors", async () => {
+  for (const extension of ["ab123", "\u00e9\u0661", ".jpg", "JPG", "", "jpg!", "jpg\n"]) {
+    const dirty = structuredClone(shapes);
+    dirty.thumb_path.classes[0].extension = extension;
+    for (const outcome of ["invalid_reply", "send_refused", "receipt_failed", "timeout", "success"]) {
+      const clean = sanitizeEventThumbReceipt({ outcome, shapes: dirty });
+      assert.equal(clean.shapes.thumb_path.classes[0].extension, null);
+    }
+    const f = fixture();
+    f.good.shapes = dirty;
+    f.store.saveImage = () => {
+      throw Error();
+    };
+    assert.equal(
+      (await createEventThumbProbe(f.ctx, { store: f.store, pins }).invoke(f.request)).shapes.thumb_path.classes[0]
+        .extension,
+      null,
+    );
+  }
+  for (const extension of ["jpg", "jpeg", "png", "bmp", "dat", "bin", "none", "other"]) {
+    const value = structuredClone(shapes);
+    value.thumb_path.classes[0].extension = extension;
+    assert.deepEqual(sanitizeThumbnailShapes(value), value);
+  }
+});

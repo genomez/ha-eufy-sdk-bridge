@@ -24,7 +24,7 @@ const OUTCOMES = new Set([
 const count = (v) => (Number.isSafeInteger(v) && v >= 0 ? v : null);
 const hash = (v) => crypto.createHash("sha256").update(v).digest("hex");
 
-/** Rebuild bounded class counts, rejecting any ASCII value characters outside the two class symbols. */
+/** Rebuild bounded class counts using only fixed pattern symbols and extension categories. */
 export function sanitizeThumbnailShapes(value) {
   return Object.fromEntries(
     ["start_time", "thumb_path"].map((field) => {
@@ -40,7 +40,7 @@ export function sanitizeThumbnailShapes(value) {
           !(
             shape.pattern === null ||
             (typeof shape.pattern === "string" &&
-              !/[A-Zb-z0-8]/.test(shape.pattern) &&
+              !/[^a9?/\-_.:,+ ]/.test(shape.pattern) &&
               shape.pattern.length <= (field === "thumb_path" ? 64 : 262144))
           )
         ) {
@@ -51,8 +51,9 @@ export function sanitizeThumbnailShapes(value) {
         if (field === "thumb_path")
           Object.assign(clean, {
             startsWithSlash: typeof shape.startsWithSlash === "boolean" ? shape.startsWithSlash : null,
-            extension:
-              typeof shape.extension === "string" && /^[a-z0-9]{1,5}$/.test(shape.extension) ? shape.extension : null,
+            extension: ["jpg", "jpeg", "png", "bmp", "dat", "bin", "none", "other"].includes(shape.extension)
+              ? shape.extension
+              : null,
             byteLength: count(shape.byteLength),
           });
         classes.push(clean);

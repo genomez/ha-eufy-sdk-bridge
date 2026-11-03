@@ -1,5 +1,5 @@
 /** Test 2b runtime pin from the authorized offline build, 2026-11-03. */
-export const eventThumbProbeSdkSha256 = "edd082ecb1c6865e2b994bfc521e6b92066abd94106a49a8624432fda0e668fa";
+export const eventThumbProbeSdkSha256 = "daaee4ecc5bfd9bc5f25b87c953308ce0bb73c3d10783ea145cc1ed24ae2ea38";
 export const eventThumbProbeFiles = [
   "bin/event-table-probe-control.mjs",
   "bin/event-thumb-probe-control.mjs",
