@@ -5,6 +5,8 @@ import { loadConfig } from "./src/config.mjs";
 import { createBridgeService } from "./src/service.mjs";
 import { attachStorageProbe } from "./src/storage-probe.mjs";
 import { storageProbeFiles, storageProbeSdkSha256 } from "./src/storage-probe-pins.mjs";
+import { attachEventTableProbe } from "./src/event-table-probe.mjs";
+import { eventTableProbeFiles, eventTableProbeSdkSha256 } from "./src/event-table-probe-pins.mjs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -25,9 +27,14 @@ const storageProbe = attachStorageProbe(service.ctx, {
   })),
   expectedSdkSha256: storageProbeSdkSha256,
 });
+const eventTableProbe = attachEventTableProbe(service.ctx, {
+  sdkFile: fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")),
+  bridgeFiles: eventTableProbeFiles.map((name) => ({ name, file: path.join(appDir, name) })),
+  expectedSdkSha256: eventTableProbeSdkSha256,
+});
 let exiting;
 function shutdown(code = 0) {
-  exiting ??= Promise.allSettled([storageProbe.stop(), service.stop()])
+  exiting ??= Promise.allSettled([eventTableProbe.stop(), storageProbe.stop(), service.stop()])
     .then((results) => {
       if (results.some((result) => result.status === "rejected")) throw new Error("Bridge shutdown failed");
     })
@@ -46,6 +53,7 @@ service
   .start()
   .then(async () => {
     await storageProbe.start();
+    await eventTableProbe.start();
     pilotLog("server_5");
     if (service.ctx.state.flags.ready) pilotLog("server_6");
     else pilotLog("server_7");
