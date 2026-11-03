@@ -24,6 +24,44 @@ const OUTCOMES = new Set([
 const count = (v) => (Number.isSafeInteger(v) && v >= 0 ? v : null);
 const hash = (v) => crypto.createHash("sha256").update(v).digest("hex");
 
+/** Rebuild bounded class counts, rejecting any ASCII value characters outside the two class symbols. */
+export function sanitizeThumbnailShapes(value) {
+  return Object.fromEntries(
+    ["start_time", "thumb_path"].map((field) => {
+      const input = value?.[field];
+      const classes = [];
+      let other = count(input?.other) ?? 0;
+      for (const shape of Array.isArray(input?.classes) ? input.classes : []) {
+        if (
+          classes.length >= 4 ||
+          !shape ||
+          count(shape.count) === null ||
+          shape.count < 1 ||
+          !(
+            shape.pattern === null ||
+            (typeof shape.pattern === "string" &&
+              !/[A-Zb-z0-8]/.test(shape.pattern) &&
+              shape.pattern.length <= (field === "thumb_path" ? 64 : 262144))
+          )
+        ) {
+          other += count(shape?.count) ?? 0;
+          continue;
+        }
+        const clean = { pattern: shape.pattern, count: shape.count };
+        if (field === "thumb_path")
+          Object.assign(clean, {
+            startsWithSlash: typeof shape.startsWithSlash === "boolean" ? shape.startsWithSlash : null,
+            extension:
+              typeof shape.extension === "string" && /^[a-z0-9]{1,5}$/.test(shape.extension) ? shape.extension : null,
+            byteLength: count(shape.byteLength),
+          });
+        classes.push(clean);
+      }
+      return [field, { classes, other: Number.isSafeInteger(other) ? other : 0 }];
+    }),
+  );
+}
+
 /** Reconstruct a fixed receipt. No row content, arbitrary keys, error text or identifiers survive. */
 export function sanitizeEventThumbReceipt(value) {
   return {
@@ -32,6 +70,7 @@ export function sanitizeEventThumbReceipt(value) {
     tableElapsedMs: count(value?.tableElapsedMs),
     imageElapsedMs: count(value?.imageElapsedMs),
     rowCount: count(value?.rowCount),
+    shapes: sanitizeThumbnailShapes(value?.shapes),
     imageBytes: count(value?.imageBytes),
     jpegValid: value?.jpegValid === true,
     width: count(value?.width),
@@ -62,7 +101,7 @@ export function createEventThumbProbe(
   const grant = () => {
     const value = validateGrant(store.load(), now(), pins);
     if (
-      value.purpose !== "event-thumb-test2" ||
+      value.purpose !== "event-thumb-test2b" ||
       Object.keys(value).sort().join(",") !==
         "bridgeSha256,expiresMs,nonce,notBeforeMs,purpose,schema,sdkSha256,stationSn"
     )
@@ -130,7 +169,7 @@ export function createEventThumbProbe(
           elapsed >= timeoutMs
         ) {
           controller.abort();
-          value = { outcome: closed || !ready() ? "abandoned" : "timeout" };
+          value = { ...value, outcome: closed || !ready() ? "abandoned" : "timeout" };
         }
         if (value?.outcome === "success") {
           if (
@@ -150,12 +189,12 @@ export function createEventThumbProbe(
             value.ownerContinuous !== true ||
             value.generationContinuous !== true
           )
-            value = { outcome: "invalid_reply" };
+            value = { ...value, outcome: "invalid_reply" };
           else {
             try {
               store.saveImage(value.jpeg);
             } catch {
-              value = { outcome: "receipt_failed" };
+              value = { ...value, outcome: "receipt_failed" };
             }
           }
         }
@@ -166,7 +205,7 @@ export function createEventThumbProbe(
         try {
           store.save(result);
         } catch {
-          return sanitizeEventThumbReceipt({ outcome: "receipt_failed" });
+          return sanitizeEventThumbReceipt({ ...result, outcome: "receipt_failed" });
         }
         return result;
       } finally {
@@ -202,7 +241,7 @@ const dormant = (status) => ({ status, start: async () => {}, stop: async () => 
 /** Private Unix socket, no HTTP/WS surface. No grant means no code hashing, socket or SDK invocation. */
 export function attachEventThumbProbe(
   ctx,
-  { dir = "/data/event-thumb-probe", sdkFile, bridgeFiles, expectedSdkSha256 } = {},
+  { dir = "/data/event-thumb-probe-2b", sdkFile, bridgeFiles, expectedSdkSha256 } = {},
 ) {
   try {
     if (!fs.existsSync(path.join(dir, "authorization.json"))) return dormant("disabled");
@@ -260,7 +299,7 @@ export function attachEventThumbProbe(
       }
     };
     const value = validateGrant(store.load(), Date.now(), pins);
-    if (value.purpose !== "event-thumb-test2") return dormant("unavailable");
+    if (value.purpose !== "event-thumb-test2b") return dormant("unavailable");
     const probe = createEventThumbProbe(ctx, { store, pins });
     const sockets = new Set();
     const server = net.createServer((socket) => {

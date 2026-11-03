@@ -17,7 +17,7 @@ test("operator prepare, trigger and readback use private synthetic files and a f
   );
   const stationFile = "synthetic-owner.json";
   files.set(stationFile, Buffer.from(JSON.stringify({ stationSn: "T9000P0000000000" })));
-  const dir = "/data/event-thumb-probe";
+  const dir = "/data/event-thumb-probe-2b";
   const dirs = new Set();
   const descriptors = new Map();
   let next = 0;
@@ -71,7 +71,7 @@ test("operator prepare, trigger and readback use private synthetic files and a f
   assert.match(eventThumbProbeSdkSha256, /^[a-f0-9]{64}$/);
   assert.deepEqual(await control("prepare", stationFile, { expectedSdkSha256 }), { outcome: "grant_prepared" });
   const grant = JSON.parse(files.get(path.join(dir, "authorization.json")));
-  assert.equal(grant.purpose, "event-thumb-test2");
+  assert.equal(grant.purpose, "event-thumb-test2b");
   assert.equal(grant.nonce.length, 64);
   assert.equal(grant.expiresMs - grant.notBeforeMs, 3_600_000);
   await assert.rejects(control("prepare", stationFile, { expectedSdkSha256 }));
@@ -81,6 +81,10 @@ test("operator prepare, trigger and readback use private synthetic files and a f
     elapsedMs: 10,
     tableElapsedMs: 4,
     imageElapsedMs: null,
+    shapes: {
+      start_time: { classes: [{ pattern: "9".repeat(10000), count: 1 }], other: 0 },
+      thumb_path: { classes: [], other: 0 },
+    },
     imageBytes: null,
     jpegValid: false,
     width: null,

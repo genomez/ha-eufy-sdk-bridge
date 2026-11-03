@@ -7,7 +7,7 @@ import { createProbeStore, validateGrant } from "../src/storage-probe.mjs";
 import { eventThumbCodePins, sanitizeEventThumbReceipt } from "../src/event-thumb-probe.mjs";
 import { eventThumbProbeFiles, eventThumbProbeSdkSha256 } from "../src/event-thumb-probe-pins.mjs";
 
-const dir = "/data/event-thumb-probe";
+const dir = "/data/event-thumb-probe-2b";
 const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 /** Local grant preparation and one private-socket trigger; never creates an SDK client. */
@@ -40,7 +40,7 @@ export async function control(
     const now = Date.now();
     const grant = {
       schema: 1,
-      purpose: "event-thumb-test2",
+      purpose: "event-thumb-test2b",
       nonce: crypto.randomBytes(32).toString("hex"),
       stationSn: station.stationSn,
       notBeforeMs: now,
@@ -102,7 +102,7 @@ export async function control(
     const fd = fs.openSync(path.join(dir, "result.json"), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     try {
       const st = fs.fstatSync(fd);
-      if (!st.isFile() || st.size > 8192 || st.uid !== process.getuid() || (st.mode & 0o077) !== 0)
+      if (!st.isFile() || st.size > 2097152 || st.uid !== process.getuid() || (st.mode & 0o077) !== 0)
         throw new Error("probe_receipt_invalid");
       return sanitizeEventThumbReceipt(JSON.parse(fs.readFileSync(fd)));
     } finally {
@@ -137,7 +137,7 @@ export async function control(
     });
     socket.on("data", (chunk) => {
       bytes += chunk.length;
-      if (bytes > 8192) {
+      if (bytes > 2097152) {
         socket.destroy(new Error("probe_receipt_invalid"));
         return;
       }

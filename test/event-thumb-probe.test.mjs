@@ -1,8 +1,56 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createEventThumbProbe, attachEventThumbProbe, sanitizeEventThumbReceipt } from "../src/event-thumb-probe.mjs";
+import {
+  createEventThumbProbe,
+  attachEventThumbProbe,
+  sanitizeEventThumbReceipt,
+  sanitizeThumbnailShapes,
+} from "../src/event-thumb-probe.mjs";
 const jpeg = Buffer.from("ffd8ffc0000b080002000301011100ffda0008010100003f0000ffd9", "hex");
 const pins = { sdkSha256: "a".repeat(64), bridgeSha256: "b".repeat(64) };
+const shapes = {
+  start_time: { classes: [{ pattern: "9999-aa-99", count: 2 }], other: 3 },
+  thumb_path: {
+    classes: [{ pattern: "/a9/a.a", count: 2, startsWithSlash: true, extension: "jpg", byteLength: 60 }],
+    other: 3,
+  },
+};
+
+test("shape sanitization rejects raw value text and oversized patterns and reconstructs only fixed fields", () => {
+  const dirty = structuredClone(shapes);
+  dirty.start_time.classes.push({ pattern: "PRIVATE123", count: 4 });
+  dirty.thumb_path.classes[0].serial = "PRIVATE123";
+  dirty.thumb_path.classes.push({ pattern: "/a".repeat(40), count: 2 });
+  const clean = sanitizeThumbnailShapes(dirty);
+  assert.deepEqual(clean.start_time, { classes: shapes.start_time.classes, other: 7 });
+  assert.deepEqual(clean.thumb_path, { classes: shapes.thumb_path.classes, other: 5 });
+  assert.equal(JSON.stringify(clean).includes("PRIVATE"), false);
+  assert.deepEqual(sanitizeThumbnailShapes(undefined), {
+    start_time: { classes: [], other: 0 },
+    thumb_path: { classes: [], other: 0 },
+  });
+});
+
+test("shape classes survive refusal, failed JPEG validation and image/receipt persistence failures", async () => {
+  for (const kind of ["refusal", "jpeg", "image", "receipt"]) {
+    const f = fixture();
+    f.good.shapes = shapes;
+    if (kind === "refusal") f.good.outcome = "invalid_reply";
+    if (kind === "jpeg") f.good.jpeg = Buffer.from("invalid");
+    if (kind === "image")
+      f.store.saveImage = () => {
+        throw Error();
+      };
+    if (kind === "receipt")
+      f.store.save = () => {
+        throw Error();
+      };
+    const result = await createEventThumbProbe(f.ctx, { store: f.store, pins }).invoke(f.request);
+    assert.notEqual(result.outcome, "success");
+    assert.deepEqual(result.shapes, shapes);
+    assert.equal(Object.hasOwn(result, "jpeg"), false);
+  }
+});
 function fixture(read) {
   let claimed = false,
     calls = 0,
@@ -10,7 +58,7 @@ function fixture(read) {
     image;
   const grant = {
     schema: 1,
-    purpose: "event-thumb-test2",
+    purpose: "event-thumb-test2b",
     nonce: "c".repeat(64),
     stationSn: "T9000SYNTHETIC",
     notBeforeMs: Date.now() - 1000,
