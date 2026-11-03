@@ -63,6 +63,45 @@ export function sanitizeThumbnailShapes(value) {
   );
 }
 
+/** Only fixed keys, boolean flags, bounded integers and the fixed typeof vocabulary survive. */
+export function sanitizeContentDiagnostics(value) {
+  if (!value || typeof value !== "object") return null;
+  const bounded = (key, max) => (count(value[key]) !== null && value[key] <= max ? value[key] : null);
+  const clean = {
+    contentType: ["undefined", "object", "boolean", "number", "bigint", "string", "symbol", "function"].includes(
+      value.contentType,
+    )
+      ? value.contentType
+      : null,
+    contentLength: bounded("contentLength", Number.MAX_SAFE_INTEGER),
+  };
+  for (const key of [
+    "hasStdChars",
+    "hasUrlSafeChars",
+    "hasWhitespace",
+    "hasNewline",
+    "hasOtherChars",
+    "soi",
+    "eoiAtEnd",
+    "sofFound",
+  ])
+    clean[key] = value[key] === true;
+  for (const [key, max] of Object.entries({
+    paddingCount: 2,
+    lengthMod4: 3,
+    decodedBytes: 524288,
+    lastEoiOffsetFromEnd: 4097,
+    width: 65535,
+    height: 65535,
+    otherKeyCount: Number.MAX_SAFE_INTEGER,
+  }))
+    clean[key] = bounded(key, max);
+  clean.keys = Object.fromEntries(
+    ["content", "file", "mIntRet", "data", "image", "size", "msg"].map((key) => [key, value.keys?.[key] === true]),
+  );
+  return clean;
+}
+
 /** Reconstruct a fixed receipt. No row content, arbitrary keys, error text or identifiers survive. */
 export function sanitizeEventThumbReceipt(value) {
   return {
@@ -72,6 +111,8 @@ export function sanitizeEventThumbReceipt(value) {
     imageElapsedMs: count(value?.imageElapsedMs),
     rowCount: count(value?.rowCount),
     shapes: sanitizeThumbnailShapes(value?.shapes),
+    contentDiagnostics: sanitizeContentDiagnostics(value?.contentDiagnostics),
+    rawSaved: value?.rawSaved === true,
     imageBytes: count(value?.imageBytes),
     jpegValid: value?.jpegValid === true,
     width: count(value?.width),
@@ -102,7 +143,7 @@ export function createEventThumbProbe(
   const grant = () => {
     const value = validateGrant(store.load(), now(), pins);
     if (
-      value.purpose !== "event-thumb-test2b" ||
+      value.purpose !== "event-thumb-test2c" ||
       Object.keys(value).sort().join(",") !==
         "bridgeSha256,expiresMs,nonce,notBeforeMs,purpose,schema,sdkSha256,stationSn"
     )
@@ -172,21 +213,25 @@ export function createEventThumbProbe(
           controller.abort();
           value = { ...value, outcome: closed || !ready() ? "abandoned" : "timeout" };
         }
+        value = { ...value, rawSaved: false };
         if (value?.outcome === "success") {
           if (
             !Buffer.isBuffer(value.jpeg) ||
-            value.jpeg.length < 12 ||
-            value.jpeg.length > 262144 ||
+            value.jpeg.length < 4 ||
+            value.jpeg.length > 524288 ||
             value.jpeg.readUInt16BE(0) !== 0xffd8 ||
             value.jpeg.readUInt16BE(value.jpeg.length - 2) !== 0xffd9 ||
             value.imageBytes !== value.jpeg.length ||
             value.jpegValid !== true ||
-            !Number.isSafeInteger(value.width) ||
-            value.width < 1 ||
-            value.width > 65535 ||
-            !Number.isSafeInteger(value.height) ||
-            value.height < 1 ||
-            value.height > 65535 ||
+            !(
+              (value.width === null && value.height === null) ||
+              (Number.isSafeInteger(value.width) &&
+                value.width >= 0 &&
+                value.width <= 65535 &&
+                Number.isSafeInteger(value.height) &&
+                value.height >= 0 &&
+                value.height <= 65535)
+            ) ||
             value.ownerContinuous !== true ||
             value.generationContinuous !== true
           )
@@ -197,6 +242,24 @@ export function createEventThumbProbe(
             } catch {
               value = { ...value, outcome: "receipt_failed" };
             }
+          }
+        }
+        if (
+          value?.outcome === "invalid_reply" &&
+          !signal.aborted &&
+          ready() &&
+          value.ownerContinuous === true &&
+          value.generationContinuous === true &&
+          Buffer.isBuffer(value.raw) &&
+          value.raw.length >= 2 &&
+          value.raw.length <= 524288 &&
+          value.raw.readUInt16BE(0) === 0xffd8
+        ) {
+          try {
+            store.saveImage(value.raw, "thumbnail.raw");
+            value = { ...value, rawSaved: true, imageBytes: value.raw.length };
+          } catch {
+            value = { ...value, outcome: "receipt_failed" };
           }
         }
         const result = sanitizeEventThumbReceipt({
@@ -242,7 +305,7 @@ const dormant = (status) => ({ status, start: async () => {}, stop: async () => 
 /** Private Unix socket, no HTTP/WS surface. No grant means no code hashing, socket or SDK invocation. */
 export function attachEventThumbProbe(
   ctx,
-  { dir = "/data/event-thumb-probe-2b", sdkFile, bridgeFiles, expectedSdkSha256 } = {},
+  { dir = "/data/event-thumb-probe-2c", sdkFile, bridgeFiles, expectedSdkSha256 } = {},
 ) {
   try {
     if (!fs.existsSync(path.join(dir, "authorization.json"))) return dormant("disabled");
@@ -279,10 +342,11 @@ export function attachEventThumbProbe(
         },
       ]),
     );
-    store.saveImage = (jpeg) => {
+    store.saveImage = (jpeg, name = "thumbnail.jpg") => {
+      if (!["thumbnail.jpg", "thumbnail.raw"].includes(name)) throw new Error("probe_image_name_invalid");
       guard();
       const fd = fs.openSync(
-        path.join(dir, "thumbnail.jpg"),
+        path.join(dir, name),
         fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
         0o600,
       );
@@ -300,7 +364,7 @@ export function attachEventThumbProbe(
       }
     };
     const value = validateGrant(store.load(), Date.now(), pins);
-    if (value.purpose !== "event-thumb-test2b") return dormant("unavailable");
+    if (value.purpose !== "event-thumb-test2c") return dormant("unavailable");
     const probe = createEventThumbProbe(ctx, { store, pins });
     const sockets = new Set();
     const server = net.createServer((socket) => {

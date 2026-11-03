@@ -17,7 +17,7 @@ test("operator prepare, trigger and readback use private synthetic files and a f
   );
   const stationFile = "synthetic-owner.json";
   files.set(stationFile, Buffer.from(JSON.stringify({ stationSn: "T9000P0000000000" })));
-  const dir = "/data/event-thumb-probe-2b";
+  const dir = "/data/event-thumb-probe-2c";
   const dirs = new Set();
   const descriptors = new Map();
   let next = 0;
@@ -71,12 +71,14 @@ test("operator prepare, trigger and readback use private synthetic files and a f
   assert.match(eventThumbProbeSdkSha256, /^[a-f0-9]{64}$/);
   assert.deepEqual(await control("prepare", stationFile, { expectedSdkSha256 }), { outcome: "grant_prepared" });
   const grant = JSON.parse(files.get(path.join(dir, "authorization.json")));
-  assert.equal(grant.purpose, "event-thumb-test2b");
+  assert.equal(grant.purpose, "event-thumb-test2c");
   assert.equal(grant.nonce.length, 64);
   assert.equal(grant.expiresMs - grant.notBeforeMs, 3_600_000);
   await assert.rejects(control("prepare", stationFile, { expectedSdkSha256 }));
   const receipt = {
     outcome: "empty",
+    contentDiagnostics: null,
+    rawSaved: false,
     rowCount: 0,
     elapsedMs: 10,
     tableElapsedMs: 4,
@@ -142,6 +144,19 @@ test("operator prepare, trigger and readback use private synthetic files and a f
   assert.equal(clean.shapes.start_time.other, 2);
   assert.equal(clean.shapes.thumb_path.classes[0].extension, null);
   assert.equal(JSON.stringify(clean).includes("ab123"), false);
+  for (const raw of [false, true]) {
+    const image = raw ? Buffer.from([255, 216, 0]) : Buffer.from([255, 216, 255, 217]);
+    const value = {
+      ...receipt,
+      outcome: raw ? "invalid_reply" : "success",
+      jpegValid: !raw,
+      rawSaved: raw,
+      imageBytes: image.length,
+    };
+    files.set(path.join(dir, "result.json"), Buffer.from(JSON.stringify(value)));
+    files.set(path.join(dir, raw ? "thumbnail.raw" : "thumbnail.jpg"), image);
+    assert.deepEqual(await control("fetch-thumbnail"), image);
+  }
   files.set(path.join(dir, "attempt.json"), Buffer.from("{}"));
   await assert.rejects(control("trigger"));
 });

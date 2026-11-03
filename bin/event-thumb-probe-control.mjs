@@ -7,7 +7,7 @@ import { createProbeStore, validateGrant } from "../src/storage-probe.mjs";
 import { eventThumbCodePins, sanitizeEventThumbReceipt } from "../src/event-thumb-probe.mjs";
 import { eventThumbProbeFiles, eventThumbProbeSdkSha256 } from "../src/event-thumb-probe-pins.mjs";
 
-const dir = "/data/event-thumb-probe-2b";
+const dir = "/data/event-thumb-probe-2c";
 const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 /** Local grant preparation and one private-socket trigger; never creates an SDK client. */
@@ -40,7 +40,7 @@ export async function control(
     const now = Date.now();
     const grant = {
       schema: 1,
-      purpose: "event-thumb-test2b",
+      purpose: "event-thumb-test2c",
       nonce: crypto.randomBytes(32).toString("hex"),
       stationSn: station.stationSn,
       notBeforeMs: now,
@@ -69,9 +69,13 @@ export async function control(
   }
   if (action === "fetch-thumbnail") {
     const receipt = await control("readback");
-    if (receipt.outcome !== "success" || receipt.jpegValid !== true) throw new Error("probe_image_unavailable");
+    const raw = receipt.outcome === "invalid_reply" && receipt.rawSaved === true;
+    if (!raw && (receipt.outcome !== "success" || receipt.jpegValid !== true))
+      throw new Error("probe_image_unavailable");
+    if (receipt.ownerContinuous !== true || receipt.generationContinuous !== true)
+      throw new Error("probe_image_unavailable");
     const fd = fs.openSync(
-      path.join(dir, "thumbnail.jpg"),
+      path.join(dir, raw ? "thumbnail.raw" : "thumbnail.jpg"),
       fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
     );
     try {
@@ -80,8 +84,8 @@ export async function control(
         !st.isFile() ||
         st.uid !== process.getuid() ||
         (st.mode & 0o7777) !== 0o600 ||
-        st.size < 12 ||
-        st.size > 262144 ||
+        st.size < (raw ? 2 : 4) ||
+        st.size > 524288 ||
         st.size !== receipt.imageBytes
       )
         throw new Error("probe_image_invalid");
@@ -89,7 +93,7 @@ export async function control(
       if (
         image.length !== st.size ||
         image.readUInt16BE(0) !== 0xffd8 ||
-        image.readUInt16BE(image.length - 2) !== 0xffd9
+        (!raw && image.readUInt16BE(image.length - 2) !== 0xffd9)
       )
         throw new Error("probe_image_invalid");
       return image;

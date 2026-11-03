@@ -5,6 +5,7 @@ import {
   attachEventThumbProbe,
   sanitizeEventThumbReceipt,
   sanitizeThumbnailShapes,
+  sanitizeContentDiagnostics,
 } from "../src/event-thumb-probe.mjs";
 const jpeg = Buffer.from("ffd8ffc0000b080002000301011100ffda0008010100003f0000ffd9", "hex");
 const pins = { sdkSha256: "a".repeat(64), bridgeSha256: "b".repeat(64) };
@@ -71,7 +72,7 @@ function fixture(read) {
     image;
   const grant = {
     schema: 1,
-    purpose: "event-thumb-test2b",
+    purpose: "event-thumb-test2c",
     nonce: "c".repeat(64),
     stationSn: "T9000SYNTHETIC",
     notBeforeMs: Date.now() - 1000,
@@ -209,8 +210,8 @@ test("invalid success bytes, continuity or image metadata cannot reach persisten
     { jpeg: Buffer.alloc(300000) },
     { jpeg: Buffer.from("bad") },
     { jpegValid: false },
-    { width: 0 },
-    { height: 0 },
+    { width: -1 },
+    { height: -1 },
     { ownerContinuous: false },
     { generationContinuous: false },
     { imageBytes: 1 },
@@ -282,5 +283,85 @@ test("extensions are a fixed vocabulary across refusal and persistence errors", 
     const value = structuredClone(shapes);
     value.thumb_path.classes[0].extension = extension;
     assert.deepEqual(sanitizeThumbnailShapes(value), value);
+  }
+});
+
+test("content diagnostics rebuilds a fixed bounded schema on every outcome", () => {
+  const dirty = {
+    contentType: "private",
+    contentLength: "secret",
+    hasNewline: "secret",
+    hasOtherChars: true,
+    paddingCount: 3,
+    lengthMod4: 4,
+    decodedBytes: 524289,
+    lastEoiOffsetFromEnd: 4098,
+    width: -1,
+    height: 65536,
+    otherKeyCount: 4,
+    keys: { content: true, privateSecretKey: "secret" },
+    privateSecretKey: "secret",
+  };
+  const clean = sanitizeContentDiagnostics(dirty);
+  assert.equal(clean.contentType, null);
+  assert.equal(clean.hasNewline, false);
+  assert.equal(clean.keys.content, true);
+  assert.equal(clean.otherKeyCount, 4);
+  for (const key of ["paddingCount", "lengthMod4", "decodedBytes", "lastEoiOffsetFromEnd", "width", "height"])
+    assert.equal(clean[key], null);
+  for (const outcome of ["success", "invalid_reply", "receive_rejected", "receipt_failed", "result_nonzero"]) {
+    const result = sanitizeEventThumbReceipt({
+      outcome,
+      contentDiagnostics: dirty,
+      content: "secret",
+      raw: Buffer.from("secret"),
+    });
+    assert.deepEqual(result.contentDiagnostics, clean);
+    assert.equal(JSON.stringify(result).includes("secret"), false);
+    assert.equal(JSON.stringify(result).includes("private"), false);
+  }
+});
+test("SOI failure raw persists privately once with diagnostics and never after preemption", async () => {
+  for (const kind of ["raw", "owner", "size", "soi", "failure"]) {
+    const f = fixture();
+    const raw = jpeg.subarray(0, -2);
+    let name, bytes;
+    Object.assign(f.good, {
+      outcome: "invalid_reply",
+      raw,
+      imageBytes: raw.length,
+      contentDiagnostics: { contentType: "string", soi: true },
+    });
+    f.store.saveImage = (v, n) => {
+      name = n;
+      bytes = v;
+      if (kind === "failure") throw Error();
+    };
+    if (kind === "owner") f.good.ownerContinuous = false;
+    if (kind === "size") f.good.raw = Buffer.alloc(524289);
+    if (kind === "soi") f.good.raw = Buffer.from("invalid");
+    const result = await createEventThumbProbe(f.ctx, { store: f.store, pins }).invoke(f.request);
+    assert.equal(result.rawSaved, kind === "raw");
+    if (kind === "raw") {
+      assert.equal(name, "thumbnail.raw");
+      assert.deepEqual(bytes, raw);
+    }
+    if (kind === "failure") assert.equal(result.outcome, "receipt_failed");
+    assert.equal(Object.hasOwn(result, "raw"), false);
+    assert.equal(result.contentDiagnostics.soi, true);
+  }
+});
+test("geometry is optional and images above the old cap persist", async () => {
+  for (const big of [false, true]) {
+    const f = fixture();
+    f.good.width = null;
+    f.good.height = null;
+    f.good.jpeg = big
+      ? Buffer.concat([jpeg.subarray(0, -2), Buffer.alloc(300000), jpeg.subarray(-2)])
+      : Buffer.from([255, 216, 255, 217]);
+    f.good.imageBytes = f.good.jpeg.length;
+    const result = await createEventThumbProbe(f.ctx, { store: f.store, pins }).invoke(f.request);
+    assert.equal(result.outcome, "success");
+    assert.deepEqual(f.image, f.good.jpeg);
   }
 });
