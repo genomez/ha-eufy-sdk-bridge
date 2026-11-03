@@ -152,7 +152,7 @@ export function createEventThumbProbe(
         const deadline = new Promise((resolve) => {
           timer = setTimeout(() => {
             controller.abort();
-            resolve({ outcome: "timeout" });
+            setImmediate(() => resolve({ outcome: "timeout" }));
           }, timeoutMs);
         });
         let value = await Promise.race([exchange, deadline]);

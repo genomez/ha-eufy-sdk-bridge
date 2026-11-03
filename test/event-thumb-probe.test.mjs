@@ -51,6 +51,19 @@ test("shape classes survive refusal, failed JPEG validation and image/receipt pe
     assert.equal(Object.hasOwn(result, "jpeg"), false);
   }
 });
+
+test("the bridge deadline retains SDK shapes returned by abort completion and never saves a late JPEG", async () => {
+  const f = fixture(
+    (_station, { signal }) =>
+      new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve({ ...f.good, shapes }), { once: true });
+      }),
+  );
+  const result = await createEventThumbProbe(f.ctx, { store: f.store, pins, timeoutMs: 10 }).invoke(f.request);
+  assert.equal(result.outcome, "timeout");
+  assert.deepEqual(result.shapes, shapes);
+  assert.equal(f.image, undefined);
+});
 function fixture(read) {
   let claimed = false,
     calls = 0,
