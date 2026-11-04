@@ -116,21 +116,130 @@ test("clock and execute bracket wall reads in the same order despite sampling dr
   }
 });
 
+test("submillisecond tick-crossing declarations need not include the new reserve", async () => {
+  const f = setup();
+  try {
+    const processing = f.sample.bridgeSentAtMs - f.sample.bridgeReceivedAtMs;
+    const declaration = (f.msg.execution.callerReceivedAtMs - f.sample.callerSentAtMs - processing) / 2 + 1;
+    assert.ok(declaration > 0 && declaration < 1);
+    f.msg.execution.clockUncertaintyMs = declaration;
+    await f.manager.execute(f.socket, f.msg);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0][3].clockUncertaintyMs, 8);
+  } finally {
+    f.manager.stop();
+  }
+});
+
 test("overlong sample is refused before SDK entry", () => {
   assert.throws(() => setup({ gap: 2 }), { code: "command_clock_unavailable" });
 });
 
-test("processing beyond quantization envelope is refused", async () => {
-  const f = setup();
-  try {
-    f.msg.execution.callerReceivedAtMs = 99999;
-    await assert.rejects(f.manager.execute(f.socket, f.msg), {
-      code: "command_clock_unavailable",
-      sendAttempted: false,
+test("processing beyond quantization envelope is refused with positive RTT; exact boundary passes", async () => {
+  for (const rtt of [0.5, 1]) {
+    let walls = [100000, 100002];
+    const calls = [];
+    const socket = {};
+    const manager = createBoundedStateWrites({
+      wall: () => (walls.length ? walls.shift() : 100002),
+      monotonic: () => 1000,
+      eufy: {
+        setPropertyWithReceipt: async (...args) => {
+          calls.push(args);
+          return { status: "acknowledged", sendAttempted: true, effect: "unconfirmed" };
+        },
+      },
     });
-    assert.equal(f.calls.length, 0);
-  } finally {
-    f.manager.stop();
+    try {
+      const sample = manager.clock(socket, { version: 1, callerSentAtMs: 100000 });
+      assert.equal(sample.bridgeSentAtMs - sample.bridgeReceivedAtMs, 2);
+      const pending = manager.execute(socket, {
+        id: 1,
+        sn: "fixture",
+        name: "light",
+        value: false,
+        execution: {
+          version: 1,
+          profile: "bounded-state-v1",
+          clockToken: sample.clockToken,
+          callerReceivedAtMs: 100000 + rtt,
+          clockUncertaintyMs: 8,
+          callerExpiresAtMs: 180000,
+          remainingBudgetMs: 80000 - rtt,
+        },
+      });
+      if (rtt === 0.5) {
+        await assert.rejects(pending, { code: "command_clock_unavailable", sendAttempted: false });
+        assert.equal(calls.length, 0);
+      } else {
+        await pending;
+        assert.equal(calls.length, 1);
+      }
+    } finally {
+      manager.stop();
+    }
+  }
+});
+
+test("v1 old/new bridge and integration declaration matrix accepts 21 ms and 28 ms", async (t) => {
+  const roundTrip = 40;
+  const processing = 0;
+  const exchange = (roundTrip - processing) / 2 + 1;
+  const declarations = { old: exchange, new: Math.max(1, exchange) + 7 };
+  assert.deepEqual(declarations, { old: 21, new: 28 });
+  for (const bridge of ["old", "new"])
+    for (const [integration, declared] of Object.entries(declarations))
+      await t.test(`${bridge} bridge / ${integration} integration`, async () => {
+        if (bridge === "old") {
+          // Frozen df4259f v1 admission arithmetic for this stable-offset exchange.
+          assert.ok(roundTrip >= 0 && processing >= 0 && exchange >= 1 && exchange <= 1000);
+          assert.ok(declared >= exchange && declared <= 1000);
+          return;
+        }
+        const f = setup({ rtt: roundTrip, gap: 0 });
+        try {
+          f.msg.execution.clockUncertaintyMs = declared;
+          await f.manager.execute(f.socket, f.msg);
+          assert.equal(f.calls.length, 1);
+          assert.equal(f.calls[0][3].clockUncertaintyMs, 28);
+          // The bridge deducts its reserve even when the legacy declaration does not.
+          assert.equal(f.calls[0][3].callerExpiresAtMs, 180980 - 28);
+        } finally {
+          f.manager.stop();
+        }
+      });
+});
+
+test("v1 admission retains legacy ceiling while internal math reserves its own margin", async () => {
+  for (const [rtt, declared, expected] of [
+    [40, 20, null],
+    [40, 40, 40],
+    [1998, 1000, 1007],
+    [1998, 999, null],
+    [2000, 1000, null],
+    [40, 1001, null],
+    [0.6, 1.3, 8.3],
+  ]) {
+    const f = setup({ rtt, gap: 0 });
+    try {
+      // Derive fractional declarations in the same binary64 order as the wire stamps.
+      f.msg.execution.clockUncertaintyMs = rtt === 0.6 ? (100000 + rtt - 100000) / 2 + 1 : declared;
+      if (expected === null) {
+        await assert.rejects(f.manager.execute(f.socket, f.msg), {
+          code: "command_clock_unavailable",
+          sendAttempted: false,
+        });
+        assert.equal(f.calls.length, 0);
+      } else {
+        await f.manager.execute(f.socket, f.msg);
+        assert.equal(f.calls.length, 1);
+        assert.ok(Math.abs(f.calls[0][3].clockUncertaintyMs - Math.min(1000, expected)) < 0.000001);
+        const offset = (f.sample.bridgeReceivedAtMs - 100000 + (f.sample.bridgeSentAtMs - (100000 + rtt))) / 2;
+        assert.ok(Math.abs(f.calls[0][3].callerExpiresAtMs - (180000 + offset - expected)) < 0.000001);
+      }
+    } finally {
+      f.manager.stop();
+    }
   }
 });
 

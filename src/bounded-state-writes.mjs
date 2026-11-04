@@ -273,19 +273,21 @@ export function createBoundedStateWrites({
           throw failure("command_validation_failed");
         const roundTrip = x.callerReceivedAtMs - sample.callerSentAtMs;
         const processing = sample.bridgeSentAtMs - sample.bridgeReceivedAtMs;
-        const uncertainty = Math.max(1, (roundTrip - processing) / 2 + 1) + clockReserveMs;
+        const exchangeUncertainty = (roundTrip - processing) / 2 + 1;
         if (
           roundTrip < 0 ||
           processing < 0 ||
           processing - roundTrip > 1 ||
-          uncertainty > 1000 ||
-          x.clockUncertaintyMs < uncertainty ||
+          exchangeUncertainty > 1000 ||
+          x.clockUncertaintyMs < exchangeUncertainty ||
           Math.abs(reading.offset - sample.wallOffset) > maxOffsetMovementMs
         )
           throw failure("command_clock_unavailable");
         const offset =
           (sample.bridgeReceivedAtMs - sample.callerSentAtMs + (sample.bridgeSentAtMs - x.callerReceivedAtMs)) / 2;
-        entry.uncertainty = x.clockUncertaintyMs;
+        // Keep v1 admission compatible with unreserved caller declarations.
+        // The bridge owns its deadline reserve regardless of what the caller declares.
+        entry.uncertainty = Math.max(x.clockUncertaintyMs, Math.max(1, exchangeUncertainty) + clockReserveMs);
         // Anchor every later drift check to the handshake, preventing cumulative
         // movement allowances from extending the original caller authority.
         entry.wallOffset = sample.wallOffset;
@@ -309,6 +311,7 @@ export function createBoundedStateWrites({
         if (typeof eufy.setPropertyWithReceipt !== "function") throw failure("command_unsupported");
         entry.correction = x.correction === true;
         entry.automatic = x.automatic === true || entry.correction;
+        check(entry);
         if (typeof eufy.confirmLateContraryEffect === "function") {
           for (const previousOwner of owners.values())
             for (const [id, watch] of previousOwner.watches) if (watch.sn === msg.sn) removeWatch(previousOwner, id);
@@ -318,7 +321,6 @@ export function createBoundedStateWrites({
             owner.pendingWatches++;
           }
         }
-        check(entry);
         sdkEntered = true;
         const sdk = Promise.resolve(
           eufy.setPropertyWithReceipt(msg.sn, msg.name, msg.value, {
@@ -326,7 +328,9 @@ export function createBoundedStateWrites({
             signal: entry.controller.signal,
             callerExpiresAtMs: entry.expiresAt,
             remainingBudgetMs: Math.max(0, entry.deadline - monotonic()),
-            clockUncertaintyMs: entry.uncertainty,
+            // v1 SDK uncertainty is capped at 1,000 ms. The full internal
+            // reserve has already been deducted from both expiry and budget.
+            clockUncertaintyMs: Math.min(1000, entry.uncertainty),
             correction: x.correction === true,
             ...(x.automatic === undefined ? {} : { automatic: x.automatic }),
             ...(entry.correctionExpiresAtMs === undefined

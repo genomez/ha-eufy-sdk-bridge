@@ -397,6 +397,67 @@ function boundedFixture() {
   return { manager, calls, cancelled, owner, other, msg, eufy };
 }
 
+for (const cleanup of ["owner loss", "explicit cancel"]) {
+  test(`final pre-SDK clock refusal preserves earlier watch for ${cleanup}`, async () => {
+    const calls = [],
+      cancelled = [],
+      owner = {};
+    let offset = 0,
+      checks = 0,
+      replacing = false;
+    const manager = createBoundedStateWrites({
+      wall: () => 100000 + offset,
+      monotonic: () => 1000,
+      available: () => {
+        if (replacing && ++checks === 2) offset = 4;
+        return true;
+      },
+      eufy: {
+        confirmLateContraryEffect() {},
+        cancelLateContraryEffect: (...args) => cancelled.push(args),
+        setPropertyWithReceipt: async (...args) => {
+          calls.push(args);
+          return { status: "acknowledged", sendAttempted: true, effect: "unconfirmed", intent: 7 };
+        },
+      },
+    });
+    try {
+      const sample = manager.clock(owner, { version: 1, callerSentAtMs: 99980 });
+      const msg = {
+        id: 1,
+        sn: "fixture",
+        name: "light",
+        value: false,
+        execution: {
+          version: 1,
+          profile: "bounded-state-v1",
+          clockToken: sample.clockToken,
+          callerReceivedAtMs: 100020,
+          clockUncertaintyMs: 28,
+          callerExpiresAtMs: 180000,
+          remainingBudgetMs: 79980,
+        },
+      };
+      await manager.execute(owner, msg);
+      replacing = true;
+      await assert.rejects(manager.execute(owner, { ...msg, id: 2 }), {
+        code: "command_clock_unavailable",
+        sendAttempted: false,
+      });
+      assert.equal(checks, 2);
+      assert.equal(calls.length, 1);
+      assert.deepEqual(cancelled, []);
+      if (cleanup === "owner loss") manager.ownerLost(owner);
+      else assert.deepEqual(manager.cancel(owner, { version: 1, requestId: 1 }), { status: "already_terminal" });
+      assert.deepEqual(cancelled, [["fixture", 7]]);
+      manager.ownerLost(owner);
+      assert.equal(cancelled.length, 1);
+    } finally {
+      manager.stop();
+    }
+  });
+}
+
 for (const correction of [false, true]) {
   for (const globalLimit of [false, true]) {
     test(`passive ${globalLimit ? "global" : "socket"} saturation never blocks explicit commands, correction=${correction}`, async (t) => {

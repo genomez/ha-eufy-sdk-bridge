@@ -27,18 +27,26 @@ object containing:
 | `callerReceivedAtMs` | Caller receive timestamp of the clock reply          |
 | `clockUncertaintyMs` | Conservative uncertainty, at most 1,000 ms           |
 
-Both caller and bridge compute `max(1, (RTT - processing) / 2 + 1) + 7` ms
-uncertainty from the four timestamps. The exchange floor is 1 ms; a processing
+The current caller declares `max(1, (RTT - processing) / 2 + 1) + 7` ms
+uncertainty from the four timestamps. Version 1 admission also accepts legacy
+declarations of `(RTT - processing) / 2 + 1`, without requiring the new reserve.
+The bridge internally uses the larger of the declaration and its own clamped
+exchange uncertainty plus 7 ms for deadline math. The exchange floor is 1 ms; a processing
 reading up to 1 ms greater than RTT is permitted for integer wall quantization.
-Negative elapsed times, a larger discrepancy or total uncertainty over 1,000 ms
-are refused. The bridge brackets wall reads with monotonic reads in the same
+Negative elapsed times, a larger discrepancy, an unreserved exchange uncertainty
+over 1,000 ms, or a declaration over 1,000 ms are refused. The current caller
+also refuses its own total declaration over 1,000 ms. The bridge's internal
+reserve can reach 1,007 ms for a legacy declaration at the v1 ceiling; the SDK
+still receives at most 1,000 ms uncertainty after the full internal amount has
+already been deducted from expiry and remaining budget. The bridge brackets wall reads with monotonic reads in the same
 order at handshake, execution and subsequent checks, refusing gaps over 1 ms.
 Offset movement is limited to 3 ms relative to the original handshake; it is
 never rebased. The extra 7 ms covers that tolerated movement plus two conservative
 1 ms quantization + 1 ms sampling errors. This reserve is included in the
 uncertainty deducted from expiry and transit budgets, rather than just enlarging
-the drift threshold. The bridge refuses a smaller declared uncertainty and translates
-the original expiration with the midpoint offset minus the uncertainty. It
+the drift threshold. The bridge refuses a declaration smaller than the unreserved
+exchange uncertainty and translates the original expiration with the midpoint
+offset minus its internal uncertainty. It
 subtracts conservative transit time from the remaining budget, clamps both to
 75 seconds from ingress, and freezes a monotonic deadline before SDK preparation.
 Unsupported clocks, stale samples and wall/monotonic movement outside the bound
