@@ -174,7 +174,13 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           });
           pilotLog(code);
         }
-        return send(ws, { id: boundedId, ok: false, error: "Bounded command failed", code });
+        return send(ws, {
+          id: boundedId,
+          ok: false,
+          error: "Bounded command failed",
+          code,
+          ...(cmd === "device.set" && error?.sendAttempted === false ? { sendAttempted: false } : {}),
+        });
       }
     }
     const isWebRtc = typeof cmd === "string" && cmd.startsWith("webrtc.");

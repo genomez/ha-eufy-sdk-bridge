@@ -35,6 +35,13 @@ export const boundedStatuses = new Set([
 const safeId = (id) => (typeof id === "string" && id.length > 0 && id.length <= 128) || Number.isSafeInteger(id);
 const finite = (n) => Number.isFinite(n) && Math.abs(n) <= Number.MAX_SAFE_INTEGER;
 const failure = (code) => Object.assign(new Error("Bounded command failed"), { code });
+// Date.now quantization is <1 ms. Bracket every wall read with monotonic
+// reads and refuse gaps >1 ms. Allow at most 3 ms observed offset movement;
+// reserve that movement plus two conservative (1 ms tick + 1 ms gap) errors.
+// Keep these allocations in sync with the caller's bounded clock calculation.
+const maxSampleGapMs = 1;
+const maxOffsetMovementMs = 3;
+const clockReserveMs = maxOffsetMovementMs + 2 * (1 + maxSampleGapMs);
 
 /** Project invocation-owned results; never forward SDK exceptions, identities or internal metadata. */
 export function boundedReceipt(raw) {
@@ -76,6 +83,14 @@ export function createBoundedStateWrites({
   let entries = 0;
   let watches = 0;
   let pendingWatches = 0;
+  function clockSample() {
+    const mono = monotonic(),
+      value = wall(),
+      after = monotonic();
+    if (![mono, value, after].every(finite) || after < mono || after - mono > maxSampleGapMs)
+      throw failure("command_clock_unavailable");
+    return { mono, wall: value, offset: value - mono };
+  }
   function ownerFor(socket) {
     if (closedOwners.has(socket)) throw failure("command_closed_before_send");
     let owner = owners.get(socket);
@@ -138,16 +153,26 @@ export function createBoundedStateWrites({
     owner.watches.set(id, { sn, intent: receipt.intent, timer });
     watches++;
   }
+  function checkClock(entry) {
+    let offset;
+    try {
+      offset = clockSample().offset;
+    } catch {
+      abort(entry, "command_clock_unavailable");
+      throw entry.controller.signal.reason;
+    }
+    if (Math.abs(offset - entry.wallOffset) > maxOffsetMovementMs) {
+      abort(entry, "command_clock_unavailable");
+      throw entry.controller.signal.reason;
+    }
+  }
   function check(entry) {
     if (entry.controller.signal.aborted) throw entry.controller.signal.reason;
     if (stopping || !available()) {
       abort(entry, "command_closed_before_send");
       throw entry.controller.signal.reason;
     }
-    if (Math.abs(wall() - monotonic() - entry.wallOffset) > entry.uncertainty) {
-      abort(entry, "command_clock_unavailable");
-      throw entry.controller.signal.reason;
-    }
+    checkClock(entry);
     if (monotonic() >= entry.deadline || wall() >= entry.expiresAt) {
       abort(entry, "command_expired_before_send");
       throw entry.controller.signal.reason;
@@ -157,8 +182,9 @@ export function createBoundedStateWrites({
     if (stopping || msg.version !== 1 || !finite(msg.callerSentAtMs)) throw failure("command_clock_unavailable");
     const owner = ownerFor(socket);
     if (owner.closed) throw failure("command_closed_before_send");
-    const received = wall(),
-      mono = monotonic(),
+    const reading = clockSample(),
+      received = reading.wall,
+      mono = reading.mono,
       token = randomUUID();
     const sample = {
       version: 1,
@@ -198,141 +224,163 @@ export function createBoundedStateWrites({
     return { status: entry.terminal ? "already_terminal" : "cancel_requested" };
   }
   async function execute(socket, msg) {
-    const born = monotonic(),
-      receivedWall = wall();
-    const requestId = msg.id;
-    const owner = ownerFor(socket);
-    if (!safeId(requestId)) throw failure("command_validation_failed");
-    if (owner.closed || stopping) throw failure("command_closed_before_send");
-    if (owner.entries.has(requestId) || owner.watches.has(requestId)) throw failure("command_duplicate_request");
-    if (entries >= maxEntries || owner.entries.size >= maxPerSocket) throw failure("command_queue_full");
-    // Register before validation or any await, including preparation inside the SDK.
-    const entry = { controller: new AbortController(), terminal: false };
-    owner.entries.set(requestId, entry);
-    entries++;
+    let sdkEntered = false;
     try {
-      const x = msg.execution,
-        sample = owner.clocks.get(x?.clockToken);
-      if (
-        x?.version !== 1 ||
-        x.profile !== "bounded-state-v1" ||
-        msg.name !== "light" ||
-        typeof msg.value !== "boolean" ||
-        (x.correction !== undefined && typeof x.correction !== "boolean") ||
-        (x.automatic !== undefined && typeof x.automatic !== "boolean") ||
-        (x.correctionExpiresAtMs !== undefined &&
-          (x.correction !== true || !finite(x.correctionExpiresAtMs) || x.correctionExpiresAtMs <= 0)) ||
-        typeof msg.sn !== "string" ||
-        !msg.sn ||
-        !finite(x.callerExpiresAtMs) ||
-        !finite(x.remainingBudgetMs) ||
-        x.remainingBudgetMs <= 0 ||
-        x.remainingBudgetMs > 80000
-      )
-        throw failure("command_validation_failed");
-      if (
-        !sample ||
-        !finite(x.callerReceivedAtMs) ||
-        !finite(x.clockUncertaintyMs) ||
-        x.clockUncertaintyMs < 0 ||
-        x.clockUncertaintyMs > 1000 ||
-        born - sample.mono > 300000
-      )
-        throw failure("command_clock_unavailable");
-      if (x.correctionExpiresAtMs !== undefined && x.correctionExpiresAtMs - x.callerReceivedAtMs > 600000)
-        throw failure("command_validation_failed");
-      const roundTrip = x.callerReceivedAtMs - sample.callerSentAtMs;
-      const processing = sample.bridgeSentAtMs - sample.bridgeReceivedAtMs;
-      const uncertainty = (roundTrip - processing) / 2 + 1;
-      if (
-        roundTrip < 0 ||
-        processing < 0 ||
-        uncertainty < 1 ||
-        uncertainty > 1000 ||
-        x.clockUncertaintyMs < uncertainty ||
-        Math.abs(receivedWall - born - sample.wallOffset) > uncertainty
-      )
-        throw failure("command_clock_unavailable");
-      const offset =
-        (sample.bridgeReceivedAtMs - sample.callerSentAtMs + (sample.bridgeSentAtMs - x.callerReceivedAtMs)) / 2;
-      entry.uncertainty = x.clockUncertaintyMs;
-      entry.wallOffset = receivedWall - born;
-      entry.expiresAt = x.callerExpiresAtMs + offset - entry.uncertainty;
-      if (x.correctionExpiresAtMs !== undefined) {
-        entry.correctionExpiresAtMs = x.correctionExpiresAtMs + offset - entry.uncertainty;
-        entry.expiresAt = Math.min(entry.expiresAt, entry.correctionExpiresAtMs);
-      }
-      const transitUpperBound = Math.max(0, receivedWall - (x.callerReceivedAtMs + offset) + entry.uncertainty);
-      const remaining = Math.min(75000, x.remainingBudgetMs - transitUpperBound, entry.expiresAt - receivedWall);
-      entry.deadline = born + remaining;
-      check(entry);
-      entry.deadlineTimer = setTimeout(() => abort(entry, "command_expired_before_send"), remaining);
-      entry.clockTimer = setInterval(() => {
-        try {
-          check(entry);
-        } catch {}
-      }, 100);
-      entry.deadlineTimer.unref?.();
-      entry.clockTimer.unref?.();
-      if (typeof eufy.setPropertyWithReceipt !== "function") throw failure("command_unsupported");
-      entry.correction = x.correction === true;
-      entry.automatic = x.automatic === true || entry.correction;
-      if (typeof eufy.confirmLateContraryEffect === "function") {
-        for (const previousOwner of owners.values())
-          for (const [id, watch] of previousOwner.watches) if (watch.sn === msg.sn) removeWatch(previousOwner, id);
-        if (watches + pendingWatches < maxEntries && owner.watches.size + owner.pendingWatches < maxPerSocket) {
-          entry.watchReserved = true;
-          pendingWatches++;
-          owner.pendingWatches++;
+      const reading = clockSample(),
+        born = reading.mono,
+        receivedWall = reading.wall;
+      const requestId = msg.id;
+      const owner = ownerFor(socket);
+      if (!safeId(requestId)) throw failure("command_validation_failed");
+      if (owner.closed || stopping) throw failure("command_closed_before_send");
+      if (owner.entries.has(requestId) || owner.watches.has(requestId)) throw failure("command_duplicate_request");
+      if (entries >= maxEntries || owner.entries.size >= maxPerSocket) throw failure("command_queue_full");
+      // Register before validation or any await, including preparation inside the SDK.
+      const entry = { controller: new AbortController(), terminal: false };
+      owner.entries.set(requestId, entry);
+      entries++;
+      try {
+        const x = msg.execution,
+          sample = owner.clocks.get(x?.clockToken);
+        if (
+          x?.version !== 1 ||
+          x.profile !== "bounded-state-v1" ||
+          msg.name !== "light" ||
+          typeof msg.value !== "boolean" ||
+          (x.correction !== undefined && typeof x.correction !== "boolean") ||
+          (x.automatic !== undefined && typeof x.automatic !== "boolean") ||
+          (x.correctionExpiresAtMs !== undefined &&
+            (x.correction !== true || !finite(x.correctionExpiresAtMs) || x.correctionExpiresAtMs <= 0)) ||
+          typeof msg.sn !== "string" ||
+          !msg.sn ||
+          !finite(x.callerExpiresAtMs) ||
+          !finite(x.remainingBudgetMs) ||
+          x.remainingBudgetMs <= 0 ||
+          x.remainingBudgetMs > 80000
+        )
+          throw failure("command_validation_failed");
+        if (
+          !sample ||
+          !finite(x.callerReceivedAtMs) ||
+          !finite(x.clockUncertaintyMs) ||
+          x.clockUncertaintyMs < 0 ||
+          x.clockUncertaintyMs > 1000 ||
+          born < sample.mono ||
+          born - sample.mono > 300000
+        )
+          throw failure("command_clock_unavailable");
+        if (x.correctionExpiresAtMs !== undefined && x.correctionExpiresAtMs - x.callerReceivedAtMs > 600000)
+          throw failure("command_validation_failed");
+        const roundTrip = x.callerReceivedAtMs - sample.callerSentAtMs;
+        const processing = sample.bridgeSentAtMs - sample.bridgeReceivedAtMs;
+        const uncertainty = Math.max(1, (roundTrip - processing) / 2 + 1) + clockReserveMs;
+        if (
+          roundTrip < 0 ||
+          processing < 0 ||
+          processing - roundTrip > 1 ||
+          uncertainty > 1000 ||
+          x.clockUncertaintyMs < uncertainty ||
+          Math.abs(reading.offset - sample.wallOffset) > maxOffsetMovementMs
+        )
+          throw failure("command_clock_unavailable");
+        const offset =
+          (sample.bridgeReceivedAtMs - sample.callerSentAtMs + (sample.bridgeSentAtMs - x.callerReceivedAtMs)) / 2;
+        entry.uncertainty = x.clockUncertaintyMs;
+        // Anchor every later drift check to the handshake, preventing cumulative
+        // movement allowances from extending the original caller authority.
+        entry.wallOffset = sample.wallOffset;
+        entry.expiresAt = x.callerExpiresAtMs + offset - entry.uncertainty;
+        if (x.correctionExpiresAtMs !== undefined) {
+          entry.correctionExpiresAtMs = x.correctionExpiresAtMs + offset - entry.uncertainty;
+          entry.expiresAt = Math.min(entry.expiresAt, entry.correctionExpiresAtMs);
         }
-      }
-      const sdk = Promise.resolve(
-        eufy.setPropertyWithReceipt(msg.sn, msg.name, msg.value, {
-          profile: "bounded-state-v1",
-          signal: entry.controller.signal,
-          callerExpiresAtMs: entry.expiresAt,
-          remainingBudgetMs: Math.max(0, entry.deadline - monotonic()),
-          clockUncertaintyMs: entry.uncertainty,
-          correction: x.correction === true,
-          ...(x.automatic === undefined ? {} : { automatic: x.automatic }),
-          ...(entry.correctionExpiresAtMs === undefined ? {} : { correctionExpiresAtMs: entry.correctionExpiresAtMs }),
-        }),
-      );
-      // The SDK owns transmission-aware cancellation receipts. Preparation must also obey its signal.
-      const receipt = boundedReceipt(await sdk);
-      retainWatch(owner, requestId, msg.sn, receipt, entry);
-      entry.terminal = true;
-      clearTimeout(entry.deadlineTimer);
-      clearInterval(entry.clockTimer);
-      if (receipt.sendAttempted) {
-        entry.retainClock = true;
+        const transitUpperBound = Math.max(0, receivedWall - (x.callerReceivedAtMs + offset) + entry.uncertainty);
+        const remaining = Math.min(75000, x.remainingBudgetMs - transitUpperBound, entry.expiresAt - receivedWall);
+        entry.deadline = born + remaining;
+        check(entry);
+        entry.deadlineTimer = setTimeout(() => abort(entry, "command_expired_before_send"), remaining);
         entry.clockTimer = setInterval(() => {
-          if (!available()) abort(entry, "command_closed_before_send");
-          else if (Math.abs(wall() - monotonic() - entry.wallOffset) > entry.uncertainty)
-            abort(entry, "command_clock_unavailable");
+          try {
+            check(entry);
+          } catch {}
         }, 100);
+        entry.deadlineTimer.unref?.();
         entry.clockTimer.unref?.();
-        entry.lineageTimer = setTimeout(() => clearInterval(entry.clockTimer), 45000);
-        entry.lineageTimer.unref?.();
+        if (typeof eufy.setPropertyWithReceipt !== "function") throw failure("command_unsupported");
+        entry.correction = x.correction === true;
+        entry.automatic = x.automatic === true || entry.correction;
+        if (typeof eufy.confirmLateContraryEffect === "function") {
+          for (const previousOwner of owners.values())
+            for (const [id, watch] of previousOwner.watches) if (watch.sn === msg.sn) removeWatch(previousOwner, id);
+          if (watches + pendingWatches < maxEntries && owner.watches.size + owner.pendingWatches < maxPerSocket) {
+            entry.watchReserved = true;
+            pendingWatches++;
+            owner.pendingWatches++;
+          }
+        }
+        check(entry);
+        sdkEntered = true;
+        const sdk = Promise.resolve(
+          eufy.setPropertyWithReceipt(msg.sn, msg.name, msg.value, {
+            profile: "bounded-state-v1",
+            signal: entry.controller.signal,
+            callerExpiresAtMs: entry.expiresAt,
+            remainingBudgetMs: Math.max(0, entry.deadline - monotonic()),
+            clockUncertaintyMs: entry.uncertainty,
+            correction: x.correction === true,
+            ...(x.automatic === undefined ? {} : { automatic: x.automatic }),
+            ...(entry.correctionExpiresAtMs === undefined
+              ? {}
+              : { correctionExpiresAtMs: entry.correctionExpiresAtMs }),
+          }),
+        );
+        // The SDK owns transmission-aware cancellation receipts. Preparation must also obey its signal.
+        const receipt = boundedReceipt(await sdk);
+        retainWatch(owner, requestId, msg.sn, receipt, entry);
+        entry.terminal = true;
+        clearTimeout(entry.deadlineTimer);
+        clearInterval(entry.clockTimer);
+        if (receipt.sendAttempted) {
+          entry.retainClock = true;
+          entry.clockTimer = setInterval(() => {
+            if (!available()) abort(entry, "command_closed_before_send");
+            else {
+              try {
+                checkClock(entry);
+              } catch {
+                abort(entry, "command_clock_unavailable");
+              }
+            }
+          }, 100);
+          entry.clockTimer.unref?.();
+          entry.lineageTimer = setTimeout(() => clearInterval(entry.clockTimer), 45000);
+          entry.lineageTimer.unref?.();
+        }
+        return receipt;
+      } finally {
+        if (entry.watchReserved) {
+          pendingWatches--;
+          owner.pendingWatches--;
+        }
+        entry.terminal = true;
+        clearTimeout(entry.deadlineTimer);
+        if (!entry.retainClock) clearInterval(entry.clockTimer);
+        // A bounded tombstone prevents completed request replay and keeps cancellation ownership.
+        if (owner.entries.has(requestId)) {
+          entry.retireTimer = setTimeout(() => {
+            // Receipt tombstones end replay protection, not the independently owned passive watch.
+            if (typeof eufy.confirmLateContraryEffect !== "function") abort(entry, "command_closed_before_send");
+            remove(owner, requestId, entry);
+          }, 120000);
+          entry.retireTimer.unref?.();
+        } else clearInterval(entry.clockTimer);
       }
-      return receipt;
-    } finally {
-      if (entry.watchReserved) {
-        pendingWatches--;
-        owner.pendingWatches--;
-      }
-      entry.terminal = true;
-      clearTimeout(entry.deadlineTimer);
-      if (!entry.retainClock) clearInterval(entry.clockTimer);
-      // A bounded tombstone prevents completed request replay and keeps cancellation ownership.
-      if (owner.entries.has(requestId)) {
-        entry.retireTimer = setTimeout(() => {
-          // Receipt tombstones end replay protection, not the independently owned passive watch.
-          if (typeof eufy.confirmLateContraryEffect !== "function") abort(entry, "command_closed_before_send");
-          remove(owner, requestId, entry);
-        }, 120000);
-        entry.retireTimer.unref?.();
-      } else clearInterval(entry.clockTimer);
+    } catch (error) {
+      // Only this boundary owns proof that no SDK function was entered. Never
+      // trust a flag or a before-send-looking code propagated from the SDK.
+      const result = failure(error?.code);
+      if (!sdkEntered) result.sendAttempted = false;
+      throw result;
     }
   }
   function ownerLost(socket) {

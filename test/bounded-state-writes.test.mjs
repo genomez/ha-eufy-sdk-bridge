@@ -46,7 +46,7 @@ function fixture(options = {}) {
         profile: "bounded-state-v1",
         clockToken: sample.clockToken,
         callerReceivedAtMs: wall - skew + 20,
-        clockUncertaintyMs: 21,
+        clockUncertaintyMs: 28,
         callerExpiresAtMs: wall - skew + 80000,
         remainingBudgetMs: 79980,
       },
@@ -90,8 +90,8 @@ test("clock translation preserves original expiry across skew and transmission d
     f.advance(9000);
     const receipt = await f.manager.execute(f.owner, msg);
     const opts = f.calls[0][3];
-    assert.equal(opts.callerExpiresAtMs, 179979);
-    assert.equal(opts.remainingBudgetMs, 70979);
+    assert.equal(opts.callerExpiresAtMs, 179972);
+    assert.equal(opts.remainingBudgetMs, 70972);
     assert.deepEqual(receipt, {
       status: "acknowledged",
       sendAttempted: true,
@@ -113,9 +113,9 @@ test("correction authority translates the original expiry and clamps every forwa
     f.advance(9000);
     await f.manager.execute(f.owner, msg);
     const options = f.calls[0][3];
-    assert.equal(options.correctionExpiresAtMs, 109979);
-    assert.equal(options.callerExpiresAtMs, 109979);
-    assert.equal(options.remainingBudgetMs, 979);
+    assert.equal(options.correctionExpiresAtMs, 109972);
+    assert.equal(options.callerExpiresAtMs, 109972);
+    assert.equal(options.remainingBudgetMs, 972);
   } finally {
     f.manager.stop();
   }
@@ -164,7 +164,7 @@ test("old callers without correction authority keep the previous forwarded execu
   try {
     await f.manager.execute(f.owner, f.request());
     assert.equal(Object.hasOwn(f.calls[0][3], "correctionExpiresAtMs"), false);
-    assert.equal(f.calls[0][3].callerExpiresAtMs, 179979);
+    assert.equal(f.calls[0][3].callerExpiresAtMs, 179972);
     assert.equal(f.calls[0][3].remainingBudgetMs, 75000);
   } finally {
     f.manager.stop();

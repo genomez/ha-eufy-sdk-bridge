@@ -27,8 +27,17 @@ object containing:
 | `callerReceivedAtMs` | Caller receive timestamp of the clock reply          |
 | `clockUncertaintyMs` | Conservative uncertainty, at most 1,000 ms           |
 
-Bridge recomputes half the network round trip plus one millisecond uncertainty
-from the four timestamps, refuses a smaller declared uncertainty, and translates
+Both caller and bridge compute `max(1, (RTT - processing) / 2 + 1) + 7` ms
+uncertainty from the four timestamps. The exchange floor is 1 ms; a processing
+reading up to 1 ms greater than RTT is permitted for integer wall quantization.
+Negative elapsed times, a larger discrepancy or total uncertainty over 1,000 ms
+are refused. The bridge brackets wall reads with monotonic reads in the same
+order at handshake, execution and subsequent checks, refusing gaps over 1 ms.
+Offset movement is limited to 3 ms relative to the original handshake; it is
+never rebased. The extra 7 ms covers that tolerated movement plus two conservative
+1 ms quantization + 1 ms sampling errors. This reserve is included in the
+uncertainty deducted from expiry and transit budgets, rather than just enlarging
+the drift threshold. The bridge refuses a smaller declared uncertainty and translates
 the original expiration with the midpoint offset minus the uncertainty. It
 subtracts conservative transit time from the remaining budget, clamps both to
 75 seconds from ingress, and freezes a monotonic deadline before SDK preparation.
@@ -44,6 +53,16 @@ failure, supersession and cancellation are explicit outcomes. Possible
 transmission followed by timeout, cancellation or close remains unknown. Raw
 exceptions, serials, device names, requested values and SDK internal metadata are
 excluded from receipts and diagnostics.
+
+A failed bounded `device.set` reply may additionally contain the strict boolean
+`sendAttempted: false`. Only the bridge's pre-SDK-entry exception boundary sets
+this proof. Once SDK entry starts, exceptions never carry that flag, even when
+their code is `command_clock_unavailable` or the SDK exception contains a flag.
+Missing flags mean possibly sent. The integration permits one fresh-handshake
+OFF retry only for a clock refusal carrying this proof, within the same invocation,
+original deadline, connection generation, supersession and dispatch policy guards.
+ON and possibly-sent failures are never retried. Proven not-sent terminal failures
+do not create an unknown-outcome correction hold or clear unrelated recoveries.
 
 An optional `superseded: true` reports that a newer property intent displaced an
 already-transmitted attempt. Its correlated ACK still describes that original
