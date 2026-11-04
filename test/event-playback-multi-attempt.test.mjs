@@ -417,6 +417,270 @@ test("read uncertainty permanently blocks this running grant", async (t) => {
   assert.equal(f.calls(), 1);
 });
 
+for (const observer of ["status", "invoke", "startup", "attachment"])
+  for (const uncertainty of ["retained", "read_error"])
+    test(`permanent safety block: ${observer} observes ${uncertainty}`, async (t) => {
+      const f = fixture(t),
+        probe = f.makeProbe();
+      await probe.invoke(f.request(1));
+      f.advance(120000);
+      const original = f.safety.load;
+      f.safety.load = () => {
+        if (uncertainty === "read_error") throw Error("synthetic_read_failure");
+        return true;
+      };
+      if (observer === "status") assert.equal(probe.status(), "blocked");
+      if (observer === "invoke") await probe.invoke(f.request(2));
+      if (observer === "startup") f.makeProbe();
+      if (observer === "attachment") {
+        // Real safety-store reads return unresolved on malformed or unreadable state.
+        f.put(
+          path.join(f.safetyDir, "state.json"),
+          uncertainty === "retained" ? { schema: 3, state: "unresolved", reason: "safety_uncertainty" } : "{",
+        );
+        assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "blocked");
+      }
+      f.safety.load = original;
+      f.safety.save(false);
+      f.put(path.join(f.safetyDir, "state.json"), { schema: 3, state: "clear", reason: "owner_recovery" });
+      // Check SDK refusal before checking the marker, so the negative control proves reuse.
+      await probe.invoke(f.request(2));
+      assert.equal(f.calls(), 1);
+      assert.deepEqual(JSON.parse(f.files.get(path.join(f.dir, "blocked.json"))), { schema: 1, blocked: true });
+      const restarted = f.makeProbe();
+      assert.equal(restarted.status(), "blocked");
+      await restarted.invoke(f.request(2));
+      assert.equal(f.calls(), 1);
+    });
+
+for (const observer of ["status", "startup", "invoke"])
+  test(`state read failure permanently blocks when observed by ${observer}`, async (t) => {
+    const f = fixture(t),
+      store = f.makeStore(),
+      probe = f.makeProbe(store);
+    await probe.invoke(f.request(1));
+    f.advance(120000);
+    const original = store.state;
+    store.state = () => {
+      throw Error("synthetic_state_read_failure");
+    };
+    if (observer === "status") assert.equal(probe.status(), "blocked");
+    if (observer === "startup") f.makeProbe(store);
+    if (observer === "invoke") await probe.invoke(f.request(2));
+    store.state = original;
+    f.safety.save(false);
+    await probe.invoke(f.request(2));
+    assert.equal(f.calls(), 1);
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+    assert.equal(f.makeProbe().status(), "blocked");
+  });
+
+for (const phase of ["startup", "invoke", "fresh"])
+  test(`authorization read failure permanently blocks at ${phase}`, async (t) => {
+    const f = fixture(t),
+      store = f.makeStore(),
+      probe = f.makeProbe(store),
+      original = store.load;
+    let reads = 0;
+    store.load = () => {
+      if (phase !== "fresh" || ++reads > 1) throw Error("synthetic_authorization_read_failure");
+      return original();
+    };
+    if (phase === "startup") f.makeProbe(store);
+    else await probe.invoke(f.request(1));
+    store.load = original;
+    f.safety.save(false);
+    await probe.invoke(f.request(phase === "fresh" ? 2 : 1));
+    assert.equal(f.calls(), 0);
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+    assert.equal(f.makeProbe().status(), "blocked");
+  });
+
+for (const phase of ["open", "write", "file_sync", "directory_sync"])
+  test(`blocked marker failure at ${phase} stays closed for the process lifetime`, async (t) => {
+    const f = fixture(t),
+      probe = f.makeProbe(),
+      marker = path.join(f.dir, "blocked.json");
+    await probe.invoke(f.request(1));
+    f.advance(120000);
+    const method = phase === "open" ? "openSync" : phase === "write" ? "writeFileSync" : "fsyncSync",
+      original = fs[method];
+    let failed = false;
+    fs[method] = (...args) => {
+      const name = method === "openSync" ? args[0] : f.descriptors.get(args[0]);
+      if (name === (phase === "directory_sync" ? f.dir : marker)) {
+        failed = true;
+        throw Error("synthetic_block_failure");
+      }
+      return original(...args);
+    };
+    try {
+      f.safety.save(true);
+      assert.equal(probe.status(), "blocked");
+    } finally {
+      fs[method] = original;
+    }
+    f.safety.save(false);
+    await probe.invoke(f.request(2));
+    assert.equal(f.calls(), 1);
+    assert.equal(probe.status(), "blocked");
+    assert.equal(failed, true);
+  });
+
+test("an in-flight authorization read failure cannot be cured by a clean SDK result", async (t) => {
+  const f = fixture(t),
+    store = f.makeStore(),
+    original = store.load;
+  f.ctx.eufy.rtc.readEventPlaybackCandidate = async (_station, options) => {
+    store.load = () => {
+      throw Error("synthetic_authorization_read_failure");
+    };
+    assert.equal(options.fresh(), false);
+    store.load = original;
+    f.safety.save(false);
+    return clean;
+  };
+  const probe = f.makeProbe(store);
+  assert.equal((await probe.invoke(f.request(1))).captureOutcome, "eof");
+  assert.equal(probe.status(), "blocked");
+  assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+  assert.equal(f.files.has(path.join(f.dir, "complete-1.json")), false);
+});
+
+test("status blocking fsyncs both the marker and grant directory", async (t) => {
+  const f = fixture(t),
+    probe = f.makeProbe(),
+    synced = [];
+  await probe.invoke(f.request(1));
+  t.mock.method(fs, "fsyncSync", (fd) => synced.push(f.descriptors.get(fd)));
+  f.safety.save(true);
+  assert.equal(probe.status(), "blocked");
+  assert.deepEqual(synced, [path.join(f.dir, "blocked.json"), f.dir]);
+});
+
+for (const flag of ["uncertain", "persistenceFailed"])
+  test(`safety diagnostics ${flag} permanently blocks even with a clear load`, async (t) => {
+    const f = fixture(t),
+      probe = f.makeProbe();
+    f.safety.diagnostics = () => ({ [flag]: true });
+    assert.equal(probe.status(), "blocked");
+    f.safety.diagnostics = () => ({});
+    f.safety.save(false);
+    await probe.invoke(f.request(1));
+    assert.equal(f.calls(), 0);
+    assert.equal(f.makeProbe().status(), "blocked");
+  });
+
+test("attachment retains its first uncertainty observation if shared safety clears during setup", async (t) => {
+  const f = fixture(t);
+  f.put(path.join(f.safetyDir, "state.json"), { schema: 3, state: "unresolved", reason: "safety_uncertainty" });
+  f.ctx.eufy.rtc.configurePlaybackSafety = () => {
+    f.put(path.join(f.safetyDir, "state.json"), { schema: 3, state: "clear", reason: "owner_recovery" });
+  };
+  assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "blocked");
+  assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+  await f.makeProbe().invoke(f.request(1));
+  assert.equal(f.calls(), 0);
+});
+
+test("attachment safety setup failure permanently blocks a readable multi-attempt grant", async (t) => {
+  const f = fixture(t),
+    original = fs.lstatSync;
+  fs.lstatSync = (name) => {
+    if (name === f.safetyDir) throw Error("synthetic_safety_read_failure");
+    return original(name);
+  };
+  try {
+    assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "unavailable");
+  } finally {
+    fs.lstatSync = original;
+  }
+  f.safety.save(false);
+  assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+  await f.makeProbe().invoke(f.request(1));
+  assert.equal(f.calls(), 0);
+});
+
+test("attachment also blocks uncertainty first observed by its final safety read", async (t) => {
+  const f = fixture(t),
+    original = fs.readFileSync;
+  let safetyReads = 0;
+  t.mock.method(fs, "readFileSync", (handle, ...args) => {
+    const name = typeof handle === "number" ? f.descriptors.get(handle) : handle;
+    if (name === path.join(f.safetyDir, "state.json") && ++safetyReads === 4)
+      return Buffer.from(JSON.stringify({ schema: 3, state: "unresolved", reason: "safety_uncertainty" }));
+    return original(handle, ...args);
+  });
+  assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "blocked");
+  assert.equal(safetyReads >= 4, true);
+  f.safety.save(false);
+  assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+  await f.makeProbe().invoke(f.request(1));
+  assert.equal(f.calls(), 0);
+});
+
+for (const missing of ["result", "complete"])
+  test(`restart still blocks when an existing attempt lacks ${missing}`, async (t) => {
+    const f = fixture(t);
+    await f.makeProbe().invoke(f.request(1));
+    f.advance(120000);
+    f.files.delete(path.join(f.dir, `${missing}-1.json`));
+    const restarted = f.makeProbe();
+    assert.equal(restarted.status(), "blocked");
+    await restarted.invoke(f.request(2));
+    assert.equal(f.calls(), 1);
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+  });
+
+test("invalid request keys, nonce and index deny only the request", async (t) => {
+  const f = fixture(t),
+    probe = f.makeProbe();
+  for (const patch of [{ extra: true }, { nonce: "d".repeat(64) }, { attemptIndex: 2 }]) {
+    assert.equal((await probe.invoke({ ...f.request(1), ...patch })).captureOutcome, "denied");
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), false);
+    assert.equal(probe.status(), "armed");
+  }
+  assert.equal((await probe.invoke(f.request(1))).captureOutcome, "eof");
+  assert.equal(f.calls(), 1);
+});
+
+test("legacy status and authorization-read refusal retain their existing nonblocking behavior", async (t) => {
+  const f = fixture(t);
+  delete f.grant.maxAttempts;
+  f.put(path.join(f.dir, "authorization.json"), f.grant);
+  const store = f.makeStore(),
+    original = store.load;
+  let blocks = 0,
+    claims = 0,
+    calls = 0;
+  store.block = () => {
+    blocks++;
+  };
+  store.claim = () => {
+    claims++;
+  };
+  store.save = () => {};
+  f.ctx.eufy.rtc.readEventPlaybackCandidate = async () => {
+    calls++;
+    return clean;
+  };
+  f.safety.save(true);
+  const probe = f.makeProbe(store);
+  assert.equal(probe.status(), "armed");
+  store.load = () => {
+    throw Error("synthetic_read_failure");
+  };
+  const request = f.request(1);
+  delete request.attemptIndex;
+  assert.equal((await probe.invoke(request)).captureOutcome, "denied");
+  store.load = original;
+  f.safety.save(false);
+  assert.equal((await probe.invoke(request)).captureOutcome, "eof");
+  assert.equal(claims, 1);
+  assert.equal(calls, 1);
+  assert.equal(blocks, 0);
+});
+
 test("startup snapshot cannot be hot rearmed and expiry is dormant", async (t) => {
   const f = fixture(t),
     probe = f.makeProbe();

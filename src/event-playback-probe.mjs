@@ -162,6 +162,14 @@ export function validatePlaybackGrant(value, now, pins) {
 }
 
 export const playbackAttemptSpacingMs = 120000;
+const blockPlaybackGrant = (store, safety) => {
+  try {
+    store.block();
+  } catch {}
+  try {
+    safety?.save(true);
+  } catch {}
+};
 const cleanPlaybackRelease = (result) =>
   result.releaseOutcome === "release_confirmed" &&
   result.latchCleared &&
@@ -583,6 +591,7 @@ export function createEventPlaybackProbe(
     store,
     safety,
     pins,
+    initialUncertainty = false,
     now = Date.now,
     monotonicNow = () => performance.now(),
     monotonicNs = () => process.hrtime.bigint(),
@@ -595,16 +604,41 @@ export function createEventPlaybackProbe(
   try {
     startupGrant = JSON.stringify(store.load());
   } catch {}
-  const multi = Object.hasOwn(JSON.parse(startupGrant ?? "null") ?? {}, "maxAttempts");
+  // An attempt store still identifies the grant type if its startup read failed.
+  const multi =
+    Object.hasOwn(JSON.parse(startupGrant ?? "null") ?? {}, "maxAttempts") ||
+    (startupGrant === undefined && typeof store.block === "function");
   const block = () => {
     closed = true;
-    try {
-      store.block();
-    } catch {}
-    try {
-      safety.save(true);
-    } catch {}
+    blockPlaybackGrant(store, safety);
   };
+  const loadAuthorization = () => {
+    try {
+      return store.load();
+    } catch (error) {
+      if (multi) block();
+      throw error;
+    }
+  };
+  const state = (grant) => {
+    try {
+      const unresolved = safety.load() !== false,
+        diagnostics = safety.diagnostics?.();
+      if (unresolved || diagnostics?.uncertain || diagnostics?.persistenceFailed) throw Error("probe_safety_uncertain");
+      return store.state(grant);
+    } catch (error) {
+      block();
+      throw error;
+    }
+  };
+  if (multi) {
+    if (startupGrant === undefined || initialUncertainty) block();
+    else {
+      try {
+        state(JSON.parse(startupGrant));
+      } catch {}
+    }
+  }
   return {
     status() {
       if (!multi) return "armed";
@@ -613,8 +647,7 @@ export function createEventPlaybackProbe(
       if (now() >= grant.expiresMs) return "expired";
       if (pending) return "armed";
       try {
-        if (safety.load() !== false) return "blocked";
-        return store.state(grant).nextAttemptIndex > grant.maxAttempts ? "consumed" : "armed";
+        return state(grant).nextAttemptIndex > grant.maxAttempts ? "consumed" : "armed";
       } catch {
         return "blocked";
       }
@@ -624,7 +657,8 @@ export function createEventPlaybackProbe(
         return Promise.resolve(sanitizePlaybackReceipt({ captureOutcome: "consumed_or_unavailable" }));
       let grant;
       try {
-        grant = validatePlaybackGrant(store.load(), now(), pins);
+        grant = validatePlaybackGrant(loadAuthorization(), now(), pins);
+        const current = multi ? state(grant) : undefined;
         if (
           JSON.stringify(grant) !== startupGrant ||
           Object.keys(request ?? {})
@@ -638,13 +672,6 @@ export function createEventPlaybackProbe(
         )
           throw Error();
         if (multi) {
-          let current;
-          try {
-            current = store.state(grant);
-          } catch {
-            block();
-            throw Error();
-          }
           if (
             !Number.isInteger(request.attemptIndex) ||
             request.attemptIndex !== current.nextAttemptIndex ||
@@ -673,8 +700,9 @@ export function createEventPlaybackProbe(
       const fresh = () => {
         try {
           return (
+            (!multi || !closed) &&
             playbackFresh(request, now(), monotonicNs()) &&
-            JSON.stringify(validatePlaybackGrant(store.load(), now(), pins)) === JSON.stringify(grant) &&
+            JSON.stringify(validatePlaybackGrant(loadAuthorization(), now(), pins)) === JSON.stringify(grant) &&
             now() - wallStarted >= 0 &&
             monotonicNow() - started >= 0 &&
             grant.expiresMs - now() >= 60000
@@ -727,6 +755,7 @@ export function createEventPlaybackProbe(
             unlock = undefined;
             releaseLock?.();
             if (
+              closed ||
               !cleanPlaybackRelease(result) ||
               safety.load() !== false ||
               safety.diagnostics?.().persistenceFailed ||
@@ -786,7 +815,14 @@ export function attachEventPlaybackProbe(
     expectedSdkSha256,
   } = {},
 ) {
-  let safety;
+  let safety,
+    initialUncertainty = false;
+  const blockStoredMultiGrant = () => {
+    try {
+      const store = createPlaybackAttemptStore(dir);
+      if (Object.hasOwn(store.load() ?? {}, "maxAttempts")) blockPlaybackGrant(store, safety);
+    } catch {}
+  };
   try {
     if (fs.existsSync(safetyDir)) {
       safety = createPlaybackSafetyStore(safetyDir);
@@ -794,6 +830,7 @@ export function attachEventPlaybackProbe(
       try {
         unresolved = safety.load();
       } catch {}
+      initialUncertainty = unresolved !== false;
       ctx.eufy.rtc.configurePlaybackSafety(unresolved, safety.save, false);
     } else if (fs.existsSync(dir)) {
       throw Error("probe_safety_missing");
@@ -808,8 +845,12 @@ export function attachEventPlaybackProbe(
         false,
       );
     } catch {}
+    // Safety setup can fail before the grant is attached. Preserve that observation
+    // for a readable explicit-count grant without changing legacy dormancy.
+    blockStoredMultiGrant();
     return dormant("unavailable");
   }
+  if (initialUncertainty) blockStoredMultiGrant();
   try {
     if (!fs.existsSync(path.join(dir, "authorization.json"))) return dormant("disabled");
     if (
@@ -853,9 +894,23 @@ export function attachEventPlaybackProbe(
     }
     validatePlaybackGrant(grant, Date.now(), pins);
     if (Object.hasOwn(grant, "maxAttempts")) store = createPlaybackAttemptStore(dir);
-    const probe = createEventPlaybackProbe(ctx, { store, safety, pins });
+    const probe = createEventPlaybackProbe(ctx, { store, safety, pins, initialUncertainty });
     if (probe.status() !== "armed") return dormant(probe.status());
-    ctx.eufy.rtc.configurePlaybackSafety(safety.load(), safety.save, true);
+    const invalidate = () => {
+      if (Object.hasOwn(grant, "maxAttempts")) blockPlaybackGrant(store, safety);
+      void probe.close();
+    };
+    try {
+      const unresolved = safety.load();
+      if (Object.hasOwn(grant, "maxAttempts") && unresolved !== false) {
+        invalidate();
+        return dormant("blocked");
+      }
+      ctx.eufy.rtc.configurePlaybackSafety(unresolved, safety.save, true);
+    } catch {
+      if (Object.hasOwn(grant, "maxAttempts")) invalidate();
+      return dormant("unavailable");
+    }
     const sockets = new Set();
     const server = net.createServer((socket) => {
       sockets.add(socket);
@@ -915,7 +970,7 @@ export function attachEventPlaybackProbe(
             guard();
             validatePlaybackGrant(store.load(), Date.now(), pins);
           } catch {
-            void probe.close();
+            invalidate();
             resolve();
             return;
           }

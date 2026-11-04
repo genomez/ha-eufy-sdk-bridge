@@ -44,9 +44,17 @@ grant directory, using exclusive creation and file/directory fsync:
 The next attempt requires all preceding claims, sanitized results and clean
 completion markers, plus at least 120,000 ms since completion on both clocks.
 Missing, malformed, uncertain or retained state blocks further attempts.
-Persistence failure also blocks; restart preserves every used attempt.
-Stale/replayed indexes, bad nonces and early retries are denied without a new
-claim. Active requests cannot overlap. No automatic retry is performed.
+For explicit-count grants, observing retained/uncertain safety state or a
+storage/state-read failure at startup, during status checks or during invocation
+permanently closes the grant in memory and writes `blocked.json` with file and
+directory fsync. Clearing shared safety later cannot restore that grant, including
+after restart. If writing or syncing the block marker fails, the process stays
+closed for its lifetime; an incomplete claim/result/completion also continues to
+block after restart. Persistence failure also blocks; restart preserves every
+used attempt. Stale/replayed indexes, bad nonces, wrong request keys and early
+retries deny only that request without a new claim or permanent block. These
+rules do not change legacy single-attempt behavior. Active requests cannot
+overlap. No automatic retry is performed.
 
 Read back exact N using `readback N`, or
 `control("readback", undefined, {attemptIndex:N})`. This independently sanitizes
