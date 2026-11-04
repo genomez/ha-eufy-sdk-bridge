@@ -48,7 +48,15 @@ For explicit-count grants, observing retained/uncertain safety state or a
 storage/state-read failure at startup, during status checks or during invocation
 permanently closes the grant in memory and writes `blocked.json` with file and
 directory fsync. Clearing shared safety later cannot restore that grant, including
-after restart. If writing or syncing the block marker fails, the process stays
+after restart. Attachment retries a failed authorization read only to identify
+the grant type and retain the original uncertainty, never to authorize work.
+If its type remains unreadable, an immutable `authorization-uncertain.json`
+record is written with file and directory fsync. Explicit-count grants apply
+that evidence as a permanent block upon recovery; legacy grants ignore it and
+their shared safety is not relatched by an untyped authorization failure.
+Legitimately absent authorization remains disabled without a new marker.
+If writing or syncing the block marker or uncertainty record fails, attachment
+remains unavailable and the process stays
 closed for its lifetime; an incomplete claim/result/completion also continues to
 block after restart. Persistence failure also blocks; restart preserves every
 used attempt. Stale/replayed indexes, bad nonces, wrong request keys and early
@@ -72,5 +80,8 @@ configuration/grants, `consumed` for legacy consumption or clean exhaustion,
 explicit-count state; otherwise `armed`. Runtime status also reflects expiry,
 exhaustion and blocking. Dormant attachment creates no socket. An already
 started socket may remain bound but sends nothing after expiry or exhaustion.
+Expiry, clean exhaustion and validation refusals between attachment and listener
+startup remain dormant without a block marker or shared safety write. Startup
+storage-read failures still permanently block explicit-count grants.
 Refusals retain the existing sanitized `denied`, `consumed_or_unavailable`,
 `not_admitted` or `receipt_failed` outcomes, without adding receipt fields.

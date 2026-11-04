@@ -694,6 +694,189 @@ test("startup snapshot cannot be hot rearmed and expiry is dormant", async (t) =
   assert.equal((await probe.invoke(f.request(1))).captureOutcome, "denied");
 });
 
+function startupServer(t) {
+  let listens = 0;
+  t.mock.method(fs, "chmodSync", () => {});
+  t.mock.method(net, "createServer", () => {
+    const server = new EventEmitter();
+    server.listen = (_name, callback) => {
+      listens++;
+      callback();
+    };
+    return server;
+  });
+  return () => listens;
+}
+
+for (const persistent of [false, true])
+  test(`R2 attachment authorization EIO after clean attempt survives restart (${persistent ? "persistent" : "transient"})`, async (t) => {
+    const f = fixture(t);
+    await f.makeProbe().invoke(f.request(1));
+    f.advance(120000);
+    const original = fs.readFileSync,
+      synced = [];
+    let reads = 0;
+    t.mock.method(fs, "fsyncSync", (fd) => synced.push(f.descriptors.get(fd)));
+    fs.readFileSync = (handle, ...args) => {
+      const name = typeof handle === "number" ? f.descriptors.get(handle) : handle;
+      if (name === path.join(f.dir, "authorization.json") && (++reads === 1 || persistent))
+        throw Object.assign(Error("synthetic_authorization_EIO"), { code: "EIO" });
+      return original(handle, ...args);
+    };
+    let attached;
+    try {
+      attached = attachEventPlaybackProbe(f.ctx, f.options);
+    } finally {
+      fs.readFileSync = original;
+    }
+    assert.equal(attached.status, "unavailable");
+    const marker = path.join(f.dir, persistent ? "authorization-uncertain.json" : "blocked.json");
+    assert.equal(f.files.has(marker), true);
+    assert.equal(synced.includes(marker), true);
+    assert.equal(synced.includes(f.dir), true);
+    // Even independently clearing shared safety cannot restore this grant.
+    f.put(path.join(f.safetyDir, "state.json"), { schema: 3, state: "clear", reason: "owner_recovery" });
+    f.safety.save(false);
+    assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "blocked");
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+    await f.makeProbe().invoke(f.request(2));
+    assert.equal(f.calls(), 1);
+  });
+
+for (const refusal of ["expired", "not_yet_valid", "invalid", "consumed"])
+  test(`R2 startup ${refusal} refuses without block or shared safety writes`, async (t) => {
+    const f = fixture(t, 1),
+      listens = startupServer(t),
+      attached = attachEventPlaybackProbe(f.ctx, f.options);
+    assert.equal(attached.status, "armed");
+    if (refusal === "expired") f.advance(3600000);
+    if (refusal === "not_yet_valid") f.advance(-1);
+    if (refusal === "invalid")
+      f.put(path.join(f.dir, "authorization.json"), { ...f.grant, bridgeSha256: "0".repeat(64) });
+    if (refusal === "consumed") await f.makeProbe().invoke(f.request(1));
+    const safetyBefore = [...f.files].filter(([name]) => path.dirname(name) === f.safetyDir),
+      directoriesBefore = [...f.directories];
+    await attached.start();
+    await attached.start();
+    assert.equal(listens(), 0);
+    assert.equal(attached.status, ["invalid", "not_yet_valid"].includes(refusal) ? "unavailable" : refusal);
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), false);
+    assert.deepEqual([...f.files].filter(([name]) => path.dirname(name) === f.safetyDir), safetyBefore);
+    assert.deepEqual([...f.directories], directoriesBefore);
+    assert.equal(f.calls(), refusal === "consumed" ? 1 : 0);
+    await attached.stop();
+  });
+
+for (const phase of ["stat", "open", "safety_setup", "attempt_store"])
+  test(`R2 attachment storage uncertainty at ${phase} survives restart`, (t) => {
+    const f = fixture(t),
+      method = phase === "open" ? "openSync" : "lstatSync",
+      original = fs[method];
+    let injected = false,
+      directoryReads = 0;
+    fs[method] = (name, ...args) => {
+      const target = phase === "attempt_store"
+        ? name === f.dir && ++directoryReads === 4
+        : name === (phase === "safety_setup" ? f.safetyDir : path.join(f.dir, "authorization.json"));
+      if (!injected && target) {
+        injected = true;
+        throw Object.assign(Error("synthetic_storage_EIO"), { code: "EIO" });
+      }
+      return original(name, ...args);
+    };
+    const read = fs.readFileSync;
+    if (phase === "safety_setup")
+      fs.readFileSync = (handle, ...args) => {
+        if (f.descriptors.get(handle) === path.join(f.dir, "authorization.json"))
+          throw Object.assign(Error("synthetic_authorization_EIO"), { code: "EIO" });
+        return read(handle, ...args);
+      };
+    try {
+      assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "unavailable");
+    } finally {
+      fs[method] = original;
+      fs.readFileSync = read;
+    }
+    assert.equal(injected, true);
+    assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "blocked");
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+    assert.equal(f.calls(), 0);
+  });
+
+test("R2 legacy expiry between attachment and startup preserves its nonblocking refusal", async (t) => {
+  const f = fixture(t),
+    listens = startupServer(t);
+  delete f.grant.maxAttempts;
+  f.put(path.join(f.dir, "authorization.json"), f.grant);
+  const attached = attachEventPlaybackProbe(f.ctx, f.options),
+    before = [...f.files];
+  f.advance(3600000);
+  await attached.start();
+  assert.equal(attached.status, "armed");
+  assert.equal(listens(), 0);
+  assert.deepEqual([...f.files], before);
+  assert.equal(f.calls(), 0);
+});
+
+test("R2 absent authorization remains disabled without uncertainty evidence", async (t) => {
+  const f = fixture(t),
+    listens = startupServer(t);
+  f.files.delete(path.join(f.dir, "authorization.json"));
+  const before = [...f.files],
+    attached = attachEventPlaybackProbe(f.ctx, f.options);
+  await attached.start();
+  assert.equal(attached.status, "disabled");
+  assert.equal(listens(), 0);
+  assert.deepEqual([...f.files], before);
+  assert.equal(f.calls(), 0);
+});
+
+test("R2 startup authorization EIO still permanently blocks", async (t) => {
+  const f = fixture(t),
+    listens = startupServer(t),
+    attached = attachEventPlaybackProbe(f.ctx, f.options),
+    original = fs.readFileSync;
+  fs.readFileSync = (handle, ...args) => {
+    if (f.descriptors.get(handle) === path.join(f.dir, "authorization.json"))
+      throw Object.assign(Error("synthetic_authorization_EIO"), { code: "EIO" });
+    return original(handle, ...args);
+  };
+  try {
+    await attached.start();
+  } finally {
+    fs.readFileSync = original;
+  }
+  assert.equal(listens(), 0);
+  assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+  assert.equal(f.makeProbe().status(), "blocked");
+  assert.equal(f.calls(), 0);
+});
+
+for (const persistent of [false, true])
+  test(`R2 legacy attachment authorization EIO preserves nonblocking recovery (${persistent ? "persistent" : "transient"})`, (t) => {
+    const f = fixture(t);
+    delete f.grant.maxAttempts;
+    f.put(path.join(f.dir, "authorization.json"), f.grant);
+    const original = fs.readFileSync;
+    let reads = 0;
+    fs.readFileSync = (handle, ...args) => {
+      if (f.descriptors.get(handle) === path.join(f.dir, "authorization.json") && (++reads === 1 || persistent))
+        throw Object.assign(Error("synthetic_authorization_EIO"), { code: "EIO" });
+      return original(handle, ...args);
+    };
+    try {
+      assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "unavailable");
+    } finally {
+      fs.readFileSync = original;
+    }
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), false);
+    assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "armed");
+    assert.deepEqual(JSON.parse(f.files.get(path.join(f.safetyDir, "state.json"))), {
+      schema: 3, state: "clear", reason: "prepared",
+    });
+    assert.equal(f.calls(), 0);
+  });
+
 test("prepare defaults remain legacy and optional count/lifetime caps are enforced", async (t) => {
   const f = fixture(t),
     policyFile = path.join("synthetic", "policy.json");

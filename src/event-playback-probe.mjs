@@ -233,6 +233,7 @@ export function createPlaybackAttemptStore(dir) {
     guard();
     const names = fs.readdirSync(dir);
     if (
+      names.includes("authorization-uncertain.json") ||
       names.some(
         (name) =>
           /^(attempt|result|complete|blocked)/.test(name) && !/^(attempt|result|complete)-[1-5]\.json$/.test(name),
@@ -294,6 +295,7 @@ export function createPlaybackAttemptStore(dir) {
         finishedNs: String(finishedNs),
       }),
     block: () => write("blocked.json", { schema: 1, blocked: true }),
+    noteAuthorizationUncertainty: () => write("authorization-uncertain.json", { schema: 1, uncertain: true }),
     readResult: (index) => sanitizePlaybackReceipt(read(`result-${index}.json`)),
   };
 }
@@ -816,11 +818,22 @@ export function attachEventPlaybackProbe(
   } = {},
 ) {
   let safety,
-    initialUncertainty = false;
-  const blockStoredMultiGrant = () => {
+    initialUncertainty = false,
+    authorizationReadUncertain = false;
+  const blockStoredMultiGrant = (retainUnknown = false) => {
     try {
       const store = createPlaybackAttemptStore(dir);
-      if (Object.hasOwn(store.load() ?? {}, "maxAttempts")) blockPlaybackGrant(store, safety);
+      let grant;
+      try {
+        grant = store.load();
+      } catch (error) {
+        // Preserve untyped read uncertainty without relatching legacy safety.
+        // Only explicit-count state readers apply this durable evidence.
+        if (retainUnknown && (error.code !== "ENOENT" || authorizationReadUncertain))
+          store.noteAuthorizationUncertainty();
+        return;
+      }
+      if (Object.hasOwn(grant ?? {}, "maxAttempts")) blockPlaybackGrant(store, safety);
     } catch {}
   };
   try {
@@ -847,12 +860,19 @@ export function attachEventPlaybackProbe(
     } catch {}
     // Safety setup can fail before the grant is attached. Preserve that observation
     // for a readable explicit-count grant without changing legacy dormancy.
-    blockStoredMultiGrant();
+    blockStoredMultiGrant(true);
     return dormant("unavailable");
   }
-  if (initialUncertainty) blockStoredMultiGrant();
+  if (initialUncertainty) blockStoredMultiGrant(true);
   try {
-    if (!fs.existsSync(path.join(dir, "authorization.json"))) return dormant("disabled");
+    authorizationReadUncertain = true;
+    try {
+      fs.lstatSync(path.join(dir, "authorization.json"));
+    } catch (error) {
+      if (error.code === "ENOENT") return dormant("disabled");
+      throw error;
+    }
+    authorizationReadUncertain = false;
     if (
       !safety ||
       process.platform !== "linux" ||
@@ -864,6 +884,7 @@ export function attachEventPlaybackProbe(
     const pins = eventPlaybackCodePins(sdkFile, bridgeFiles);
     if (pins.sdkSha256 !== expectedSdkSha256) return dormant("unavailable");
     if (fs.existsSync(path.join(dir, "attempt.json"))) return dormant("consumed");
+    authorizationReadUncertain = true;
     const identity = fs.lstatSync(dir),
       baseStore = createProbeStore(dir);
     const guard = () => {
@@ -888,12 +909,17 @@ export function attachEventPlaybackProbe(
       ]),
     );
     const grant = store.load();
+    authorizationReadUncertain = false;
     if (Object.hasOwn(grant ?? {}, "maxAttempts") && Date.now() >= grant.expiresMs) {
       validatePlaybackGrant(grant, grant.expiresMs - 1, pins);
       return dormant("expired");
     }
     validatePlaybackGrant(grant, Date.now(), pins);
-    if (Object.hasOwn(grant, "maxAttempts")) store = createPlaybackAttemptStore(dir);
+    if (Object.hasOwn(grant, "maxAttempts")) {
+      authorizationReadUncertain = true;
+      store = createPlaybackAttemptStore(dir);
+      authorizationReadUncertain = false;
+    }
     const probe = createEventPlaybackProbe(ctx, { store, safety, pins, initialUncertainty });
     if (probe.status() !== "armed") return dormant(probe.status());
     const invalidate = () => {
@@ -956,21 +982,47 @@ export function attachEventPlaybackProbe(
         );
       });
     });
+    let startupRefusal;
+    const refuse = (status) => {
+      if (Object.hasOwn(grant, "maxAttempts")) startupRefusal = status;
+      void probe.close();
+    };
     return {
       get status() {
-        return probe.status();
+        return startupRefusal ?? probe.status();
       },
       start: () =>
         new Promise((resolve) => {
+          if (startupRefusal) {
+            resolve();
+            return;
+          }
           server.once("error", () => {
             void probe.close();
             resolve();
           });
+          let current;
           try {
             guard();
-            validatePlaybackGrant(store.load(), Date.now(), pins);
+            current = store.load();
           } catch {
             invalidate();
+            resolve();
+            return;
+          }
+          try {
+            validatePlaybackGrant(current, Date.now(), pins);
+            if (Object.hasOwn(grant, "maxAttempts") && JSON.stringify(current) !== JSON.stringify(grant))
+              throw Error("probe_grant_changed");
+          } catch {
+            const expired = Object.hasOwn(grant, "maxAttempts") && Date.now() >= grant.expiresMs;
+            refuse(expired ? "expired" : "unavailable");
+            resolve();
+            return;
+          }
+          const status = probe.status();
+          if (status !== "armed") {
+            refuse(status);
             resolve();
             return;
           }
@@ -986,6 +1038,7 @@ export function attachEventPlaybackProbe(
       },
     };
   } catch {
+    if (authorizationReadUncertain) blockStoredMultiGrant(true);
     return dormant("unavailable");
   }
 }
