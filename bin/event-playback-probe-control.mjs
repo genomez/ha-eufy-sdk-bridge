@@ -35,7 +35,7 @@ export async function control(
   if (action === "clear-latch") {
     if (ownerApproved !== true) throw Error("probe_owner_approval_required");
     const safety = createPlaybackSafetyStore(safetyDir);
-    const unlock = safety.exclusive();
+    const unlock = safety.exclusive({ recovery: true });
     try {
       const fd = fs.openSync(recoveryFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
       let token;

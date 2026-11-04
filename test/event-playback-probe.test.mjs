@@ -280,14 +280,14 @@ if (process.platform === "linux")
     safety.save(true);
     safety.save(false);
     assert.equal(safety.load(), false);
-    const write = fs.writeFileSync;
+    const write = fs.renameSync;
     try {
-      fs.writeFileSync = () => {
+      fs.renameSync = () => {
         throw Error("synthetic_write_failure");
       };
       assert.throws(() => safety.save(true));
     } finally {
-      fs.writeFileSync = write;
+      fs.renameSync = write;
     }
     assert.equal(safety.load(), true);
     assert.equal(createPlaybackSafetyStore(dir).load(), true);

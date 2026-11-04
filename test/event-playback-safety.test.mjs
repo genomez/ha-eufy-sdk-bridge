@@ -30,6 +30,97 @@ function fixture() {
   safety.save(false, "prepared");
   return { root, safety, options, pins };
 }
+function freshReader(dir) {
+  const source = `import {createPlaybackSafetyStore} from ${JSON.stringify(new URL("../src/event-playback-probe.mjs", import.meta.url).href)}; console.log(createPlaybackSafetyStore(${JSON.stringify(dir)}).load());`;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", source], { encoding: "utf8" });
+  assert.equal(child.status, 0);
+  return child.stdout.trim() === "true";
+}
+for (const method of ["lstatSync", "existsSync", "renameSync", "openSync", "fsyncSync", "closeSync"])
+  linux(`late re-latch failure at ${method} remains independently unresolved`, () => {
+    const { safety, options } = fixture();
+    safety.save(true);
+    safety.save(false);
+    const original = fs[method];
+    let injected = false;
+    try {
+      fs[method] = (...args) => {
+        if (!injected) {
+          injected = true;
+          throw Error("synthetic_failure");
+        }
+        return original(...args);
+      };
+      assert.throws(() => safety.save(true), /synthetic_failure/);
+    } finally {
+      fs[method] = original;
+    }
+    assert.equal(injected, true);
+    assert.deepEqual(safety.diagnostics(), { uncertain: true, persistenceFailed: true });
+    assert.equal(safety.load(), true);
+    assert.equal(createPlaybackSafetyStore(options.safetyDir).load(), true);
+    assert.equal(freshReader(options.safetyDir), true);
+  });
+linux("late re-latch performs no intent allocation, random allocation or payload writes", () => {
+  const { safety, options } = fixture();
+  const originals = new Map(["mkdirSync", "writeFileSync"].map((key) => [key, fs[key]]));
+  try {
+    for (const key of originals.keys())
+      fs[key] = () => {
+        throw Error("allocation_forbidden");
+      };
+    safety.save(true);
+  } finally {
+    for (const [key, value] of originals) fs[key] = value;
+  }
+  assert.equal(freshReader(options.safetyDir), true);
+});
+for (const phase of ["allocation", "entropy"])
+  linux(`clear intent ${phase} failure cannot expose a prior clear`, async () => {
+    const { safety, options } = fixture();
+    const crypto = (await import("node:crypto")).default;
+    const object = phase === "allocation" ? fs : crypto;
+    const key = phase === "allocation" ? "mkdirSync" : "randomBytes";
+    const original = object[key];
+    try {
+      object[key] = () => {
+        throw Error("synthetic_failure");
+      };
+      assert.throws(() => safety.save(false), /synthetic_failure/);
+    } finally {
+      object[key] = original;
+    }
+    assert.equal(safety.diagnostics().persistenceFailed, true);
+    assert.equal(freshReader(options.safetyDir), true);
+  });
+linux("dead invocation holder remains unresolved until explicitly approved recovery", async () => {
+  const { root, options } = fixture();
+  const source = `import {createPlaybackSafetyStore} from ${JSON.stringify(new URL("../src/event-playback-probe.mjs", import.meta.url).href)}; createPlaybackSafetyStore(${JSON.stringify(options.safetyDir)}).exclusive();`;
+  assert.equal(spawnSync(process.execPath, ["--input-type=module", "-e", source]).status, 0);
+  assert.equal(freshReader(options.safetyDir), true);
+  assert.throws(() => createPlaybackSafetyStore(options.safetyDir).exclusive(), /lock_stale/);
+  const recoveryFile = path.join(root, "recovery.json");
+  fs.writeFileSync(
+    recoveryFile,
+    JSON.stringify({ schema: 1, purpose: "event-playback-clear-latch", token: "f".repeat(64) }),
+    { mode: 0o600 },
+  );
+  await assert.rejects(control("clear-latch", undefined, { ...options, recoveryFile }), /approval/);
+  assert.equal(freshReader(options.safetyDir), true);
+  assert.deepEqual(await control("clear-latch", undefined, { ...options, recoveryFile, ownerApproved: true }), {
+    outcome: "latch_cleared",
+  });
+  assert.equal(freshReader(options.safetyDir), false);
+  assert.ok(fs.readdirSync(options.safetyDir).some((name) => name.startsWith("invocation-stale-")));
+});
+linux("malformed invocation holder fails closed and cannot be reclaimed", () => {
+  const { safety, options } = fixture();
+  fs.mkdirSync(path.join(options.safetyDir, "invocation-active"), { mode: 0o700 });
+  assert.equal(freshReader(options.safetyDir), true);
+  assert.throws(() => safety.exclusive({ recovery: true }), /lock_invalid/);
+  assert.equal(safety.load(), true);
+  assert.equal(fs.existsSync(path.join(options.safetyDir, "invocation-active")), true);
+});
 linux("durable clear is visible to an independent reader and fresh process", () => {
   const { safety, options } = fixture();
   safety.save(true);

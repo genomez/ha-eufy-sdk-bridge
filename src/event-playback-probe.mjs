@@ -159,6 +159,7 @@ export function validatePlaybackGrant(value, now, pins) {
 /** Explicit durable states are shared by all readers; uncertain transactions remain fail-closed. */
 export function createPlaybackSafetyStore(dir) {
   let uncertain = false;
+  let persistenceFailed = false;
   const identity = fs.lstatSync(dir);
   const guard = () => {
     const current = fs.lstatSync(dir);
@@ -178,6 +179,51 @@ export function createPlaybackSafetyStore(dir) {
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
+    }
+  };
+  const holder = (pid = process.pid) => {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    return {
+      schema: 1,
+      pid,
+      start: stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19],
+      boot: fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(),
+    };
+  };
+  const lockState = () => {
+    const active = path.join(dir, "invocation-active");
+    try {
+      const st = fs.lstatSync(active);
+      if (!st.isDirectory() || st.isSymbolicLink() || st.uid !== process.getuid() || (st.mode & 0o7777) !== 0o700)
+        return "malformed";
+      const fd = fs.openSync(path.join(active, "holder.json"), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      let value;
+      try {
+        const file = fs.fstatSync(fd);
+        if (!file.isFile() || file.uid !== process.getuid() || (file.mode & 0o7777) !== 0o600 || file.size > 256)
+          return "malformed";
+        value = JSON.parse(fs.readFileSync(fd));
+      } finally {
+        fs.closeSync(fd);
+      }
+      if (
+        Object.keys(value).sort().join(",") !== "boot,pid,schema,start" ||
+        value.schema !== 1 ||
+        !Number.isSafeInteger(value.pid) ||
+        value.pid <= 0 ||
+        !/^\d+$/.test(value.start) ||
+        !/^[a-f0-9-]{36}$/.test(value.boot)
+      )
+        return "malformed";
+      try {
+        const current = holder(value.pid);
+        return current.boot === value.boot && current.start === value.start ? "live" : "stale";
+      } catch (error) {
+        return error.code === "ENOENT" ? "stale" : "malformed";
+      }
+    } catch (error) {
+      if (error.code === "ENOENT" && !fs.existsSync(active)) return "absent";
+      return "malformed";
     }
   };
   const load = () => {
@@ -203,7 +249,10 @@ export function createPlaybackSafetyStore(dir) {
         )
           return true;
         return (
-          uncertain || value.state === "unresolved" || fs.readdirSync(dir).some((name) => name.startsWith("pending-"))
+          uncertain ||
+          value.state === "unresolved" ||
+          fs.readdirSync(dir).some((name) => name.startsWith("pending-")) ||
+          ["stale", "malformed"].includes(lockState())
         );
       } finally {
         fs.closeSync(fd);
@@ -219,12 +268,35 @@ export function createPlaybackSafetyStore(dir) {
     )
       throw Error("probe_safety_state_invalid");
     uncertain = true;
-    guard();
-    if (!recovery && fs.readdirSync(dir).some((name) => name.startsWith("pending-")))
-      throw Error("probe_safety_uncertain");
-    const intent = path.join(dir, "pending-" + crypto.randomBytes(16).toString("hex"));
-    fs.mkdirSync(intent, { mode: 0o700 });
+    let intent;
+    let intentCreated = false;
     try {
+      guard();
+      if (unresolved) {
+        // Clear publication pre-stages this intent; re-latching allocates and writes nothing.
+        if (fs.existsSync(path.join(dir, "relatch-ready"))) {
+          fs.renameSync(path.join(dir, "relatch-ready"), path.join(dir, "pending-relatch"));
+          syncDirectory();
+          uncertain = false;
+          persistenceFailed = false;
+          return;
+        }
+        if (fs.existsSync(path.join(dir, "pending-relatch"))) {
+          syncDirectory();
+          uncertain = false;
+          persistenceFailed = false;
+          return;
+        }
+        if (!load()) throw Error("probe_safety_not_staged");
+      }
+      if (!recovery && fs.readdirSync(dir).some((name) => name.startsWith("pending-"))) {
+        // A successful unresolved transition is not an incomplete clear transaction.
+        const names = fs.readdirSync(dir).filter((name) => name.startsWith("pending-"));
+        if (names.some((name) => name !== "pending-relatch")) throw Error("probe_safety_uncertain");
+      }
+      intent = path.join(dir, "pending-" + crypto.randomBytes(16).toString("hex"));
+      fs.mkdirSync(intent, { mode: 0o700 });
+      intentCreated = true;
       syncDirectory();
       const pending = path.join(intent, "state.json");
       const fd = fs.openSync(
@@ -239,6 +311,32 @@ export function createPlaybackSafetyStore(dir) {
         fs.closeSync(fd);
       }
       guard();
+      // The durable unresolved replacement exists before a clear marker can become visible.
+      const ready = path.join(dir, "relatch-ready");
+      if (!unresolved) {
+        if (!fs.existsSync(ready)) fs.mkdirSync(ready, { mode: 0o700 });
+        const staged = path.join(ready, "state.json");
+        if (!fs.existsSync(staged)) {
+          const fd = fs.openSync(
+            staged,
+            fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+            0o600,
+          );
+          try {
+            fs.writeFileSync(fd, JSON.stringify({ schema: 3, state: "unresolved", reason: "safety_uncertainty" }));
+            fs.fsyncSync(fd);
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+        const readyFd = fs.openSync(ready, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        try {
+          fs.fsyncSync(readyFd);
+        } finally {
+          fs.closeSync(readyFd);
+        }
+        syncDirectory();
+      }
       fs.renameSync(pending, path.join(dir, "state.json"));
       syncDirectory();
       if (recovery) {
@@ -256,27 +354,77 @@ export function createPlaybackSafetyStore(dir) {
           else throw Error("probe_safety_pending_invalid");
         }
       }
+      if (!recovery && fs.existsSync(path.join(dir, "pending-relatch"))) {
+        fs.unlinkSync(path.join(dir, "pending-relatch", "state.json"));
+        fs.rmdirSync(path.join(dir, "pending-relatch"));
+      }
       fs.rmdirSync(intent);
       syncDirectory();
       uncertain = false;
+      persistenceFailed = false;
     } catch (error) {
+      persistenceFailed = true;
+      // If the atomic transition itself failed, invalidate clear through an independent operation.
+      // Total filesystem failure cannot persist new evidence; the process still retains uncertainty.
+      if (unresolved || !intentCreated) {
+        try {
+          fs.unlinkSync(path.join(dir, "state.json"));
+          syncDirectory();
+        } catch {}
+      }
       try {
-        fs.mkdirSync(intent, { mode: 0o700 });
+        if (intent) fs.mkdirSync(intent, { mode: 0o700 });
       } catch {}
       throw error;
     }
   };
-  const exclusive = () => {
+  const exclusive = ({ recovery = false } = {}) => {
     guard();
     const active = path.join(dir, "invocation-active");
+    const state = lockState();
+    if (state === "malformed") {
+      try {
+        save(true);
+      } catch {}
+      throw Error("probe_invocation_lock_invalid");
+    }
+    if (state === "stale") {
+      try {
+        save(true);
+      } catch {}
+      if (!recovery) throw Error("probe_invocation_lock_stale");
+      const prior = fs.readFileSync(path.join(active, "holder.json"));
+      if (lockState() !== "stale") throw Error("probe_invocation_lock_changed");
+      // All contenders for this holder use the same nonempty destination. Its retained record
+      // prevents a delayed contender from renaming a newly acquired live lock over the archive.
+      fs.renameSync(active, path.join(dir, "invocation-stale-" + hash(prior)));
+      syncDirectory();
+    } else if (state === "live") throw Error("probe_invocation_active");
     fs.mkdirSync(active, { mode: 0o700 });
+    const fd = fs.openSync(
+      path.join(active, "holder.json"),
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      fs.writeFileSync(fd, JSON.stringify(holder()));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    syncDirectory();
     return () => {
       guard();
+      if (lockState() !== "live") throw Error("probe_invocation_lock_changed");
+      const value = JSON.parse(fs.readFileSync(path.join(active, "holder.json")));
+      if (value.pid !== process.pid || value.start !== holder().start) throw Error("probe_invocation_lock_changed");
+      fs.unlinkSync(path.join(active, "holder.json"));
       fs.rmdirSync(active);
+      syncDirectory();
     };
   };
   guard();
-  return { load, save, exclusive };
+  return { load, save, exclusive, diagnostics: () => ({ uncertain, persistenceFailed }) };
 }
 
 /** Dual clocks share the host origin with the helper; no fresh checkpoint is minted on refusal. */
