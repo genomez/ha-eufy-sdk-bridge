@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createProbeStore } from "../src/storage-probe.mjs";
 import {
   createPlaybackSafetyStore,
+  createPlaybackAttemptStore,
   eventPlaybackCodePins,
   playbackFresh,
   sanitizePlaybackReceipt,
@@ -29,6 +30,9 @@ export async function control(
     recoveryFile,
     quietDeadlineNs,
     quietDeadlineMs,
+    maxAttempts,
+    lifetimeMs = 3600000,
+    attemptIndex,
   } = {},
 ) {
   if (process.platform !== "linux") throw Error("probe_platform_invalid");
@@ -85,6 +89,15 @@ export async function control(
     }
   }
   if (action === "prepare") {
+    if (
+      !Number.isSafeInteger(lifetimeMs) ||
+      lifetimeMs < 1 ||
+      lifetimeMs > 14400000 ||
+      (maxAttempts === undefined
+        ? lifetimeMs !== 3600000
+        : !Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 5)
+    )
+      throw Error("probe_policy_invalid");
     const fd = fs.openSync(policyFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     let policy;
     try {
@@ -107,7 +120,8 @@ export async function control(
       exclusive: true,
       timeBasis: "owner_accepted_America_Chicago",
       notBeforeMs: now,
-      expiresMs: now + 3600000,
+      expiresMs: now + lifetimeMs,
+      ...(maxAttempts === undefined ? {} : { maxAttempts }),
       ...pins,
     };
     validatePlaybackGrant(grant, now, pins);
@@ -139,6 +153,17 @@ export async function control(
   const store = createProbeStore(dir);
   if (action === "safety") return { unresolved: createPlaybackSafetyStore(safetyDir).load() };
   if (action === "readback") {
+    if (attemptIndex !== undefined) {
+      const grant = store.load();
+      if (
+        !Number.isInteger(grant.maxAttempts) ||
+        !Number.isInteger(attemptIndex) ||
+        attemptIndex < 1 ||
+        attemptIndex > grant.maxAttempts
+      )
+        throw Error("probe_attempt_invalid");
+      return createPlaybackAttemptStore(dir).readResult(attemptIndex);
+    }
     const fd = fs.openSync(
       path.join(dir, "result.json"),
       fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
@@ -156,11 +181,26 @@ export async function control(
   const pins = eventPlaybackCodePins(sdkFile, bridgeFiles);
   if (pins.sdkSha256 !== expectedSdkSha256) throw Error("probe_sdk_drift");
   const grant = validatePlaybackGrant(store.load(), Date.now(), pins);
-  if (fs.existsSync(path.join(dir, "attempt.json"))) throw Error("probe_consumed");
+  const multi = Object.hasOwn(grant, "maxAttempts");
+  if (multi) {
+    const current = createPlaybackAttemptStore(dir).state(grant);
+    if (
+      !Number.isInteger(attemptIndex) ||
+      attemptIndex !== current.nextAttemptIndex ||
+      attemptIndex > grant.maxAttempts
+    )
+      throw Error("probe_attempt_stale");
+  } else if (attemptIndex !== undefined || fs.existsSync(path.join(dir, "attempt.json"))) throw Error("probe_consumed");
   const socketStat = fs.lstatSync(path.join(dir, "control.sock"));
   if (!socketStat.isSocket() || socketStat.uid !== process.getuid() || (socketStat.mode & 0o7777) !== 0o600)
     throw Error("probe_socket_invalid");
-  const request = { cmd: "event-playback.read.once", nonce: grant.nonce, quietDeadlineNs, quietDeadlineMs };
+  const request = {
+    cmd: "event-playback.read.once",
+    nonce: grant.nonce,
+    quietDeadlineNs,
+    quietDeadlineMs,
+    ...(multi ? { attemptIndex } : {}),
+  };
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ path: path.join(dir, "control.sock") });
     socket.setTimeout(30000, () => socket.destroy(Error("probe_socket_timeout")));
@@ -199,6 +239,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     recoveryFile: action === "clear-latch" ? process.argv[4] : undefined,
     quietDeadlineNs: action === "trigger" ? process.argv[3] : undefined,
     quietDeadlineMs: action === "trigger" ? Number(process.argv[4]) : undefined,
+    maxAttempts: action === "prepare" && process.argv[4] !== undefined ? Number(process.argv[4]) : undefined,
+    lifetimeMs: action === "prepare" && process.argv[5] !== undefined ? Number(process.argv[5]) : undefined,
+    attemptIndex:
+      action === "trigger" && process.argv[5] !== undefined
+        ? Number(process.argv[5])
+        : action === "readback" && process.argv[3] !== undefined
+          ? Number(process.argv[3])
+          : undefined,
   }).then(
     (value) => process.stdout.write(JSON.stringify(value) + "\n"),
     () => {

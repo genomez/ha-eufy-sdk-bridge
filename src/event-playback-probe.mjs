@@ -134,12 +134,17 @@ export function sanitizePlaybackReceipt(value) {
 
 /** Purpose, duration, private targeting policy and explicit observational authority are exact. */
 export function validatePlaybackGrant(value, now, pins) {
-  validateGrant(value, now, pins);
+  const multi = Object.hasOwn(value ?? {}, "maxAttempts");
+  validateGrant(value, now, pins, multi ? 14400000 : 3600000);
   if (
     Object.keys(value).sort().join(",") !==
-      "bridgeSha256,cameras,excluded,exclusive,expiresMs,nonce,notBeforeMs,purpose,schema,sdkSha256,stationSn,timeBasis" ||
+      (multi
+        ? "bridgeSha256,cameras,excluded,exclusive,expiresMs,maxAttempts,nonce,notBeforeMs,purpose,schema,sdkSha256,stationSn,timeBasis"
+        : "bridgeSha256,cameras,excluded,exclusive,expiresMs,nonce,notBeforeMs,purpose,schema,sdkSha256,stationSn,timeBasis") ||
     value.purpose !== "event-playback-test3" ||
-    value.expiresMs - value.notBeforeMs !== 3600000 ||
+    (multi
+      ? !Number.isInteger(value.maxAttempts) || value.maxAttempts < 1 || value.maxAttempts > 5
+      : value.expiresMs - value.notBeforeMs !== 3600000) ||
     value.exclusive !== true ||
     value.timeBasis !== "owner_accepted_America_Chicago" ||
     ![value.cameras, value.excluded].every(
@@ -154,6 +159,135 @@ export function validatePlaybackGrant(value, now, pins) {
   )
     throw new Error("probe_grant_invalid");
   return value;
+}
+
+export const playbackAttemptSpacingMs = 120000;
+const cleanPlaybackRelease = (result) =>
+  result.releaseOutcome === "release_confirmed" &&
+  result.latchCleared &&
+  !result.latchRetained &&
+  !result.latchPersistenceFailed &&
+  !result.unknown &&
+  result.captureOutcome !== "receipt_failed";
+
+/** Append-only records: an incomplete claim or completion permanently closes this grant. */
+export function createPlaybackAttemptStore(dir) {
+  const base = createProbeStore(dir),
+    identity = fs.lstatSync(dir);
+  const guard = () => {
+    const st = fs.lstatSync(dir);
+    if (
+      !st.isDirectory() ||
+      st.isSymbolicLink() ||
+      st.dev !== identity.dev ||
+      st.ino !== identity.ino ||
+      st.uid !== process.getuid() ||
+      (st.mode & 0o7777) !== 0o700
+    )
+      throw Error("probe_directory_drift");
+  };
+  const read = (name) => {
+    guard();
+    const fd = fs.openSync(
+      path.join(dir, name),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+    try {
+      const st = fs.fstatSync(fd);
+      if (!st.isFile() || st.uid !== process.getuid() || (st.mode & 0o7777) !== 0o600 || st.size > 16384)
+        throw Error("probe_attempt_invalid");
+      return JSON.parse(fs.readFileSync(fd));
+    } finally {
+      fs.closeSync(fd);
+    }
+  };
+  const write = (name, value) => {
+    guard();
+    const fd = fs.openSync(
+      path.join(dir, name),
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      fs.writeFileSync(fd, JSON.stringify(value));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const directory = fs.openSync(dir, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      fs.fsyncSync(directory);
+    } finally {
+      fs.closeSync(directory);
+    }
+  };
+  const state = (grant) => {
+    guard();
+    const names = fs.readdirSync(dir);
+    if (
+      names.some(
+        (name) =>
+          /^(attempt|result|complete|blocked)/.test(name) && !/^(attempt|result|complete)-[1-5]\.json$/.test(name),
+      )
+    )
+      throw Error("probe_attempt_blocked");
+    let used = 0,
+      previous;
+    for (let index = 1; index <= 5; index++) {
+      const files = ["attempt", "result", "complete"].map((kind) => `${kind}-${index}.json`);
+      if (!files.some((name) => names.includes(name))) continue;
+      if (index !== used + 1 || index > grant.maxAttempts || !files.every((name) => names.includes(name)))
+        throw Error("probe_attempt_blocked");
+      const claim = read(files[0]),
+        result = read(files[1]),
+        complete = read(files[2]);
+      if (
+        JSON.stringify(claim) !== JSON.stringify({ schema: 1, consumed: true, attemptIndex: index }) ||
+        JSON.stringify(result) !== JSON.stringify(sanitizePlaybackReceipt(result)) ||
+        !cleanPlaybackRelease(result) ||
+        Object.keys(complete).sort().join(",") !== "attemptIndex,finishedMs,finishedNs,schema" ||
+        complete.schema !== 1 ||
+        complete.attemptIndex !== index ||
+        !Number.isSafeInteger(complete.finishedMs) ||
+        complete.finishedMs < grant.notBeforeMs ||
+        complete.finishedMs >= grant.expiresMs ||
+        !/^\d{1,24}$/.test(complete.finishedNs ?? "")
+      )
+        throw Error("probe_attempt_blocked");
+      used = index;
+      previous = complete;
+    }
+    return { nextAttemptIndex: used + 1, previous };
+  };
+  return {
+    load: () => {
+      guard();
+      return base.load();
+    },
+    state,
+    claim: (value, grant, now, monotonicNs) => {
+      const current = state(grant);
+      if (value.attemptIndex !== current.nextAttemptIndex || value.attemptIndex > grant.maxAttempts)
+        throw Error("probe_attempt_stale");
+      if (
+        current.previous &&
+        (now - current.previous.finishedMs < playbackAttemptSpacingMs ||
+          monotonicNs - BigInt(current.previous.finishedNs) < BigInt(playbackAttemptSpacingMs) * 1000000n)
+      )
+        throw Error("probe_attempt_spacing");
+      write(`attempt-${value.attemptIndex}.json`, value);
+    },
+    save: (value, index) => write(`result-${index}.json`, sanitizePlaybackReceipt(value)),
+    complete: (index, finishedMs, finishedNs) =>
+      write(`complete-${index}.json`, {
+        schema: 1,
+        attemptIndex: index,
+        finishedMs,
+        finishedNs: String(finishedNs),
+      }),
+    block: () => write("blocked.json", { schema: 1, blocked: true }),
+    readResult: (index) => sanitizePlaybackReceipt(read(`result-${index}.json`)),
+  };
 }
 
 /** Explicit durable states are shared by all readers; uncertain transactions remain fail-closed. */
@@ -457,7 +591,34 @@ export function createEventPlaybackProbe(
   let pending,
     controller,
     closed = false;
+  let startupGrant;
+  try {
+    startupGrant = JSON.stringify(store.load());
+  } catch {}
+  const multi = Object.hasOwn(JSON.parse(startupGrant ?? "null") ?? {}, "maxAttempts");
+  const block = () => {
+    closed = true;
+    try {
+      store.block();
+    } catch {}
+    try {
+      safety.save(true);
+    } catch {}
+  };
   return {
+    status() {
+      if (!multi) return "armed";
+      if (closed) return "blocked";
+      const grant = JSON.parse(startupGrant);
+      if (now() >= grant.expiresMs) return "expired";
+      if (pending) return "armed";
+      try {
+        if (safety.load() !== false) return "blocked";
+        return store.state(grant).nextAttemptIndex > grant.maxAttempts ? "consumed" : "armed";
+      } catch {
+        return "blocked";
+      }
+    },
     invoke(request) {
       if (closed || pending)
         return Promise.resolve(sanitizePlaybackReceipt({ captureOutcome: "consumed_or_unavailable" }));
@@ -465,13 +626,35 @@ export function createEventPlaybackProbe(
       try {
         grant = validatePlaybackGrant(store.load(), now(), pins);
         if (
+          JSON.stringify(grant) !== startupGrant ||
           Object.keys(request ?? {})
             .sort()
-            .join(",") !== "cmd,nonce,quietDeadlineMs,quietDeadlineNs" ||
+            .join(",") !==
+            (multi
+              ? "attemptIndex,cmd,nonce,quietDeadlineMs,quietDeadlineNs"
+              : "cmd,nonce,quietDeadlineMs,quietDeadlineNs") ||
           request.cmd !== "event-playback.read.once" ||
           request.nonce !== grant.nonce
         )
           throw Error();
+        if (multi) {
+          let current;
+          try {
+            current = store.state(grant);
+          } catch {
+            block();
+            throw Error();
+          }
+          if (
+            !Number.isInteger(request.attemptIndex) ||
+            request.attemptIndex !== current.nextAttemptIndex ||
+            request.attemptIndex > grant.maxAttempts ||
+            (current.previous &&
+              (now() - current.previous.finishedMs < playbackAttemptSpacingMs ||
+                monotonicNs() - BigInt(current.previous.finishedNs) < BigInt(playbackAttemptSpacingMs) * 1000000n))
+          )
+            throw Error();
+        }
       } catch {
         return Promise.resolve(sanitizePlaybackReceipt({ captureOutcome: "denied" }));
       }
@@ -479,8 +662,11 @@ export function createEventPlaybackProbe(
         wallStarted = now(),
         deadlineMs = started + 24000;
       try {
-        store.claim({ schema: 1, consumed: true });
+        if (multi)
+          store.claim({ schema: 1, consumed: true, attemptIndex: request.attemptIndex }, grant, now(), monotonicNs());
+        else store.claim({ schema: 1, consumed: true });
       } catch {
+        if (multi) block();
         return Promise.resolve(sanitizePlaybackReceipt({ captureOutcome: "consumed_or_unavailable" }));
       }
       controller = new AbortController();
@@ -529,7 +715,37 @@ export function createEventPlaybackProbe(
         } finally {
           clearTimeout(timer);
         }
-        const result = sanitizePlaybackReceipt(value);
+        const result = sanitizePlaybackReceipt(
+          multi && !outcomes.includes(value?.captureOutcome) ? { ...value, unknown: true } : value,
+        );
+        if (multi) {
+          let receiptSaved = false;
+          try {
+            store.save(result, request.attemptIndex);
+            receiptSaved = true;
+            const releaseLock = unlock;
+            unlock = undefined;
+            releaseLock?.();
+            if (
+              !cleanPlaybackRelease(result) ||
+              safety.load() !== false ||
+              safety.diagnostics?.().persistenceFailed ||
+              now() >= grant.expiresMs
+            ) {
+              block();
+            } else store.complete(request.attemptIndex, now(), monotonicNs());
+            return result;
+          } catch {
+            block();
+            return receiptSaved ? result : sanitizePlaybackReceipt({ ...result, captureOutcome: "receipt_failed" });
+          } finally {
+            try {
+              unlock?.();
+            } catch {
+              block();
+            }
+          }
+        }
         try {
           store.save(result);
           return result;
@@ -539,6 +755,11 @@ export function createEventPlaybackProbe(
           unlock?.();
         }
       })();
+      if (multi)
+        pending = pending.finally(() => {
+          pending = undefined;
+          controller = undefined;
+        });
       return pending;
     },
     disconnect() {
@@ -616,7 +837,7 @@ export function attachEventPlaybackProbe(
       )
         throw Error("probe_directory_drift");
     };
-    const store = Object.fromEntries(
+    let store = Object.fromEntries(
       ["load", "claim", "save"].map((key) => [
         key,
         (...args) => {
@@ -625,9 +846,16 @@ export function attachEventPlaybackProbe(
         },
       ]),
     );
-    validatePlaybackGrant(store.load(), Date.now(), pins);
-    ctx.eufy.rtc.configurePlaybackSafety(safety.load(), safety.save, true);
+    const grant = store.load();
+    if (Object.hasOwn(grant ?? {}, "maxAttempts") && Date.now() >= grant.expiresMs) {
+      validatePlaybackGrant(grant, grant.expiresMs - 1, pins);
+      return dormant("expired");
+    }
+    validatePlaybackGrant(grant, Date.now(), pins);
+    if (Object.hasOwn(grant, "maxAttempts")) store = createPlaybackAttemptStore(dir);
     const probe = createEventPlaybackProbe(ctx, { store, safety, pins });
+    if (probe.status() !== "armed") return dormant(probe.status());
+    ctx.eufy.rtc.configurePlaybackSafety(safety.load(), safety.save, true);
     const sockets = new Set();
     const server = net.createServer((socket) => {
       sockets.add(socket);
@@ -674,7 +902,9 @@ export function attachEventPlaybackProbe(
       });
     });
     return {
-      status: "armed",
+      get status() {
+        return probe.status();
+      },
       start: () =>
         new Promise((resolve) => {
           server.once("error", () => {

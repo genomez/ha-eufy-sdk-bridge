@@ -127,7 +127,7 @@ export function sanitizeStorageResult(value, { allowRaw = false, allowObservatio
   return out;
 }
 
-export function validateGrant(grant, now, pins) {
+export function validateGrant(grant, now, pins, maxLifetimeMs = 7_200_000) {
   if (
     !obj(grant) ||
     grant.schema !== 1 ||
@@ -137,7 +137,7 @@ export function validateGrant(grant, now, pins) {
     !Number.isSafeInteger(grant.notBeforeMs) ||
     !Number.isSafeInteger(grant.expiresMs) ||
     grant.expiresMs <= grant.notBeforeMs ||
-    grant.expiresMs - grant.notBeforeMs > 7_200_000 ||
+    grant.expiresMs - grant.notBeforeMs > maxLifetimeMs ||
     now < grant.notBeforeMs ||
     now >= grant.expiresMs ||
     grant.sdkSha256 !== pins.sdkSha256 ||
