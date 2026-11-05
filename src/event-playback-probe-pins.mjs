@@ -1,5 +1,5 @@
-/** Stored playback runtime pin from the authorized offline build, 2026-11-03. */
-export const eventPlaybackProbeSdkSha256 = "a8dd465ade3cf1c1c3602a8ae88a44d9812089d21fad814bc9b9d54ce292e68a";
+/** Stored playback runtime pin from the authorized offline build, 2026-11-04. */
+export const eventPlaybackProbeSdkSha256 = "33b042604c384b0b644add35c9b671f5fb5daa9d870610f4b2d5c639dee94a50";
 export const eventPlaybackProbeFiles = [
   "bin/event-playback-probe-control.mjs",
   "bin/event-table-probe-control.mjs",

@@ -115,7 +115,8 @@ function fixture(t, maxAttempts = 3) {
     eufy: {
       rtc: {
         configurePlaybackSafety() {},
-        readEventPlaybackCandidate: async () => {
+        readEventPlaybackCandidate: async (_station, options) => {
+          options.beforeDispatch?.();
           calls++;
           assert.deepEqual(JSON.parse(files.get(path.join(dir, `attempt-${calls}.json`))), {
             schema: 1,
@@ -171,6 +172,7 @@ function fixture(t, maxAttempts = 3) {
 }
 
 const clean = {
+  captureBytesBucket: "zero",
   captureOutcome: "eof",
   releaseOutcome: "release_confirmed",
   cessationOutcome: "ceased",
@@ -189,7 +191,7 @@ test("multi-attempt success, durable separate receipts and exhaustion", async (t
     assert.deepEqual(result, sanitizePlaybackReceipt(clean));
     assert.deepEqual(JSON.parse(f.files.get(path.join(f.dir, `result-${index}.json`))), result);
     assert.equal(f.makeStore().state(f.grant).nextAttemptIndex, index + 1);
-    f.advance(120000);
+    f.advance(60000);
   }
   assert.equal(probe.status(), "consumed");
   assert.equal((await probe.invoke(f.request(3))).captureOutcome, "denied");
@@ -198,7 +200,7 @@ test("multi-attempt success, durable separate receipts and exhaustion", async (t
   assert.equal(f.files.has(path.join(f.dir, "attempt.json")), false);
 });
 
-test("spacing requires 120 seconds on both clocks, measured from completion", async (t) => {
+test("spacing requires 60 seconds on both clocks, measured from completion", async (t) => {
   const f = fixture(t),
     probe = f.makeProbe();
   f.run(async () => {
@@ -206,7 +208,7 @@ test("spacing requires 120 seconds on both clocks, measured from completion", as
     return clean;
   });
   await probe.invoke(f.request(1));
-  f.advance(119999);
+  f.advance(59999);
   assert.equal((await probe.invoke(f.request(2))).captureOutcome, "denied");
   f.advance(1, 0n);
   assert.equal((await probe.invoke(f.request(2))).captureOutcome, "denied");
@@ -222,7 +224,7 @@ test("stale, future, missing, string and wrong-nonce requests consume nothing", 
     assert.equal((await probe.invoke(f.request(index))).captureOutcome, "denied");
   assert.equal((await probe.invoke({ ...f.request(1), nonce: "d".repeat(64) })).captureOutcome, "denied");
   await probe.invoke(f.request(1));
-  f.advance(120000);
+  f.advance(60000);
   assert.equal((await probe.invoke(f.request(1))).captureOutcome, "denied");
   assert.equal(f.makeStore().state(f.grant).nextAttemptIndex, 2);
   assert.equal((await probe.invoke(f.request(2))).captureOutcome, "eof");
@@ -241,7 +243,7 @@ for (const patch of [
       probe = f.makeProbe();
     f.run(async () => ({ ...clean, ...patch }));
     await probe.invoke(f.request(1));
-    f.advance(120000);
+    f.advance(60000);
     assert.equal(probe.status(), "blocked");
     await probe.invoke(f.request(2));
     assert.equal(f.calls(), 1);
@@ -278,13 +280,13 @@ for (const phase of ["open", "write", "file_sync", "directory_sync"])
 test("restart keeps the counter and a claimed but unfinished attempt blocks", async (t) => {
   const f = fixture(t);
   await f.makeProbe().invoke(f.request(1));
-  f.advance(120000);
+  f.advance(60000);
   const restarted = f.makeProbe();
   assert.equal(restarted.status(), "armed");
   assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "armed");
   assert.equal((await restarted.invoke(f.request(1))).captureOutcome, "denied");
   assert.equal((await restarted.invoke(f.request(2))).captureOutcome, "eof");
-  f.advance(120000);
+  f.advance(60000);
   f.makeStore().claim({ schema: 1, consumed: true, attemptIndex: 3 }, f.grant, Date.now(), 999999999999999n);
   assert.equal(f.makeProbe().status(), "blocked");
   assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "blocked");
@@ -312,7 +314,7 @@ for (const phase of ["result", "unlock", "complete", "late_latch"])
       };
     const result = await f.makeProbe(store).invoke(f.request(1));
     assert.equal(result.captureOutcome, phase === "result" ? "receipt_failed" : "eof");
-    f.advance(120000);
+    f.advance(60000);
     assert.equal(f.makeProbe().status(), "blocked");
     assert.equal(f.calls(), 1);
   });
@@ -360,7 +362,7 @@ test("overlapping requests consume only one index", async (t) => {
   await pending;
   const restarted = f.makeProbe();
   assert.equal((await restarted.invoke(f.request(2))).captureOutcome, "denied");
-  f.advance(120000);
+  f.advance(60000);
   assert.equal(f.makeStore().state(f.grant).nextAttemptIndex, 2);
 });
 
@@ -405,7 +407,7 @@ test("read uncertainty permanently blocks this running grant", async (t) => {
     store = f.makeStore(),
     probe = f.makeProbe(store);
   await probe.invoke(f.request(1));
-  f.advance(120000);
+  f.advance(60000);
   const original = store.state;
   store.state = () => {
     throw Error("synthetic_read_failure");
@@ -423,7 +425,7 @@ for (const observer of ["status", "invoke", "startup", "attachment"])
       const f = fixture(t),
         probe = f.makeProbe();
       await probe.invoke(f.request(1));
-      f.advance(120000);
+      f.advance(60000);
       const original = f.safety.load;
       f.safety.load = () => {
         if (uncertainty === "read_error") throw Error("synthetic_read_failure");
@@ -459,7 +461,7 @@ for (const observer of ["status", "startup", "invoke"])
       store = f.makeStore(),
       probe = f.makeProbe(store);
     await probe.invoke(f.request(1));
-    f.advance(120000);
+    f.advance(60000);
     const original = store.state;
     store.state = () => {
       throw Error("synthetic_state_read_failure");
@@ -502,7 +504,7 @@ for (const phase of ["open", "write", "file_sync", "directory_sync"])
       probe = f.makeProbe(),
       marker = path.join(f.dir, "blocked.json");
     await probe.invoke(f.request(1));
-    f.advance(120000);
+    f.advance(60000);
     const method = phase === "open" ? "openSync" : phase === "write" ? "writeFileSync" : "fsyncSync",
       original = fs[method];
     let failed = false;
@@ -623,7 +625,7 @@ for (const missing of ["result", "complete"])
   test(`restart still blocks when an existing attempt lacks ${missing}`, async (t) => {
     const f = fixture(t);
     await f.makeProbe().invoke(f.request(1));
-    f.advance(120000);
+    f.advance(60000);
     f.files.delete(path.join(f.dir, `${missing}-1.json`));
     const restarted = f.makeProbe();
     assert.equal(restarted.status(), "blocked");
@@ -712,7 +714,7 @@ for (const persistent of [false, true])
   test(`R2 attachment authorization EIO after clean attempt survives restart (${persistent ? "persistent" : "transient"})`, async (t) => {
     const f = fixture(t);
     await f.makeProbe().invoke(f.request(1));
-    f.advance(120000);
+    f.advance(60000);
     const original = fs.readFileSync,
       synced = [];
     let reads = 0;
@@ -959,4 +961,45 @@ test("trigger sends the explicit index; socket response equals durable numbered 
   } finally {
     process.hrtime.bigint = mono;
   }
+});
+
+test("failed media with independently clean release permits the next attempt", async (t) => {
+  const f = fixture(t),
+    probe = f.makeProbe();
+  f.run(async () => ({
+    ...clean,
+    captureOutcome: "invalid_media",
+    firstRejectionReason: "zstd-window",
+    firstRejectedClass: "playback",
+    compressionState: "flagged",
+    rejectionCount: 1,
+  }));
+  const failed = await probe.invoke(f.request(1));
+  assert.equal(failed.captureOutcome, "invalid_media");
+  assert.equal(failed.boundedMediaObserved, false);
+  assert.equal(probe.status(), "armed");
+  f.advance(60000);
+  assert.equal((await probe.invoke(f.request(2))).captureOutcome, "invalid_media");
+  assert.equal(f.calls(), 2);
+});
+
+test("local admission refusal sends nothing, consumes nothing and does not block", async (t) => {
+  const f = fixture(t),
+    probe = f.makeProbe();
+  f.ctx.state.flags.ready = false;
+  assert.equal((await probe.invoke(f.request(1))).captureOutcome, "not_admitted");
+  assert.equal(f.calls(), 0);
+  assert.equal(f.makeStore().state(f.grant).nextAttemptIndex, 1);
+  assert.equal(probe.status(), "armed");
+  f.ctx.state.flags.ready = true;
+  assert.equal((await probe.invoke(f.request(1))).captureOutcome, "eof");
+});
+
+test("SDK admission refusal before dispatch consumes nothing across restart", async (t) => {
+  const f = fixture(t),
+    probe = f.makeProbe();
+  f.ctx.eufy.rtc.readEventPlaybackCandidate = async () => ({ captureOutcome: "not_admitted", admissionGate: 12 });
+  assert.equal((await probe.invoke(f.request(1))).admissionGate, 12);
+  assert.equal(f.files.has(path.join(f.dir, "attempt-1.json")), false);
+  assert.equal(f.makeProbe().status(), "armed");
 });

@@ -47,6 +47,7 @@ const booleans = [
   "randomAccess",
   "unknown",
   "cutoff",
+  "captureFileWritten",
 ];
 const counts = [
   "nativeBytes",
@@ -64,12 +65,58 @@ const counts = [
   "silenceMs",
   "stopStatusCount",
   "stopSegmentMatchCount",
+  "assemblerDecompression",
+  "assemblerInvalidMetadata",
 ];
+const sizeBuckets = ["unknown", "zero", "le8KiB", "le256KiB", "le8MiB", "gt8MiB"];
+const rejectionReasons = [
+  "none",
+  "native",
+  "header",
+  "flags",
+  "limits",
+  "metadata",
+  "conflict",
+  "expiry",
+  "zstd-header",
+  "zstd-content-size",
+  "zstd-window",
+  "zstd-structure",
+  "zstd-decoder",
+  "portal-header",
+  "extent",
+  "channel",
+  "selector",
+  "command",
+  "baseline",
+];
+const sizeBucket = (n) =>
+  n === 0 ? "zero" : n <= 8192 ? "le8KiB" : n <= 262144 ? "le256KiB" : n <= 8388608 ? "le8MiB" : "gt8MiB";
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 
 /** Independent receipt reconstruction; arbitrary keys, values, suffixes and Unicode are discarded. */
 export function sanitizePlaybackReceipt(value) {
   const result = {
+    firstRejectionReason: rejectionReasons.includes(value?.firstRejectionReason) ? value.firstRejectionReason : "none",
+    firstRejectedClass: ["none", "nonbinary", "unknown", "bare", "control", "playback", "live", "other"].includes(
+      value?.firstRejectedClass,
+    )
+      ? value.firstRejectedClass
+      : "unknown",
+    compressionState: ["unknown", "uncompressed", "flagged", "decoder_attempted", "decoded"].includes(
+      value?.compressionState,
+    )
+      ? value.compressionState
+      : "unknown",
+    ...Object.fromEntries(
+      ["declaredSizeBucket", "assembledSizeBucket", "outputSizeBucket", "zstdWindowBucket", "captureBytesBucket"].map(
+        (key) => [key, sizeBuckets.includes(value?.[key]) ? value[key] : "unknown"],
+      ),
+    ),
+    rejectionCount:
+      Number.isInteger(value?.rejectionCount) && value.rejectionCount >= 0 && value.rejectionCount <= 255
+        ? value.rejectionCount
+        : 0,
     admissionGate:
       Number.isSafeInteger(value?.admissionGate) && value.admissionGate >= 0 && value.admissionGate <= 26
         ? value.admissionGate
@@ -111,9 +158,11 @@ export function sanitizePlaybackReceipt(value) {
     result.cessationOutcome === "ceased" &&
     result.wrongRouteFrames === 0 &&
     !result.unknown &&
+    result.rejected === 0 &&
+    result.rejectionCount === 0 &&
     result.mediaBytes <= 2097152 &&
     result.mediaFrames <= 256 &&
-    result.decodedWorkBytes <= 4194304
+    result.decodedWorkBytes <= 33554432
   ))
     result.boundedMediaObserved = false;
   if (
@@ -161,7 +210,7 @@ export function validatePlaybackGrant(value, now, pins) {
   return value;
 }
 
-export const playbackAttemptSpacingMs = 120000;
+export const playbackAttemptSpacingMs = 60000;
 const blockPlaybackGrant = (store, safety) => {
   try {
     store.block();
@@ -177,6 +226,101 @@ const cleanPlaybackRelease = (result) =>
   !result.latchPersistenceFailed &&
   !result.unknown &&
   result.captureOutcome !== "receipt_failed";
+
+/**
+ * Private capture v1: ASCII EPCAP001, then records [u8 kind (0 binary in, 1 binary out,
+ * 2 UTF-8 text in), u32le relative milliseconds, u32le payload length, exact payload].
+ * Only whole records fit the 4 MiB file cap. No payload, path or exception enters a receipt.
+ */
+export function createPlaybackCapture(dir, index, { now = () => performance.now(), maxBytes = 4 * 1024 * 1024 } = {}) {
+  if (
+    !Number.isInteger(index) ||
+    index < 1 ||
+    index > 5 ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 8 ||
+    maxBytes > 4 * 1024 * 1024
+  )
+    throw Error("capture_invalid");
+  const identity = fs.lstatSync(dir);
+  if (
+    !identity.isDirectory() ||
+    identity.isSymbolicLink() ||
+    identity.uid !== process.getuid() ||
+    (identity.mode & 0o7777) !== 0o700
+  )
+    throw Error("capture_invalid");
+  const fd = fs.openSync(
+    path.join(dir, `capture-${index}.bin`),
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+    0o600,
+  );
+  let bytes = 0,
+    failed = false,
+    closed = false,
+    capped = false;
+  const started = now();
+  const write = (buffer) => {
+    let offset = 0;
+    while (offset < buffer.length) {
+      const n = fs.writeSync(fd, buffer, offset, buffer.length - offset);
+      if (n <= 0) throw Error("capture_write_failed");
+      offset += n;
+      bytes += n;
+    }
+  };
+  try {
+    write(Buffer.from("EPCAP001"));
+  } catch {
+    failed = true;
+  }
+  return {
+    message(direction, value) {
+      if (closed || failed || capped) return;
+      const text = typeof value === "string";
+      const payload = text
+        ? Buffer.from(value)
+        : Buffer.isBuffer(value)
+          ? value
+          : ArrayBuffer.isView(value)
+            ? Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+            : value instanceof ArrayBuffer
+              ? Buffer.from(value)
+              : undefined;
+      if (!payload) return;
+      if (bytes + 9 + payload.length > maxBytes) {
+        capped = true;
+        return;
+      }
+      const header = Buffer.alloc(9);
+      header[0] = direction === "out" ? 1 : text ? 2 : 0;
+      header.writeUInt32LE(Math.max(0, Math.min(0xffffffff, Math.floor(now() - started))), 1);
+      header.writeUInt32LE(payload.length, 5);
+      try {
+        write(header);
+        write(payload);
+      } catch {
+        failed = true;
+      }
+    },
+    finish() {
+      if (!closed) {
+        closed = true;
+        try {
+          fs.fsyncSync(fd);
+        } catch {
+          failed = true;
+        }
+        try {
+          fs.closeSync(fd);
+        } catch {
+          failed = true;
+        }
+      }
+      return { captureFileWritten: !failed, captureBytesBucket: sizeBucket(bytes) };
+    },
+  };
+}
 
 /** Append-only records: an incomplete claim or completion permanently closes this grant. */
 export function createPlaybackAttemptStore(dir) {
@@ -269,6 +413,10 @@ export function createPlaybackAttemptStore(dir) {
     return { nextAttemptIndex: used + 1, previous };
   };
   return {
+    capture: (index) => {
+      guard();
+      return createPlaybackCapture(dir, index);
+    },
     load: () => {
       guard();
       return base.load();
@@ -690,10 +838,30 @@ export function createEventPlaybackProbe(
       const started = monotonicNow(),
         wallStarted = now(),
         deadlineMs = started + 24000;
-      try {
-        if (multi)
+      let claimed = false,
+        claimFailed = false,
+        capture;
+      const claim = () => {
+        if (claimed) return;
+        try {
           store.claim({ schema: 1, consumed: true, attemptIndex: request.attemptIndex }, grant, now(), monotonicNs());
-        else store.claim({ schema: 1, consumed: true });
+        } catch (error) {
+          claimFailed = true;
+          block();
+          throw error;
+        }
+        claimed = true;
+        try {
+          capture = store.capture?.(request.attemptIndex);
+        } catch {}
+      };
+      try {
+        if (!multi) {
+          store.claim({ schema: 1, consumed: true });
+          try {
+            capture = store.capture?.(1);
+          } catch {}
+        }
       } catch {
         if (multi) block();
         return Promise.resolve(sanitizePlaybackReceipt({ captureOutcome: "consumed_or_unavailable" }));
@@ -733,6 +901,8 @@ export function createEventPlaybackProbe(
           else
             value = await ctx.eufy.rtc.readEventPlaybackCandidate(grant.stationSn, {
               enabled: true,
+              beforeDispatch: multi ? claim : undefined,
+              nativeMessage: (direction, message) => capture?.message(direction, message),
               signal: controller.signal,
               timeoutMs: Math.max(1, Math.min(24000, Math.floor(deadlineMs - monotonicNow()))),
               deadlineMs,
@@ -745,9 +915,25 @@ export function createEventPlaybackProbe(
         } finally {
           clearTimeout(timer);
         }
-        const result = sanitizePlaybackReceipt(
-          multi && !outcomes.includes(value?.captureOutcome) ? { ...value, unknown: true } : value,
-        );
+        const captureEvidence = capture?.finish() ?? { captureFileWritten: false, captureBytesBucket: "zero" };
+        if (multi && !claimed) {
+          if (value?.startAttempted || value?.pauseAttempted || value?.stopAttempted) block();
+          try {
+            unlock?.();
+          } catch {
+            block();
+          }
+          return sanitizePlaybackReceipt({
+            ...value,
+            ...captureEvidence,
+            ...(claimFailed ? { captureOutcome: "consumed_or_unavailable" } : {}),
+          });
+        }
+        const result = sanitizePlaybackReceipt({
+          ...value,
+          ...captureEvidence,
+          ...(multi && !outcomes.includes(value?.captureOutcome) ? { unknown: true } : {}),
+        });
         if (multi) {
           let receiptSaved = false;
           try {
@@ -920,6 +1106,10 @@ export function attachEventPlaybackProbe(
       store = createPlaybackAttemptStore(dir);
       authorizationReadUncertain = false;
     }
+    store.capture ??= (index) => {
+      guard();
+      return createPlaybackCapture(dir, index);
+    };
     const probe = createEventPlaybackProbe(ctx, { store, safety, pins, initialUncertainty });
     if (probe.status() !== "armed") return dormant(probe.status());
     const invalidate = () => {

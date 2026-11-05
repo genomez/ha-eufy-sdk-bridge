@@ -33,7 +33,7 @@ For explicit-count grants, attempt N creates immutable, mode-0600 files in the
 grant directory, using exclusive creation and file/directory fsync:
 
 - `attempt-N.json`: `{schema:1, consumed:true, attemptIndex:N}`, durable before
-  any SDK work. A refusal after this claim still consumes N.
+  the first SDK dispatch, after local admission checks. A refusal after this claim still consumes N.
 - `result-N.json`: the sanitized receipt, with exactly the existing receipt
   key/type/enum allowlist; no identifiers, media, index or timestamps added.
 - `complete-N.json`: `{schema:1, attemptIndex:N, finishedMs, finishedNs}`,
@@ -42,7 +42,7 @@ grant directory, using exclusive creation and file/directory fsync:
   string. `blocked.json`, if present, permanently blocks this grant.
 
 The next attempt requires all preceding claims, sanitized results and clean
-completion markers, plus at least 120,000 ms since completion on both clocks.
+completion markers, plus at least 60,000 ms since completion on both clocks.
 Missing, malformed, uncertain or retained state blocks further attempts.
 For explicit-count grants, observing retained/uncertain safety state or a
 storage/state-read failure at startup, during status checks or during invocation
@@ -85,3 +85,16 @@ startup remain dormant without a block marker or shared safety write. Startup
 storage-read failures still permanently block explicit-count grants.
 Refusals retain the existing sanitized `denied`, `consumed_or_unavailable`,
 `not_admitted` or `receipt_failed` outcomes, without adding receipt fields.
+
+Capture rejection and cleanup are independent. A failed capture remains `invalid_media`;
+confirmed stop/release, continuous owner and at least five seconds of fresh channel
+silence can still clear the latch and complete the attempt. Unknown transport
+observation, unconfirmed release or owner loss retains the existing block.
+
+The private `capture-N.bin` uses exclusive no-follow creation with mode 0600, a
+4 MiB whole-record cap, and final fsync. Its framing is documented beside
+`createPlaybackCapture`; no path or content enters the receipt. Only
+`captureFileWritten` and `captureBytesBucket` describe capture storage publicly.
+The SDK test helper `node scripts/replay-playback-capture.mjs <private-file>`
+prints closed diagnostic enums, size buckets and counters only. First-failure
+values are frozen; decoded-work bytes are reservations rather than measured output.
