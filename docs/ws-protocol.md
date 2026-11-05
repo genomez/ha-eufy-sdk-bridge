@@ -35,6 +35,215 @@ sends and receives.
 
 ## Commands
 
+### Recordings browse, version 1
+
+This additive capability keeps global schema version 1. This build defaults
+`RECORDINGS_ENABLED` on (truthy: `1`, `true`, `yes`, `on`); `RECORDINGS_ROOT`
+defaults to `/data/recordings`. Missing SDK read methods advertise `enabled:false`.
+Startup, camera-list browsing, cache-only requests and detection pushes never
+initiate recording reads. The bridge network remains a trusted control network;
+the existing host HTTP/command policy hooks also apply to these routes.
+
+```ts
+// Additional hello member:
+recordings: {
+  version: 1; browseOnly: true; enabled: boolean; scopeId: string | null;
+  timezone: "America/Chicago"; stationWindow: 20; pageSize: 100; coverBudget: 4;
+}
+
+// Requests (no cursor, grant, serial, path, selector or URL fields):
+{ id, cmd: "recordings.cameras" }
+{ id, cmd: "recordings.catalog", cameraId,
+  refresh: "cache_only" | "if_due", focusEventId?: string }
+{ id, cmd: "recordings.cover", cameraId, eventId,
+  browseId: string | null, mode: "cache_only" | "request_if_admitted" }
+
+// Every successful command:
+{ id, ok: true, recordings: CameraList | Catalog | Cover }
+// Every recordings failure:
+{ id, ok: false, code, error: "Recordings unavailable" }
+```
+
+IDs use `s_`, `c_`, `e_` followed by 22 base64url characters. Browse IDs are
+22-character random base64url tokens held only in memory. Unknown request fields
+are rejected. RPC IDs are safe integers or 1–128 letters, digits, `_`, `-`.
+Failure codes are `recordings_disabled`, `recordings_unsupported`,
+`recordings_invalid`, `recordings_not_found`, `recordings_scope_invalid`,
+`recordings_store_unavailable`.
+
+```ts
+type CameraList = {
+  version: 1;
+  scopeId: string;
+  cameras: { cameraId: string; name: string; scopeId: string }[];
+};
+type Catalog = {
+  version: 1;
+  scopeId: string;
+  cameraId: string;
+  revision: string;
+  events: RecordingEvent[];
+  truncated: boolean;
+  historyIncomplete: true;
+  stationWindow: 20;
+  disclosure: "latest 20 station-wide; history incomplete";
+  lastSuccessfulQueryAtMs: number | null;
+  lastAttemptAtMs: number | null;
+  dirty: boolean;
+  refresh: {
+    state: "idle" | "scheduled" | "deferred" | "rate_limited" | "failed";
+    reason:
+      | "none"
+      | "busy"
+      | "playback"
+      | "renewal"
+      | "refresh_hold"
+      | "offline"
+      | "scope_invalid"
+      | "rate_limited"
+      | "timeout"
+      | "invalid_reply"
+      | "store_unavailable";
+    retryAfterMs: number | null;
+  };
+  browseId: string | null;
+  browseExpiresAtMs: number | null;
+  coverEligibleEventIds: string[];
+};
+type RecordingEvent = {
+  eventId: string;
+  cameraId: string;
+  startedAtMs: number | null;
+  endedAtMs: number | null;
+  startedAtUtc: string | null;
+  startedAtLocal: string | null;
+  sourceStartLocal: string | null;
+  timezone: "America/Chicago";
+  timeStatus: "valid" | "unknown_format" | "ambiguous" | "invalid";
+  durationSeconds: number | null;
+  durationBasis: "end_minus_start" | "unknown";
+  eventType: { code: number | null; label: string };
+  detectType: { code: number | null; label: string };
+  firstObservedAtMs: number;
+  lastObservedAtMs: number;
+  stationPresence: "seen_in_latest_window" | "not_in_latest_window";
+  coverState: "not_requested" | "pending" | "cached" | "unavailable" | "evicted";
+  coverRevision: string | null;
+  playable: false;
+};
+type Cover = {
+  version: 1;
+  cameraId: string;
+  eventId: string;
+  state: "ready" | "pending" | "deferred" | "unavailable" | "evicted";
+  retryAfterMs: number | null;
+  bytes?: number;
+  sha256?: string;
+  coverRevision?: string; // ready only
+};
+```
+
+Catalogs contain at most 100 newest entries, or the single requested focus event;
+there is no cursor or station paging. Known times precede unknown times.
+`if_due` returns cached data promptly, records a camera/socket interest for 60 s,
+and requests at most one station-wide refresh per 120 s, including failed attempts.
+Refresh completion never automatically starts covers. At most four uncached
+event IDs share one camera budget per 60 s across clients and detail browsing.
+Cached covers need no interest or connected owner. Uncached covers require an
+eligible event plus the matching socket's current browse ID. The station has one
+read in flight, at most four unsent unique cover demands, a 5 s post-cover gap,
+six cover attempts per rolling minute and a 5-minute event failure cache.
+Busy deferred reads wait for an explicit idle notification; there is no periodic
+retry or recordings poll. Ordinary foreground requests preempt feature work.
+
+```ts
+{ event: "recordings.changed", version: 1, scopeId,
+  cameraId: string | null, revision: string,
+  reason: "catalog" | "cover" | "eviction" | "disabled" }
+```
+
+Notifications coalesce within a one-second window, with `cameraId:null` when
+several cameras change. They never include catalog rows or image data.
+
+`GET /recordings/v1/covers/<cameraId>/<eventId>` is cache-only, including when
+Eufy is offline. It requires no transfer header and never initiates any SDK work.
+It runs after the service HTTP policy wrapper and before Eufy session readiness.
+Invalid IDs, scope, missing or invalid bytes return generic 404; query strings
+are refused. Other methods return 405 (`Allow: GET`); more than four active
+deliveries return 429 (`Retry-After: 1`). Valid JPEG responses have:
+
+```text
+Content-Type: image/jpeg
+Content-Length: <validated length>
+Cache-Control: private, no-store
+X-Content-Type-Options: nosniff
+X-Eufy-Image-Sha256: <digest>
+X-Eufy-Event-Time: <event UTC time, omitted when unknown>
+```
+
+There are no redirects, CORS permissions, range handling or snapshot fallback.
+Home Assistant must supply its own authenticated thumbnail proxy. Covers use
+immutable `<eventId>.<sha256>.jpg` filenames so a failed manifest replacement
+cannot publish an orphan or overwrite an earlier verified cover. Metadata has a
+non-sliding 7-day TTL, 2,000-row total / 400-row camera caps. Covers expire with
+their parent or after 7 days, capped at 256 files / 128 MiB; eviction trims to
+90% of both cover caps. Atomic scratch is capped at two files / 8 MiB, with a
+64 MiB free-space floor. All new directories/files request 0700/0600 modes.
+
+#### SDK pairing seam
+
+`src/recordings-adapter.mjs` is the isolated SDK compatibility boundary. It
+feature-detects only `readRecordingCatalog(scope, {signal,timeoutMs})` and
+`readRecordingCover(scope, selector, {signal,timeoutMs})`. Scope is private:
+`{stationSn,cameraSns: Set<string>,accountNamespace,identityKey: Buffer(32)}`.
+The adapter takes the account identity from the SDK's existing in-memory
+`api.auth.userId`. Inventory is supplied by the bridge's ordinary device-list
+publication; there is no discovery call from recordings code. Enrollment is the
+T842x/T84Ax family under the sole T9000, excluding the named safe device.
+Ambiguous topology disables new reads while preserving safely bound cache for
+the same account.
+
+The current adapter assumes lowercase hex full source HMACs, 32-bit big-endian
+UTF-8 length-prefixed tuples and domains `account`, `scope`, `camera`, `selector`.
+The SDK owns event HMAC construction; the bridge derives `e_` IDs from those full
+HMAC bytes. Selectors must pass the store MAC and source/camera/station binding
+again immediately before demand. Unknown type labels are projected as
+`Event <code>` / `Detection <code>`; numeric duration fields remain unqualified.
+SDK normalization owns strict Chicago parsing and DST handling.
+
+Service construction passes `rtc.recordings:{enabled}`. The final SDK pairing
+must align its installed enrollment-policy shape, HMAC domains/encoding and any
+required setter with this seam. The facade must enforce current owner health,
+observation/quiet windows, renewal reserve, playback/latch denial, all ordinary
+information/foreground preemption, selected-path correlation and sensitive
+transport-log suppression. Optional SDK events `recordingsIdle` and
+`recordingsPreempted` feed the manager's `idle()` / `preempt()` hooks. Without an
+idle notification a deferred job expires rather than polling. These are pairing
+assumptions, not live acceptance evidence; this change retains the existing SDK
+dependency and pins.
+
+#### Local implementation validation (2026-11-05)
+
+Synthetic fixture version: `recordings-synthetic-v1`. Interpreter: Node
+`v24.15.0`, Windows. The focused run blocks socket/process creation and replaces
+the account SDK with its existing test tripwire:
+
+```text
+node --test --import ./test/fixtures/no-socket-guard.mjs --import ./test/fixtures/proof-loader.mjs test/recordings-store.test.mjs test/recordings-policy.test.mjs test/recordings-api.test.mjs test/recordings-privacy.test.mjs
+62 tests: 61 passed, 0 failed, 1 skipped
+
+npm test
+666 tests: 638 passed, 0 failed, 28 skipped
+```
+
+The added skip is POSIX permission-mode verification on Windows; deployment
+filesystem permissions still need qualification. The full suite was repeated
+after final-review interest-expiry and notification-coalescer fixes (the earlier
+run had 664 tests, 636 passed, 0 failed, 28 skipped). Prettier was applied only to
+changed files. These receipts cover local synthetic bridge behavior; final SDK
+dependency pairing, installed enrollment policy, transport arbitration/logging,
+HA delivery, filesystem ACLs and live station acceptance remain separate gates.
+
 ### `auth.status`
 
 Ask what the login needs right now.
@@ -327,11 +536,11 @@ Complete a pending Solix 2FA (only when `state == "2fa"`). The code is never log
 
 ### Lifecycle
 
-| event   | payload                                 | when                               |
-| ------- | --------------------------------------- | ---------------------------------- |
+| event   | payload                                                       | when                               |
+| ------- | ------------------------------------------------------------- | ---------------------------------- |
 | `hello` | `{ schemaVersion, auth: { state, … }, webrtcRelay: boolean }` | on connect                         |
-| `auth`  | `{ state, image?, method?, retry? }`    | auth state changed                 |
-| `ready` | `{ schemaVersion }`                     | login complete + devices/go2rtc up |
+| `auth`  | `{ state, image?, method?, retry? }`                          | auth state changed                 |
+| `ready` | `{ schemaVersion }`                                           | login complete + devices/go2rtc up |
 
 ```json
 { "event": "hello", "schemaVersion": 1, "auth": { "state": "ok" }, "webrtcRelay": false }

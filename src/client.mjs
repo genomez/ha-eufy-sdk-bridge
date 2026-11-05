@@ -33,6 +33,7 @@ export function createEufy({ cfg, DEBUG_P2P }, options = {}) {
       stateRefreshMs: cfg.rtcStateRefreshMs,
       sessionRefreshMs: cfg.rtcSessionRefreshMs,
       commandKeepaliveMs: cfg.rtcCommandKeepaliveMs,
+      recordings: { enabled: cfg.recordings?.enabled !== false },
     },
     pollMs: cfg.pollMs, // undefined → SDK default; changeable live via config.set
     // Event pre-warm is OFF by default (`[]` = no event opens P2P speculatively) so a battery camera's

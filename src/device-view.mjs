@@ -69,6 +69,7 @@ export function createDeviceView(ctx) {
     topology.invalidate();
     ctx.clearStorageTelemetry?.();
     ctx.clearCameraHealth?.();
+    ctx.recordings?.preempt();
   }
 
   function checkAccount() {
@@ -486,6 +487,14 @@ export function createDeviceView(ctx) {
         }),
       );
       observation.descriptionsSettled();
+      await ctx.recordings?.syncInventory(
+        devices.map((record, index) => ({
+          sn: record.sn,
+          stationSn: record.stationSn ?? record.sn,
+          model: record.model,
+          name: summaries[index].name,
+        })),
+      );
       topology.publish(
         summaries.map((summary, index) => ({
           ...summary,

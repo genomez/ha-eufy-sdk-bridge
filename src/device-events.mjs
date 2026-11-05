@@ -89,6 +89,7 @@ export function wireDeviceEvents(ctx) {
       }
       const detection = DETECTION_EVENTS.has(event);
       if (detection) {
+        ctx.recordings?.markDirty();
         ctx.noteDetection(payload?.deviceSn);
         ctx.onDetectionRefresh?.(payload?.deviceSn);
       }

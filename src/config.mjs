@@ -97,6 +97,10 @@ export function loadConfig(env = process.env) {
     rtcStateRefreshMs: env.BRIDGE_RTC_STATE_REFRESH_MS ? Number(env.BRIDGE_RTC_STATE_REFRESH_MS) : undefined,
     // Separate default-off admission policy; entity/view reads never enable collection.
     storageTelemetry: env.BRIDGE_S1_STORAGE_TELEMETRY === "1",
+    recordings: {
+      enabled: env.RECORDINGS_ENABLED == null ? true : truthy(env.RECORDINGS_ENABLED),
+      root: env.RECORDINGS_ROOT || "/data/recordings",
+    },
     selfHost: env.BRIDGE_SELF_HOST || "127.0.0.1",
     // Cloud poll interval (ms). Unset → the SDK default (600000 = 10 min). Changeable live via the
     // config.set WS command. 0 disables polling.

@@ -22,6 +22,7 @@ import { createWsServer } from "./ws-server.mjs";
 import { closeStreamClients } from "../streams.mjs";
 import { createWebRtcRelay } from "./webrtc-relay.mjs";
 import { lateContraryEvent } from "./late-contrary-effects.mjs";
+import { createRecordings } from "./recordings.mjs";
 
 export function createBridgeService({
   config,
@@ -52,6 +53,7 @@ export function createBridgeService({
   );
   Object.assign(ctx, createStorageTelemetry(ctx));
   configureContext?.(ctx);
+  ctx.recordings ??= createRecordings(ctx);
   // Explicit opt-in from an embedding host or the CLI's default-off environment setting.
   if (webrtcProof)
     ctx.webrtcRelay = createWebRtcRelay({
@@ -130,6 +132,8 @@ export function createBridgeService({
     starting ??= (async () => {
       assertRunning();
       timing.start();
+      await ctx.recordings.load();
+      assertRunning();
       if (ctx.bootOptions?.prepareStorage !== false) fs.mkdirSync(ctx.eventImageDir, { recursive: true });
       await new Promise((resolve, reject) => {
         const failed = (error) => {
@@ -167,6 +171,7 @@ export function createBridgeService({
     state.flags.stopping = true;
     ctx.stopBoundedStateWrites?.();
     ctx.webrtcRelay?.stop();
+    const recordingsStopping = ctx.recordings.stop();
     timing.stop();
     const storageStopping = ctx.stopStorageTelemetry?.();
     ctx.stopEventImageRefreshes?.();
@@ -181,6 +186,7 @@ export function createBridgeService({
         }
       };
       await attempt(() => storageStopping);
+      await attempt(() => recordingsStopping);
       // Interrupt pending SDK work before awaiting startup; a late login result cannot boot.
       if (starting && !state.flags.ready) await attempt(() => eufy.disconnect?.());
       await starting?.catch(() => {});

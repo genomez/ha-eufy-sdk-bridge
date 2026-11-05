@@ -63,9 +63,7 @@ export function createHttpHandler(ctx) {
       observation?.observed(data, sn);
       const consumers = (data?.consumers ?? data?.[sn]?.consumers ?? []).filter(Boolean);
       if (!consumers.length) {
-        ctx.eventLog?.(
-          `/stream ${sn} - go2rtc lists no consumer yet (normal on a cold start)`,
-        );
+        ctx.eventLog?.(`/stream ${sn} - go2rtc lists no consumer yet (normal on a cold start)`);
         return;
       }
       for (const c of consumers) {
@@ -106,6 +104,49 @@ export function createHttpHandler(ctx) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const [, kind, sn] = url.pathname.split("/");
 
+    if (kind === "recordings") {
+      // The service's host policy wrapper runs before this route. No station calls, even offline.
+      const match = /^\/recordings\/v1\/covers\/(c_[A-Za-z0-9_-]{22})\/(e_[A-Za-z0-9_-]{22})$/.exec(url.pathname);
+      if (!match || url.search) return json(res, 404, { error: "Recordings unavailable" });
+      if (req.method !== "GET") {
+        res.setHeader("Allow", "GET");
+        return json(res, 405, { error: "Recordings unavailable" });
+      }
+      if ((ctx.recordingsHttpActive ?? 0) >= 4) {
+        res.setHeader("Retry-After", "1");
+        return json(res, 429, { error: "Recordings unavailable" });
+      }
+      ctx.recordingsHttpActive = (ctx.recordingsHttpActive ?? 0) + 1;
+      let released = false;
+      const release = () => {
+        if (!released) {
+          released = true;
+          ctx.recordingsHttpActive--;
+        }
+      };
+      res.once?.("finish", release);
+      res.once?.("close", release);
+      try {
+        const cover = await ctx.recordings?.cachedCover(match[1], match[2]);
+        if (!cover) {
+          release();
+          return json(res, 404, { error: "Recordings unavailable" });
+        }
+        res.writeHead(200, {
+          "Content-Type": "image/jpeg",
+          "Content-Length": cover.bytes,
+          "Cache-Control": "private, no-store",
+          "X-Content-Type-Options": "nosniff",
+          "X-Eufy-Image-Sha256": cover.sha256,
+          ...(cover.startedAtUtc ? { "X-Eufy-Event-Time": cover.startedAtUtc } : {}),
+        });
+        return res.end(cover.jpeg);
+      } catch {
+        release();
+        return json(res, 404, { error: "Recordings unavailable" });
+      }
+    }
+
     if (url.pathname === "/diagnostics")
       return json(
         res,
@@ -115,7 +156,12 @@ export function createHttpHandler(ctx) {
               ...(ctx.diagnostics?.() ?? { schemaVersion: 1, available: false }),
               t9000Media: {
                 ...mediaDiagnostics.snapshot(),
-                topologySnapshot: ctx.topologySnapshotDiagnostics?.() ?? { hits: 0, misses: 0, refreshes: 0, rejections: 0 },
+                topologySnapshot: ctx.topologySnapshotDiagnostics?.() ?? {
+                  hits: 0,
+                  misses: 0,
+                  refreshes: 0,
+                  rejections: 0,
+                },
               },
             }
           : (ctx.diagnostics?.() ?? { schemaVersion: 1, available: false }),
@@ -405,7 +451,7 @@ export function createHttpHandler(ctx) {
         if (stopAcquisition()) return;
         // T9000 media shares the main client's RTC transport; a second client is unnecessary and can
         // contend with the existing station session. Other cameras retain their dedicated P2P client.
-        const topology = feedLease ?? await ctx.resolveMediaTopology?.(sn);
+        const topology = feedLease ?? (await ctx.resolveMediaTopology?.(sn));
         if (!topology) throw webrtcError("webrtc_unsupported");
         onT9000 = topology.onT9000;
         if (stopAcquisition()) return;
@@ -487,8 +533,12 @@ export function createHttpHandler(ctx) {
           e?.name === "StreamClientSupersededError" ||
           (usedStreamClient && acquiredStreamClient && dropClient(sn, acquiredStreamClient) === false);
         if (!superseded && !admissionError) ctx.noteStreamFailure?.(sn);
-        if (!res.headersSent) json(res, superseded || admissionError ? 503 : 502,
-          admissionError ? { error: "WebRTC operation failed", code: e.code } : { error: publicError(e) });
+        if (!res.headersSent)
+          json(
+            res,
+            superseded || admissionError ? 503 : 502,
+            admissionError ? { error: "WebRTC operation failed", code: e.code } : { error: publicError(e) },
+          );
         cleanup();
         return;
       } finally {
