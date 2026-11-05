@@ -126,6 +126,20 @@ export function setPilotLogTimestamps(enabled) {
   logTimestamps = enabled === true;
 }
 
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** One child stdout line to its event: `{event}`, or `{event, ts}` with a strict UTC ts. Nothing else. */
+export function pilotRecordEvent(line) {
+  try {
+    const entry = JSON.parse(line);
+    if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.event !== "string") return;
+    const keys = Object.keys(entry);
+    if (keys.length === 1) return entry.event;
+    if (keys.length === 2 && typeof entry.ts === "string" && ISO_UTC.test(entry.ts)) return entry.event;
+  } catch {}
+  return undefined;
+}
+
 export function pilotLog(event) {
   if (!events.has(event)) return;
   const record = { event };

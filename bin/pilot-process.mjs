@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { pilotLog } from "../src/pilot-log.mjs";
-// Native libraries can write to file descriptors. Reconstruct only finite one-field events.
+import { pilotLog, pilotRecordEvent, setPilotLogTimestamps } from "../src/pilot-log.mjs";
+// Native libraries can write to file descriptors. Reconstruct only finite allowlisted events; a
+// child's LOG_TIMESTAMPS `ts` is validated, then re-stamped here rather than forwarded.
+setPilotLogTimestamps(/^(1|true|yes|on)$/i.test(String(process.env.LOG_TIMESTAMPS ?? "")));
 const child = spawn(process.execPath, [path.join(process.env.BRIDGE_APP_DIR ?? "/app", "server.mjs")], {
   stdio: ["ignore", "pipe", "ignore"],
 });
@@ -12,10 +14,8 @@ child.stdout.on("data", (chunk) => {
   for (const char of chunk) {
     if (char === "\n") {
       if (!discarding) {
-        try {
-          const entry = JSON.parse(pending);
-          if (entry && Object.keys(entry).length === 1 && typeof entry.event === "string") pilotLog(entry.event);
-        } catch {}
+        const event = pilotRecordEvent(pending);
+        if (event !== undefined) pilotLog(event);
       }
       pending = "";
       discarding = false;
