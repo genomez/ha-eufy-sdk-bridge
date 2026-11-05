@@ -24,7 +24,8 @@ export function createRecordings(
     refresh = { state: "idle", reason: "none", retryAfterMs: null };
   let timer, expireTimer, notifying, notificationTimer, pageTimer, pendingPage;
   let pagingStatus = "unverified",
-    lastPageCount = 0;
+    lastPageCount = 0,
+    deeperFailures = 0;
   const rejected = { not_in_scope: 0, bad_record_id: 0, bad_start_time: 0, other: 0 };
   let identityConflict = 0;
   const timeShapes = new Map();
@@ -256,10 +257,8 @@ export function createRecordings(
   }
   function deeper(cycle, result) {
     if (pagingStatus === "unsupported_stopped" || !result.page || result.page.count === 0) return;
-    if (!pageValid(result.page)) {
-      stopPaging();
-      return;
-    }
+    // The latest window may contain unknown times; only consistent evidence can seed a cursor.
+    if (!pageValid(result.page)) return;
     if (
       result.page.count < 20 ||
       result.page.nextBefore <= 1 ||
@@ -306,7 +305,11 @@ export function createRecordings(
         );
         if (!current(cycle.s, cycle.generation)) return;
         if (result.status !== "ok") {
-          if (result.status !== "deferred") stopPaging();
+          // Admission failures and refresh/foreground aborts abandon only this cycle.
+          // Count only failed exchanges, never preemption, toward the process limit.
+          if (result.status !== "deferred" && ["timeout", "invalid_reply"].includes(result.reason)) {
+            if (++deeperFailures >= 3) stopPaging();
+          }
           return;
         }
         lastPageCount = result.page?.count ?? 0;
@@ -322,6 +325,7 @@ export function createRecordings(
           stopPaging();
           return;
         }
+        deeperFailures = 0;
         pagingStatus = "working";
         for (const row of result.rows) cycle.seen.add(row.eventId);
         await store.mergeCatalog(
@@ -334,7 +338,7 @@ export function createRecordings(
         notify("catalog");
         deeper({ ...cycle, extra: cycle.extra + 1 }, result);
       } catch {
-        if (current(cycle.s, cycle.generation)) stopPaging();
+        // Local persistence failures provide no evidence that station paging is unsupported.
       } finally {
         policy.completeCover();
         await persistBudget().catch(() => {});

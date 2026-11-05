@@ -122,7 +122,7 @@ test("SDK exceptions and refusal reasons are fixed codes without exception leaka
   });
   h.catalog("if_due");
   await until(() => h.catalog().refresh.state === "failed");
-  assert.equal(h.catalog().refresh.reason, "invalid_reply");
+  assert.equal(h.catalog().refresh.reason, "busy");
   assert.ok(!JSON.stringify(h.catalog()).includes(canary));
 });
 test("preempted cover and stale account completion cannot persist or notify", async (t) => {

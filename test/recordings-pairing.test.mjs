@@ -593,3 +593,128 @@ test("real SDK renewal reserve defers a deeper page without marking paging unsup
   assert.equal(h.session.queries(1306).length, 1);
   assert.equal(h.manager.diagnostics().pagingStatus, "unverified");
 });
+
+test("real SDK scheduled 30-second refresh aborts continuations without permanently stopping paging", async (t) => {
+  const h = await paired(t);
+  h.session.pages = (query) => syntheticPage(query.start_id === 0 ? 100 : query.start_id);
+  h.eufy.opts.rtc.stateRefreshMs = 30_000;
+  let scheduled;
+  t.mock.method(h.eufy.stateRefreshTimer, "arm", (delay, callback) => {
+    assert.equal(delay, 30_000);
+    scheduled = callback;
+  });
+  const idle = () => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle";
+  for (let i = 0; i < 4; i++) {
+    h.eufy.scheduleStateRefresh(h.eufy.realtimeGeneration, true);
+    const refreshDue = scheduled;
+    h.advance(25_000);
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(idle);
+    h.session.reply = false;
+    h.advance(5_000);
+    await until(() => h.session.queries(1306).length === (i + 1) * 2);
+    const controller = h.eufy.rtc.recordingReads.get(inventory[0].sn);
+    assert.ok(controller && !controller.signal.aborted);
+    const query = h.session.queries(1306).at(-1);
+    refreshDue();
+    assert.equal(controller.signal.aborted, true);
+    await until(() => h.eufy.stateRefreshEvidence.recent.length === i + 1);
+    await until(idle);
+    await until(() => !h.eufy.rtc.recordingReads.size);
+    assert.equal(h.eufy.stateRefreshEvidence.recent.at(-1).trigger, "scheduled");
+    assert.equal(h.eufy.stateRefreshEvidence.recent.at(-1).outcome, "success");
+    assert.equal(h.manager.diagnostics().pagingStatus, "unverified");
+    h.session.notify(1306, {
+      cmd: 10000,
+      table: "history_record_info",
+      transaction: query.payload.transaction,
+      mIntRet: 0,
+      version: "1",
+      count: 20,
+      start_id: 80,
+      end_id: 61,
+      data: syntheticPage(80),
+    });
+    assert.equal(h.store.snapshot.rows.length, 20);
+    h.session.reply = true;
+    h.advance(120_001);
+  }
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(idle);
+  h.advance(5_000);
+  await until(() => h.store.snapshot.rows.length === 40);
+  assert.equal(h.manager.diagnostics().pagingStatus, "working");
+});
+
+for (const malformed of ["one_invalid_time", "all_invalid_times", "invalid_record_id"]) {
+  test(`real SDK malformed latest window skips only that cycle: ${malformed}`, async (t) => {
+    const h = await paired(t);
+    h.session.pages = () =>
+      syntheticPage(100).map((row, i) => {
+        if (malformed === "all_invalid_times" || (malformed === "one_invalid_time" && i === 7))
+          return { ...row, start_time: "invalid" };
+        return malformed === "invalid_record_id" && i === 7 ? { ...row, record_id: "invalid" } : row;
+      });
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
+    assert.equal(h.store.snapshot.rows.length, malformed === "invalid_record_id" ? 19 : 20);
+    assert.equal(h.manager.diagnostics().lastPageCount, 20);
+    h.advance(5_000);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(h.session.queries(1306).length, 1);
+    assert.equal(h.manager.diagnostics().pagingStatus, "unverified");
+    h.advance(120_001);
+    h.session.pages = (q) => syntheticPage(q.start_id === 0 ? 100 : q.start_id);
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(() => h.session.queries(1306).length === 2);
+    await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
+    h.advance(5_000);
+    await until(() => h.manager.diagnostics().pagingStatus === "working");
+    assert.equal(h.session.queries(1306).length, 3);
+  });
+}
+
+test("three real SDK continuation deadlines stop paging while latest catalogs remain usable", async (t) => {
+  const h = await paired(t);
+  h.session.pages = () => syntheticPage(100);
+  const idle = () => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle";
+  for (let i = 0; i < 3; i++) {
+    h.session.reply = true;
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(idle);
+    h.session.reply = false;
+    h.advance(5_000);
+    await until(() => h.session.queries(1306).length === (i + 1) * 2);
+    h.advance(8_000);
+    await until(idle);
+    await until(() => !h.eufy.rtc.recordingReads.size);
+    assert.equal(h.eufy.rtc.sessions.get(inventory[0].sn).leases, 0);
+    assert.equal(h.manager.diagnostics().pagingStatus, i === 2 ? "unsupported_stopped" : "unverified");
+    h.advance(120_001);
+  }
+  h.session.reply = true;
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(idle);
+  h.advance(5_000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.session.queries(1306).length, 7);
+  assert.equal(h.store.snapshot.rows.length, 20);
+});
+
+test("a synthetic legacy client rejecting the expanded roster leaves other WS features usable", async (t) => {
+  const h = await paired(t, expandedInventory);
+  const legacyRoster = (payload) => {
+    // The 63d2048 integration requires exactly five distinct camera folders.
+    assert.equal(payload.cameras.length, 5, "Recordings unavailable");
+    assert.equal(new Set(payload.cameras.map((c) => c.cameraId)).size, 5, "Recordings unavailable");
+  };
+  assert.throws(() => legacyRoster(h.manager.cameras()), /Recordings unavailable/);
+  assert.equal(h.session.queries(1306).length, 0);
+  assert.equal(h.session.queries(1308).length, 0);
+  await h.rpc("config.get");
+  assert.equal(h.replies.at(-1).pollMs, 0);
+  await h.rpc("auth.status");
+  assert.equal(h.replies.at(-1).ok, true);
+  assert.equal(h.manager.capability().enabled, true);
+  assert.equal(h.session.isConnected, true);
+});

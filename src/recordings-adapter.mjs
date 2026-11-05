@@ -49,8 +49,8 @@ async function read(operation) {
         ? { retryAfterMs: result.retryAfterMs }
         : {}),
     };
-  } catch {
-    return { status: "unavailable", reason: "invalid_reply" };
+  } catch (error) {
+    return { status: "unavailable", reason: error?.name === "TimeoutError" ? "timeout" : "busy" };
   }
 }
 
@@ -58,8 +58,8 @@ async function read(operation) {
 function sdkReason(reason) {
   if (["owner_unavailable", "owner_changed", "disabled"].includes(reason)) return "offline";
   if (reason === "renewal_due") return "renewal";
-  if (["selector_invalid", "selector_reserved", "invalid_options", "send_refused"].includes(reason))
-    return "invalid_reply";
+  if (reason === "send_refused") return "busy";
+  if (["selector_invalid", "selector_reserved", "invalid_options"].includes(reason)) return "invalid_reply";
   return reasonOf(reason);
 }
 

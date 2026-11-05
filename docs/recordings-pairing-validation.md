@@ -162,3 +162,61 @@ accessed. No push, tag, deployment or live qualification occurred. Paging field
 semantics remain unverified: invalid time/envelope evidence can conservatively
 stop deeper reads for the process. Windows ACL, hardware paging and frontend
 acceptance remain lead gates.
+
+## Paging review fixes and mixed-version deployment (2026-11-05)
+
+Deployment order: **integration first; old integration + new bridge = recordings
+unavailable (fails closed)**. Source inspection of integration `63d2048` confirms
+that `recordings_models.cameras()` requires exactly five distinct camera IDs.
+`RecordingsApi.recordings_cameras()` validates before returning the roster,
+`RecordingRuntime.list_cameras()` cannot install a rejected roster, and media
+browsing converts the error into "Recordings unavailable" without closing the
+shared connection. The bridge synthetic legacy-client test rejects its expanded
+roster before any catalog/cover work and verifies subsequent `config.get` and
+`auth.status` replies on the same WS connection. This test models the old count
+guard; it does not run an old HA instance. Integration `f7b7f4e` accepts both the
+old five-camera roster and larger rosters; the added integration API/runtime test
+proves the five-camera compatibility path. Install that integration before or
+together with this bridge.
+
+Transient deeper-read failures now abandon only their cycle. Three consecutive
+deeper timeouts or invalid exchange replies latch `unsupported_stopped`; valid
+deeper replies reset the count. Deferred attempts, owner loss, send refusal,
+ordinary refresh preemption and aborts cannot exhaust that limit. Inconsistent
+DEEPER page evidence still latches immediately. Malformed latest-page evidence
+skips continuation only for its cycle. The installed SDK clears its authorized
+cursor when any time is invalid, so deriving one from just valid rows would
+bypass its paging evidence and is deliberately avoided.
+
+The installed-SDK regression drives the scheduled 30-second state-refresh timer
+callback through `runScheduledStateRefresh` / `refreshRealtimeStates`, aborting
+four in-flight continuations without calling bridge `preempt()`. Late replies
+cannot publish, and a later cycle makes progress. Additional synthetic tests
+cover a single invalid time among 20 newest rows, all invalid times, invalid IDs,
+retry budgets, exchange failure limits and successful-continuation count reset.
+
+The SDK artifact and installed runtime are unchanged. `src/recordings.mjs` and
+`src/recordings-adapter.mjs` are already in `eventPlaybackProbeFiles`; the probe
+computes the bridge aggregate hash from those file bytes each time. No stored
+bridge hash exists to rewrite, no manifest entry changes, and the SDK tarball and
+installed-runtime pin constants remain unchanged. Existing playback grants
+therefore fail their bridge hash check after this runtime change. No probe or
+authorization file was opened or run.
+
+Final local validation after these fixes:
+
+- Bridge `npm test`: 685 passed, 0 failed, 28 existing skips (713 tests total).
+- Integration full suite with the specified existing interpreter and
+  `-B tools/run_offline_tests.py`: 961 passed, 0 failed, 1,200 subtests passed;
+  five dependency deprecation warnings.
+- Changed-file Prettier check, both repositories' `git diff --check`, and SDK
+  distribution/runtime hash comparison: pass. SDK source remains at `0fa773d`
+  with a clean worktree; no SDK changes were required.
+
+Full logs: bridge `../artifacts/recordings-paging-review-bridge-full-final.log`;
+integration `.offline/recordings-paging-review-full.log` in its own checkout.
+The initial bridge full run found one privacy test expecting `invalid_reply`
+for a thrown generic transport exception. Its expectation now follows the
+transient `busy` classification while retaining the no-exception-leak assertion;
+the complete final run above passed. All inputs remain synthetic. No push, tag,
+deployment, external connection or private-data access occurred.

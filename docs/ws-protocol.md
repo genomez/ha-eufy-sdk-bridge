@@ -659,6 +659,14 @@ T9000. It includes wired, battery and doorbell cameras, excludes other stations
 and non-camera devices, and always excludes a trimmed, case-insensitive J Safe
 name. Scope/camera HMAC inputs are unchanged when the camera set grows.
 
+Deployment order: **integration first; old integration + new bridge = recordings
+unavailable (fails closed)**. The 3o integration at `63d2048` accepts exactly five
+cameras and rejects an expanded roster. Its roster parser raises a recordings
+error, which media browsing translates into "Recordings unavailable"; it does
+not disconnect the shared bridge connection or change other bridge features.
+Integration `f7b7f4e` also accepts a five-camera roster from a 3o-style bridge,
+so install it before or together with the new bridge.
+
 A catalog cycle starts with the same latest-20 station-wide query, no more often
 than two minutes. While a camera folder has a live 60-second interest, it may
 perform four additional reads (100 station rows total). The private SDK cursor
@@ -668,12 +676,22 @@ reserve, abort/preemption and a five-second gap. Covers retain priority over an
 unsent deeper read. No browse read connects to or wakes a child camera.
 
 Paging stops at the seven-day boundary, a short page, cursor exhaustion, camera
-retention cap, interest expiry or the four-page limit. An invalid/empty deeper
-reply, repeated/overlapping IDs, duplicate events, invalid envelope/time evidence
+retention cap, interest expiry or the four-page limit. An empty DEEPER page,
+repeated/overlapping IDs, duplicate events, invalid page envelope/time evidence
 or a newer time bound permanently changes `pagingStatus` to `unsupported_stopped`
-for the bridge process. Ordinary page-one cycles continue. `working` means a
-synthetic/runtime page made progress; it is not a claim of firmware qualification.
-SDK deferral or foreground preemption abandons the current continuation.
+for the bridge process. An inconsistent latest window (including one invalid
+start time among its 20 rows) skips continuation for that cycle only: the installed
+SDK does not authorize a cursor from partial time evidence. Ordinary page-one
+cycles continue. `working` means a synthetic/runtime page made progress; it is
+not a claim of firmware qualification.
+Cancellation, abort, owner loss, SDK deferral, send refusal and other transient
+admission/transport failures abandon only the current continuation. Normal SDK
+state-refresh preemption does not disable later cycles. Three consecutive deeper
+exchange failures with `timeout` or `invalid_reply` stop paging for the process;
+a valid deeper page resets that count. Aborts/preemption and deferred attempts
+never increment it. Latest-window reads do not reset it. Retry opportunities still
+require interest, the two-minute catalog interval, a five-second completion gap,
+one feature read in flight and at most four extra pages per cycle.
 
 Optional `recordings.diagnostics` takes no arguments (besides `id` and `cmd`) and
 returns the usual `{id, ok, recordings}` envelope. This is a cache-only read and
