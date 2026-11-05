@@ -528,7 +528,11 @@ function observation(raw, kind) {
   for (const key of numeric) result[key] = number(raw[key]);
   if (kind === "schedule") result.reset = raw.reset === true;
   else {
-    result.outcome = ["success", "failed"].includes(raw.outcome) ? raw.outcome : null;
+    result.outcome = ["success", "failed", ...(kind === "client" ? ["superseded_by_renewal"] : [])].includes(
+      raw.outcome,
+    )
+      ? raw.outcome
+      : null;
     result.failure = refreshKinds.has(raw.failure) ? raw.failure : null;
     if (kind === "sweep")
       result.trigger = ["startup", "scheduled", "cloud_poll"].includes(raw.trigger) ? raw.trigger : null;
@@ -927,6 +931,7 @@ export function createDiagnostics(ctx, now = Date.now) {
           "attempts",
           "successes",
           "failures",
+          "renewalRetries",
           "lastAttemptMs",
           "lastSuccessMs",
           "lastFailureMs",

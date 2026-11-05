@@ -703,6 +703,11 @@ uses the existing host command policy. `/diagnostics` also includes `recordings`
 - `timeStatus`: retained-row counts for `valid`, `unknown_format`, `ambiguous`, `invalid`;
 - `pagingStatus`: `unverified`, `working` or `unsupported_stopped`; `lastPageCount`;
 - `lastCatalogTime`: last successful catalog receipt time in epoch milliseconds or null;
+- `lastCatalogAttempt`: the last admitted latest-catalog read, or null. Contains only
+  `atMs`, `finishedAtMs`, `outcome` and a sanitized finite `reason`. While running,
+  `outcome` is `pending` and `finishedAtMs` is null; completed outcomes are `ok`,
+  `deferred`, `unavailable` or `failed`. Later rate-limited, busy, offline or invalid-scope
+  browse decisions do not replace it. This summary is process-local and resets on restart;
 - `coverCache`: `{files, bytes, pending}`;
 - `unknownStartTimeShapes`: at most 32 `{shape, count}` entries. At most 32 code
   points from each raw start token are masked: numbers become `9`, letters become

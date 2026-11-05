@@ -50,6 +50,22 @@ function snapshot(eufy) {
   return createDiagnostics({ eufy, state: createState() }).diagnostics(false);
 }
 
+test("projects renewal refresh retries and their finite client outcome", () => {
+  const result = snapshot({
+    getStateRefreshDiagnostics: () => ({
+      renewalRetries: 2,
+      attempts: 3,
+      successes: 2,
+      failures: 1,
+      operations: [{ outcome: "superseded_by_renewal", phase: "transport", failure: null, private: "CANARY" }],
+    }),
+  }).stateRefresh;
+  assert.equal(result.renewalRetries, 2);
+  assert.deepEqual([result.attempts, result.successes, result.failures], [3, 2, 1]);
+  assert.equal(result.operations[0].outcome, "superseded_by_renewal");
+  assert.equal(result.operations[0].private, undefined);
+});
+
 test("SDK getter is read once; projection is detached and missing or throwing APIs stay null", () => {
   const raw = sample();
   const cp = cloud();

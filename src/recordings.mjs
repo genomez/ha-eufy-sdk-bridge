@@ -22,6 +22,7 @@ export function createRecordings(
     epoch = 0;
   let dirty = false,
     refresh = { state: "idle", reason: "none", retryAfterMs: null };
+  let lastCatalogAttempt = null;
   let timer, expireTimer, notifying, notificationTimer, pageTimer, pendingPage;
   let pagingStatus = "unverified",
     lastPageCount = 0,
@@ -376,6 +377,8 @@ export function createRecordings(
     pendingPage = null;
     // Reserve synchronously, before any asynchronous persistence or a second browser request.
     policy.admitCatalog();
+    const attempt = { atMs: now(), finishedAtMs: null, outcome: "pending", reason: "none" };
+    lastCatalogAttempt = attempt;
     const controller = new AbortController();
     flight = { controller, kind: "catalog_reservation", startedAt: mono() };
     void (async () => {
@@ -385,6 +388,8 @@ export function createRecordings(
         const result = await bounded("catalog", (opts) => adapter.catalog(s.sdkScope, opts), s, generation);
         if (!current(s, generation)) return;
         if (result.status !== "ok") {
+          attempt.outcome = ["deferred", "unavailable"].includes(result.status) ? result.status : "failed";
+          attempt.reason = reasonOf(result.reason);
           refresh = {
             state: result.status === "deferred" ? "deferred" : "failed",
             reason: reasonOf(result.reason),
@@ -393,6 +398,8 @@ export function createRecordings(
           return;
         }
         if (!Array.isArray(result.rows) || result.rows.length > 20) {
+          attempt.outcome = "failed";
+          attempt.reason = "invalid_reply";
           refresh = { state: "failed", reason: "invalid_reply", retryAfterMs: null };
           return;
         }
@@ -405,6 +412,8 @@ export function createRecordings(
         );
         if (!current(s, generation)) return;
         dirty = false;
+        attempt.outcome = "ok";
+        attempt.reason = "none";
         refresh = { state: "idle", reason: "none", retryAfterMs: null };
         notify("catalog");
         deeper(
@@ -412,12 +421,19 @@ export function createRecordings(
           result,
         );
       } catch (error) {
+        attempt.outcome = "failed";
+        attempt.reason = error?.code === "recordings_invalid" ? "invalid_reply" : "store_unavailable";
         refresh = {
           state: "failed",
           reason: error?.code === "recordings_invalid" ? "invalid_reply" : "store_unavailable",
           retryAfterMs: null,
         };
       } finally {
+        if (attempt.outcome === "pending") {
+          attempt.outcome = "deferred";
+          attempt.reason = "busy";
+        }
+        attempt.finishedAtMs = now();
         if (flight?.controller === controller) flight = null;
         flush();
       }
@@ -534,6 +550,7 @@ export function createRecordings(
         pagingStatus,
         lastPageCount,
         lastCatalogTime: snapshot.lastSuccessfulQueryAtMs,
+        lastCatalogAttempt: lastCatalogAttempt ? { ...lastCatalogAttempt } : null,
         coverCache: {
           files: rows.filter((r) => r.cover).length,
           bytes: rows.reduce((n, r) => n + (r.cover?.bytes ?? 0), 0),
