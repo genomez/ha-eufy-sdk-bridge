@@ -1,5 +1,5 @@
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
-import { pilotLog } from "./pilot-log.mjs";
+import { pilotLog, setPilotLogTimestamps } from "./pilot-log.mjs";
 import { createDiagnostics } from "./diagnostics.mjs";
 import { createEventLoopEvidence } from "./event-loop-evidence.mjs";
 // The reusable service lifecycle. The CLI and embedded hosts share this exact assembly;
@@ -33,6 +33,7 @@ export function createBridgeService({
   webrtcProof,
   signal,
 }) {
+  setPilotLogTimestamps(config.cfg.logTimestamps);
   const eufy = createClient(config, sdkOptions);
   const state = createState();
   const timing = createEventLoopEvidence();

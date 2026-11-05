@@ -119,9 +119,18 @@ const events = new Set([
   "ws_server_2",
   "ws_server_3",
 ]);
+let logTimestamps = false;
+
+/** Configure the shared stdout egress without changing console methods or decision clocks. */
+export function setPilotLogTimestamps(enabled) {
+  logTimestamps = enabled === true;
+}
+
 export function pilotLog(event) {
   if (!events.has(event)) return;
-  process.stdout.write(JSON.stringify({ event }) + "\n");
+  const record = { event };
+  if (logTimestamps) record.ts = new Date().toISOString();
+  process.stdout.write(JSON.stringify(record) + "\n");
 }
 export function publicError(error) {
   const names = new Set(["TypeError", "RangeError", "SessionExpiredError", "MegaApiError", "AuthRecoveryPaused"]);

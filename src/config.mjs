@@ -71,6 +71,8 @@ export function loadConfig(env = process.env) {
     country: env.EUFY_COUNTRY || "GB",
     host: env.BRIDGE_HOST || "0.0.0.0",
     port: Number(env.BRIDGE_PORT || 3000),
+    // Presentation-only UTC timestamps on allowlisted pilot JSON records; off by default.
+    logTimestamps: truthy(env.LOG_TIMESTAMPS),
     session: env.EUFY_SESSION || "./data/.eufy-session.json",
     // Distinct per-install device identity. Unset → the SDK derives one from the account email, which is
     // STABLE but IDENTICAL for every client on the account — so a second client (a second bridge, or the

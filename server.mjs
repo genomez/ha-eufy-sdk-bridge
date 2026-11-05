@@ -1,5 +1,5 @@
 /** Modified for genomez S1 experimental source preview, 2026-10-14. */
-import { pilotLog } from "./src/pilot-log.mjs";
+import { pilotLog, setPilotLogTimestamps } from "./src/pilot-log.mjs";
 // CLI entrypoint; embedded hosts use the same service assembly without process-wide handlers.
 import { loadConfig } from "./src/config.mjs";
 import { createBridgeService } from "./src/service.mjs";
@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const config = loadConfig();
+setPilotLogTimestamps(config.cfg.logTimestamps);
 if (!config.cfg.email || !config.cfg.password) {
   pilotLog("server_1");
   process.exit(1);
