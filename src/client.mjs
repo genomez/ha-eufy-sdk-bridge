@@ -3,6 +3,7 @@
 // heavier modules depend on the instance via `ctx.eufy`, not on how it was built. Event wiring that
 // needs other modules (error → session recovery, push liveness) lives in server.mjs, after ctx is whole.
 import { EufyMega, FileSessionStore, FileFcmStore, ConsoleLogger } from "@mega-yfue/eufy-sdk";
+import { registerRecordingsPolicy } from "./recordings-adapter.mjs";
 
 /**
  * Build the SDK client from config. `logger` is attached only under BRIDGE_DEBUG_P2P (raw transport logs).
@@ -13,7 +14,12 @@ import { EufyMega, FileSessionStore, FileFcmStore, ConsoleLogger } from "@mega-y
  * got `p2pConnect` and nothing else, never the `[p2p] <sn> <<< …` frames.
  */
 export function createEufy({ cfg, DEBUG_P2P }, options = {}) {
-  return new EufyMega({
+  const recordings = {
+    enabled: cfg.recordings?.enabled !== false && options.rtc?.recordings?.enabled !== false,
+    stationBinding: "",
+    allowedCameras: new Set(),
+  };
+  const client = new EufyMega({
     email: cfg.email,
     password: cfg.password,
     countryCode: cfg.country,
@@ -33,7 +39,8 @@ export function createEufy({ cfg, DEBUG_P2P }, options = {}) {
       stateRefreshMs: cfg.rtcStateRefreshMs,
       sessionRefreshMs: cfg.rtcSessionRefreshMs,
       commandKeepaliveMs: cfg.rtcCommandKeepaliveMs,
-      recordings: { enabled: cfg.recordings?.enabled !== false },
+      ...options.rtc,
+      recordings,
     },
     pollMs: cfg.pollMs, // undefined → SDK default; changeable live via config.set
     // Event pre-warm is OFF by default (`[]` = no event opens P2P speculatively) so a battery camera's
@@ -41,6 +48,7 @@ export function createEufy({ cfg, DEBUG_P2P }, options = {}) {
     // which lets the SDK use its default high-intent pre-warm events.
     prewarmEvents: cfg.prewarm ? undefined : [],
     logger: undefined,
-    ...options,
+    ...Object.fromEntries(Object.entries(options).filter(([key]) => key !== "rtc")),
   });
+  return registerRecordingsPolicy(client, recordings);
 }

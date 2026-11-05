@@ -10,7 +10,7 @@ import { eventTableProbeFiles, eventTableProbeSdkSha256 } from "./src/event-tabl
 import { attachEventThumbProbe } from "./src/event-thumb-probe.mjs";
 import { eventThumbProbeFiles, eventThumbProbeSdkSha256 } from "./src/event-thumb-probe-pins.mjs";
 import { attachEventPlaybackProbe } from "./src/event-playback-probe.mjs";
-import { eventPlaybackProbeFiles, eventPlaybackProbeSdkSha256 } from "./src/event-playback-probe-pins.mjs";
+import { eventPlaybackProbeFiles, eventPlaybackProbeSdkRuntimeSha256 } from "./src/event-playback-probe-pins.mjs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -27,7 +27,7 @@ const appDir = path.dirname(fileURLToPath(import.meta.url));
 const eventPlaybackProbe = attachEventPlaybackProbe(service.ctx, {
   sdkFile: fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")),
   bridgeFiles: eventPlaybackProbeFiles.map((name) => ({ name, file: path.join(appDir, name) })),
-  expectedSdkSha256: eventPlaybackProbeSdkSha256,
+  expectedSdkSha256: eventPlaybackProbeSdkRuntimeSha256,
 });
 const storageProbe = attachStorageProbe(service.ctx, {
   sdkFile: fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")),

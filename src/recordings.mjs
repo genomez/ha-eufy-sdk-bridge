@@ -11,7 +11,7 @@ export function createRecordings(
     mono = clocks.monotonic ?? (() => performance.now());
   const schedule = clocks.schedule ?? setTimeout,
     cancel = clocks.cancel ?? clearTimeout;
-  const adapter = recordingsAdapter(ctx.eufy),
+  const adapter = recordingsAdapter(ctx.eufy, () => (loaded ? store.key : null)),
     policy = createRecordingsPolicy({ now, monotonic: mono });
   let scope,
     scopeValid = false,
@@ -179,7 +179,7 @@ export function createRecordings(
         Promise.resolve().then(() => {
           if (!current(s, generation) || !available() || controller.signal.aborted)
             return { status: "deferred", reason: "offline" };
-          return operation({ signal: controller.signal, timeoutMs: remaining });
+          return operation({ signal: controller.signal, timeoutMs: Math.max(1, Math.floor(remaining)) });
         }),
         abort,
       ]);
@@ -286,14 +286,6 @@ export function createRecordings(
       !row?.selector ||
       !safeSelector(row.selector, { sourceKey: row.sourceKey, cameraSn: row.selector.cameraSn }, s, store.key)
     ) {
-      flush();
-      return;
-    }
-    // Refuse ambiguous shared-path provenance. Cached verified bytes are handled before this point.
-    if (
-      store.snapshot.rows.some((r) => r.eventId !== row.eventId && r.selector?.thumbPath === row.selector.thumbPath)
-    ) {
-      void store.negative(job.cameraId, job.eventId).catch(() => {});
       flush();
       return;
     }

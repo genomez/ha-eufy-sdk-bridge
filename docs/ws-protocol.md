@@ -193,34 +193,51 @@ their parent or after 7 days, capped at 256 files / 128 MiB; eviction trims to
 #### SDK pairing seam
 
 `src/recordings-adapter.mjs` is the isolated SDK compatibility boundary. It
-feature-detects only `readRecordingCatalog(scope, {signal,timeoutMs})` and
-`readRecordingCover(scope, selector, {signal,timeoutMs})`. Scope is private:
+requires `getRecordingAccountNamespace(identityKey)`,
+`readRecordingCatalog(scope, {signal,timeoutMs})` and
+`readRecordingCover(scope, selector, {signal,timeoutMs})`. Scope remains private:
 `{stationSn,cameraSns: Set<string>,accountNamespace,identityKey: Buffer(32)}`.
-The adapter takes the account identity from the SDK's existing in-memory
-`api.auth.userId`. Inventory is supplied by the bridge's ordinary device-list
-publication; there is no discovery call from recordings code. Enrollment is the
-T842x/T84Ax family under the sole T9000, excluding the named safe device.
+The namespace comes from the SDK's cache-only getter, including its canonical
+account identity. No raw account identity is read or persisted by the bridge.
+Inventory comes from ordinary device-list publication, with exactly five
+T842x/T84Ax children under the sole T9000, excluding the named safe device.
 Ambiguous topology disables new reads while preserving safely bound cache for
 the same account.
 
-The current adapter assumes lowercase hex full source HMACs, 32-bit big-endian
-UTF-8 length-prefixed tuples and domains `account`, `scope`, `camera`, `selector`.
-The SDK owns event HMAC construction; the bridge derives `e_` IDs from those full
-HMAC bytes. Selectors must pass the store MAC and source/camera/station binding
-again immediately before demand. Unknown type labels are projected as
-`Event <code>` / `Detection <code>`; numeric duration fields remain unqualified.
-SDK normalization owns strict Chicago parsing and DST handling.
+Scope/camera HMAC domains match `recordings.scope.v1` and
+`recordings.camera.v1`; selectors match `recordings.selector.v1`, including the
+account namespace before source, camera, station, path and receipt time. The
+package exports neither the binding helper nor its selector verifier, so the
+adapter checks those tuples locally; the SDK independently verifies every fetch.
+The bridge verifies each returned scope/camera/event ID against its local binding.
+SDK normalization owns Chicago parsing and DST handling. Unknown type labels
+remain fixed numeric fallbacks and numeric duration fields remain unqualified.
 
-Service construction passes `rtc.recordings:{enabled}`. The final SDK pairing
-must align its installed enrollment-policy shape, HMAC domains/encoding and any
-required setter with this seam. The facade must enforce current owner health,
-observation/quiet windows, renewal reserve, playback/latch denial, all ordinary
-information/foreground preemption, selected-path correlation and sensitive
-transport-log suppression. Optional SDK events `recordingsIdle` and
-`recordingsPreempted` feed the manager's `idle()` / `preempt()` hooks. Without an
-idle notification a deferred job expires rather than polling. These are pairing
-assumptions, not live acceptance evidence; this change retains the existing SDK
-dependency and pins.
+Service construction shares the installed SDK policy
+`{enabled,stationBinding,allowedCameras}` with the adapter. Enrollment updates
+that same object without discovery or owner acquisition. Timeout values are
+integer milliseconds from 1 through 8000, and the bridge deadline aborts the SDK
+signal. SDK-only refusals map into the existing public finite reason vocabulary.
+
+The store retains private HMAC path fingerprints across catalog windows,
+selector replacement and restart, including `coverPathKey` from rows whose SDK
+selector was suppressed for shared-path ambiguity. Distinct event identities
+sharing a fingerprint lose uncached selectors permanently for their retained
+lifetimes; existing validated cached bytes remain usable. Fingerprints are
+bounded to 64 per event; overflow conservatively disables new uncached covers
+for the bound store scope. No path fingerprint appears in a public DTO or log.
+
+The paired dependency is the local recordings SDK artifact at `b7c30da`, with
+its tarball SHA-256 in `eventPlaybackProbeSdkSha256`. Probe gates hash the installed
+JavaScript bundle; both `server.mjs` and `bin/event-playback-probe-control.mjs`
+therefore consume the separate `eventPlaybackProbeSdkRuntimeSha256` pin. Existing
+playback grants must match the new bundle and bridge files. Historical table,
+thumbnail and storage probe pins are unchanged and refuse a mismatched bundle.
+Optional SDK idle/preemption events remain hooks;
+the current facade relies on its own arbitration and abort behavior. A deferred
+cover without an idle notification expires without polling. Full pairing
+receipts and remaining acceptance limits are in
+[`recordings-pairing-validation.md`](recordings-pairing-validation.md).
 
 #### Local implementation validation (2026-11-05)
 

@@ -82,13 +82,18 @@ test("selector path traversal, URL, network host and controls fail closed", asyn
     "//fixture.invalid/x",
     "/x\u0000y",
     "C:\\private",
+    "/fixture/%2e.jpg",
+    "/fixture/cover?query",
+    "/fixture/cover#fragment",
+    "/fixture/\u0080.jpg",
     "/" + "x".repeat(2048),
   ].entries()) {
     const raw = row(h.scope, index);
     raw.coverSelector.thumbPath = p;
     raw.coverSelector.selectorMac = recordingMac(
       h.store.key,
-      "selector",
+      "recordings.selector.v1",
+      h.scope.accountNamespace,
       raw.sourceKey,
       raw.cameraSn,
       h.scope.stationSn,
@@ -149,7 +154,8 @@ test("shared observed path cannot cause uncached attribution to a different even
   b.coverSelector.thumbPath = a.coverSelector.thumbPath;
   b.coverSelector.selectorMac = recordingMac(
     h.store.key,
-    "selector",
+    "recordings.selector.v1",
+    h.scope.accountNamespace,
     b.sourceKey,
     b.cameraSn,
     h.scope.stationSn,

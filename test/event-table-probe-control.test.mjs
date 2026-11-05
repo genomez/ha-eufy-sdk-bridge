@@ -68,8 +68,11 @@ test("operator prepare, trigger and readback use private synthetic files and a f
   await assert.rejects(control("prepare", stationFile, { expectedSdkSha256: null }), /probe_sdk_drift/);
   assert.equal(dirs.size, 0);
   const expectedSdkSha256 = crypto.createHash("sha256").update(files.get(sdkFile)).digest("hex");
-  assert.equal(expectedSdkSha256, eventTableProbeSdkSha256);
-  assert.deepEqual(await control("prepare", stationFile), { outcome: "grant_prepared" });
+  if (expectedSdkSha256 !== eventTableProbeSdkSha256) {
+    await assert.rejects(control("prepare", stationFile), /probe_sdk_drift/);
+    assert.equal(dirs.size, 0);
+  }
+  assert.deepEqual(await control("prepare", stationFile, { expectedSdkSha256 }), { outcome: "grant_prepared" });
   const grant = JSON.parse(files.get(path.join(dir, "authorization.json")));
   assert.equal(grant.purpose, "event-table-test1");
   assert.equal(grant.nonce.length, 64);

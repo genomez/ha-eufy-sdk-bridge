@@ -12,7 +12,7 @@ import {
   sanitizePlaybackReceipt,
   validatePlaybackGrant,
 } from "../src/event-playback-probe.mjs";
-import { eventPlaybackProbeFiles, eventPlaybackProbeSdkSha256 } from "../src/event-playback-probe-pins.mjs";
+import { eventPlaybackProbeFiles, eventPlaybackProbeSdkRuntimeSha256 } from "../src/event-playback-probe-pins.mjs";
 
 const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -25,7 +25,7 @@ export async function control(
     safetyDir = "/data/media-safety",
     sdkFile = fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")),
     bridgeFiles = eventPlaybackProbeFiles.map((name) => ({ name, file: path.join(appDir, name) })),
-    expectedSdkSha256 = eventPlaybackProbeSdkSha256,
+    expectedSdkSha256 = eventPlaybackProbeSdkRuntimeSha256,
     ownerApproved = false,
     recoveryFile,
     quietDeadlineNs,

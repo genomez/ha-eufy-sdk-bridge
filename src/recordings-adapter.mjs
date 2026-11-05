@@ -1,12 +1,35 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { failure, recordingEnrollment, reasonOf } from "./recordings-policy.mjs";
 
+const policies = new WeakMap();
+
+/** Share the SDK's installed policy with local roster enrollment, without discovery. */
+export function registerRecordingsPolicy(client, policy) {
+  policies.set(client, policy);
+  return client;
+}
+
 /** The only SDK-specific seam. Never calls discovery, research probes or camera APIs. */
-export function recordingsAdapter(eufy) {
+export function recordingsAdapter(eufy, identityKey) {
   return {
-    supported: () => typeof eufy.readRecordingCatalog === "function" && typeof eufy.readRecordingCover === "function",
-    account: () => eufy.api?.auth?.userId,
-    enrollment: (rows) => recordingEnrollment(rows, eufy.getInventoryConflicts?.() ?? []),
+    supported: () =>
+      typeof eufy.getRecordingAccountNamespace === "function" &&
+      typeof eufy.readRecordingCatalog === "function" &&
+      typeof eufy.readRecordingCover === "function",
+    account: () => {
+      const key = identityKey();
+      return key ? (eufy.getRecordingAccountNamespace?.(key) ?? null) : null;
+    },
+    enrollment: (rows) => {
+      const enrollment = recordingEnrollment(rows, eufy.getInventoryConflicts?.() ?? []);
+      const valid = enrollment?.cameras.length === 5 ? enrollment : null;
+      const policy = policies.get(eufy);
+      if (policy) {
+        policy.stationBinding = valid?.stationSn ?? "";
+        policy.allowedCameras = new Set(valid?.cameras.map((camera) => camera.sn) ?? []);
+      }
+      return valid;
+    },
     async catalog(scope, opts) {
       return read(() => eufy.readRecordingCatalog(scope, opts));
     },
@@ -19,10 +42,19 @@ async function read(operation) {
   try {
     const result = await operation();
     if (result?.status === "ok") return result;
-    return { status: result?.status === "deferred" ? "deferred" : "unavailable", reason: reasonOf(result?.reason) };
+    return { status: result?.status === "deferred" ? "deferred" : "unavailable", reason: sdkReason(result?.reason) };
   } catch {
     return { status: "unavailable", reason: "invalid_reply" };
   }
+}
+
+/** Map SDK-only refusals into the existing finite public vocabulary. */
+function sdkReason(reason) {
+  if (["owner_unavailable", "owner_changed", "disabled"].includes(reason)) return "offline";
+  if (reason === "renewal_due") return "renewal";
+  if (["selector_invalid", "selector_reserved", "invalid_options", "send_refused"].includes(reason))
+    return "invalid_reply";
+  return reasonOf(reason);
 }
 
 /** Length-prefixed UTF-8 tuples; SDK sourceKey is already the full event HMAC. */
@@ -37,13 +69,12 @@ export function recordingMac(key, domain, ...parts) {
   return mac.digest("hex");
 }
 export const opaque = (prefix, full) => `${prefix}_${Buffer.from(full, "hex").toString("base64url").slice(0, 22)}`;
-export function recordingBinding(key, account, enrollment) {
-  if (typeof account !== "string" || !account || !enrollment) throw failure("scope_invalid");
-  const accountNamespace = recordingMac(key, "account", account);
-  const full = recordingMac(key, "scope", accountNamespace, enrollment.stationSn);
+export function recordingBinding(key, accountNamespace, enrollment) {
+  if (!/^a_[a-f0-9]{64}$/.test(accountNamespace ?? "") || !enrollment) throw failure("scope_invalid");
+  const full = recordingMac(key, "recordings.scope.v1", accountNamespace, enrollment.stationSn);
   const scopeId = opaque("s", full);
   const cameras = enrollment.cameras.map((c) => {
-    const fullId = recordingMac(key, "camera", scopeId, c.sn);
+    const fullId = recordingMac(key, "recordings.camera.v1", scopeId, c.sn);
     return { ...c, cameraId: opaque("c", fullId), fullId };
   });
   if (new Set(cameras.map((c) => c.cameraId)).size !== cameras.length) throw failure("scope_invalid");
@@ -61,6 +92,7 @@ export function recordingBinding(key, account, enrollment) {
     },
   };
 }
+/** Package exports no selector verifier; mirror its seal and path grammar at the persistence boundary. */
 export function safeSelector(selector, row, scope, key) {
   if (
     !selector ||
@@ -74,16 +106,17 @@ export function safeSelector(selector, row, scope, key) {
     typeof p !== "string" ||
     !p ||
     Buffer.byteLength(p) > 2048 ||
-    /[\x00-\x1f\x7f\\]/.test(p) ||
+    /[\x00-\x1f\x7f-\x9f\\:%?#]/u.test(p) ||
     /(^|\/)\.\.?($|\/)/.test(p) ||
-    /:|^\/\//.test(p) ||
+    p.startsWith("//") ||
     !Number.isSafeInteger(selector.observedAtMs) ||
-    selector.observedAtMs < 0
+    selector.observedAtMs <= 0
   )
     return null;
   const expected = recordingMac(
     key,
-    "selector",
+    "recordings.selector.v1",
+    scope.accountNamespace,
     selector.sourceKey,
     selector.cameraSn,
     selector.stationBinding,

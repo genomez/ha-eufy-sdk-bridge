@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createRecordingsStore, validRecordingJpeg, imageDigest } from "../src/recordings-store.mjs";
-import { recordingBinding } from "../src/recordings-adapter.mjs";
+import { recordingBinding, recordingMac } from "../src/recordings-adapter.mjs";
 import { recordingEnrollment, LIMITS } from "../src/recordings-policy.mjs";
 import { temporary, harness, row, seed, inventory, jpeg } from "./helpers/recordings-fixtures.mjs";
 
@@ -18,13 +18,101 @@ test("store key and IDs survive restart and camera rename", async (t) => {
   assert.deepEqual(second.key, h.store.key);
   const scope = recordingBinding(
     second.key,
-    "synthetic-account",
+    h.scope.accountNamespace,
     recordingEnrollment(inventory.map((r) => ({ ...r, name: "Renamed" }))),
   );
   assert.equal(scope.scopeId, h.scope.scopeId);
   assert.equal(scope.cameras[0].cameraId, h.cameraId);
   assert.equal(second.listPage(h.cameraId).rows[0].eventId, before.eventId);
   assert.equal((await second.readCover(h.cameraId, before.eventId)).sha256, imageDigest(jpeg));
+});
+
+test("cross-window path ambiguity survives restart and selector replacement without invalidating cached bytes", async (t) => {
+  const h = await harness(t),
+    a = row(h.scope, 1),
+    b = row(h.scope, 2);
+  await h.store.mergeCatalog(h.scope, [a]);
+  const eventId = a.eventId;
+  await h.store.putCover(h.scope, h.cameraId, eventId, jpeg);
+  const changed = row(h.scope, 1);
+  changed.coverSelector.thumbPath = "/fixture/replaced.jpg";
+  changed.coverSelector.selectorMac = recordingMac(
+    h.store.key,
+    "recordings.selector.v1",
+    h.scope.accountNamespace,
+    changed.sourceKey,
+    changed.cameraSn,
+    h.scope.stationSn,
+    changed.coverSelector.thumbPath,
+    changed.coverSelector.observedAtMs,
+  );
+  await h.store.mergeCatalog(h.scope, [changed]);
+  const second = createRecordingsStore(h.root, { clock: h.clocks.now });
+  await second.load();
+  t.after(() => second.close());
+  b.coverSelector.thumbPath = a.coverSelector.thumbPath;
+  b.coverSelector.selectorMac = recordingMac(
+    h.store.key,
+    "recordings.selector.v1",
+    h.scope.accountNamespace,
+    b.sourceKey,
+    b.cameraSn,
+    h.scope.stationSn,
+    b.coverSelector.thumbPath,
+    b.coverSelector.observedAtMs,
+  );
+  await second.mergeCatalog(h.scope, [b]);
+  assert.ok(second.snapshot.rows.every((r) => r.selector === null && r.pathAmbiguous));
+  assert.deepEqual((await second.readCover(h.cameraId, eventId)).jpeg, jpeg);
+  await second.mergeCatalog(h.scope, [changed]);
+  assert.equal(second.row(h.cameraId, eventId).selector, null);
+  assert.equal(second.row(h.cameraId, eventId).pathKeys.length, 2);
+});
+
+test("private SDK path fingerprints retain ambiguity even without selectors", async (t) => {
+  const h = await harness(t),
+    a = row(h.scope, 1),
+    b = row(h.scope, 2),
+    c = row(h.scope, 3);
+  const coverPathKey = recordingMac(
+    h.store.key,
+    "recordings.path.v1",
+    h.scope.accountNamespace,
+    h.scope.stationSn,
+    c.coverSelector.thumbPath,
+  );
+  await h.store.mergeCatalog(h.scope, [
+    { ...a, coverSelector: null, coverPathKey },
+    { ...b, coverSelector: null, coverPathKey },
+  ]);
+  await h.store.mergeCatalog(h.scope, [c]);
+  assert.ok(h.store.snapshot.rows.every((r) => r.selector === null && r.pathAmbiguous));
+});
+
+test("path history overflow stays bounded and fails closed after restart", async (t) => {
+  const h = await harness(t);
+  for (let i = 0; i < 65; i++) {
+    const raw = row(h.scope);
+    raw.coverSelector.thumbPath = `/fixture/path-${i}.jpg`;
+    raw.coverSelector.selectorMac = recordingMac(
+      h.store.key,
+      "recordings.selector.v1",
+      h.scope.accountNamespace,
+      raw.sourceKey,
+      raw.cameraSn,
+      h.scope.stationSn,
+      raw.coverSelector.thumbPath,
+      raw.coverSelector.observedAtMs,
+    );
+    await h.store.mergeCatalog(h.scope, [raw]);
+  }
+  assert.equal(h.store.snapshot.rows[0].pathKeys.length, 64);
+  assert.equal(h.store.snapshot.pathsUncertain, true);
+  const second = createRecordingsStore(h.root, { clock: h.clocks.now });
+  await second.load();
+  t.after(() => second.close());
+  await second.mergeCatalog(h.scope, [row(h.scope, 100)]);
+  assert.ok(second.snapshot.rows.every((r) => r.selector === null));
 });
 test("missing key with existing catalog fails closed", async (t) => {
   const h = await harness(t);

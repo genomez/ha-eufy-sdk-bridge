@@ -1,5 +1,7 @@
-/** Stored playback runtime pin from the authorized offline build, 2026-11-04. */
-export const eventPlaybackProbeSdkSha256 = "7ee043e81424e9e4a6bd141a3dc3cf065eb6343cd713b9174bec279d4887f822";
+/** SDK distribution tarball pin from the authorized offline build, 2026-11-05. */
+export const eventPlaybackProbeSdkSha256 = "8a661491bb5ab6d329e7f257b8d132fc19a9bd1ce0f49b993eae55946c926895";
+/** Probe gates hash the installed JavaScript bundle, separately from its distribution tarball. */
+export const eventPlaybackProbeSdkRuntimeSha256 = "153eb94507defc80e6ebb9312229764547f36b9aaa93f61e703d36b83d2df2f0";
 export const eventPlaybackProbeFiles = [
   "bin/event-playback-probe-control.mjs",
   "bin/event-table-probe-control.mjs",
@@ -41,6 +43,10 @@ export const eventPlaybackProbeFiles = [
   "src/power.mjs",
   "src/property-value.mjs",
   "src/redact.mjs",
+  "src/recordings-adapter.mjs",
+  "src/recordings-policy.mjs",
+  "src/recordings-store.mjs",
+  "src/recordings.mjs",
   "src/request-evidence.mjs",
   "src/rtc-connection-evidence.mjs",
   "src/service.mjs",

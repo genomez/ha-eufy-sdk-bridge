@@ -266,7 +266,11 @@ test("account replacement cancels the old notification coalescer", async (t) => 
   await tick();
   h.eufy.api.auth.userId = "replacement-fixture";
   await h.manager.syncInventory(inventory);
-  const scope = recordingBinding(h.store.key, h.eufy.api.auth.userId, recordingEnrollment(inventory));
+  const scope = recordingBinding(
+    h.store.key,
+    h.eufy.getRecordingAccountNamespace(h.store.key),
+    recordingEnrollment(inventory),
+  );
   await h.store.mergeCatalog(scope, [row(scope)]);
   h.clocks.advance(5000);
   h.ctx.state.flags.ready = false;

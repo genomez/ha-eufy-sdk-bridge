@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { LIMITS, validId, failure } from "./recordings-policy.mjs";
-import { opaque, safeSelector } from "./recordings-adapter.mjs";
+import { opaque, safeSelector, recordingMac } from "./recordings-adapter.mjs";
 
 export const imageDigest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const hex = (s) => typeof s === "string" && /^[a-f0-9]{64}$/.test(s);
@@ -258,6 +258,8 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
     if (!hex(row.sourceKey)) throw failure("invalid");
     const camera = scope.cameras.find((c) => c.sn === row.cameraSn);
     const eventId = opaque("e", row.sourceKey);
+    if (row.scopeId !== scope.scopeId || row.cameraId !== camera.cameraId || row.eventId !== eventId)
+      throw failure("invalid");
     if (previous && previous.sourceKey !== row.sourceKey) throw failure("invalid");
     if (previous && previous.cameraId !== camera.cameraId) throw failure("invalid");
     const status = ["valid", "unknown_format", "ambiguous", "invalid"].includes(row.timeStatus)
@@ -268,6 +270,11 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
     const end = valid ? timestamp(row.endedAtMs) : null;
     const duration =
       start !== null && end !== null && end >= start && end - start <= 86_400_000 ? (end - start) / 1000 : null;
+    const selector = safeSelector(row.coverSelector, row, scope, key);
+    const pathKeys = new Set(previous?.pathKeys ?? []);
+    if (hex(row.coverPathKey)) pathKeys.add(row.coverPathKey);
+    if (previous?.selector) pathKeys.add(pathKey(scope, previous.selector));
+    if (selector) pathKeys.add(pathKey(scope, selector));
     return {
       sourceKey: row.sourceKey,
       cameraId: camera.cameraId,
@@ -285,11 +292,31 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
       firstObservedAtMs: previous?.firstObservedAtMs ?? clock(),
       lastObservedAtMs: clock(),
       stationPresence: "seen_in_latest_window",
-      selector: safeSelector(row.coverSelector, row, scope, key),
+      selector,
+      pathKeys: [...pathKeys].slice(0, 64),
+      pathHistoryFull: previous?.pathHistoryFull === true || pathKeys.size > 64,
+      pathAmbiguous: previous?.pathAmbiguous === true,
       cover: previous?.cover ?? null,
       negativeUntilMs: previous?.negativeUntilMs ?? null,
       coverEvicted: previous?.coverEvicted === true,
     };
+  }
+  function pathKey(scope, selector) {
+    return recordingMac(key, "recordings.path.v1", scope.accountNamespace, scope.stationSn, selector.thumbPath);
+  }
+  /** Retained path fingerprints survive selector replacement and restart; cached bytes keep their identity. */
+  function checkPaths(next, scope) {
+    const owners = new Map();
+    next.pathsUncertain ||= next.rows.some((row) => row.pathHistoryFull);
+    for (const row of next.rows) {
+      if (row.selector && !row.pathKeys) row.pathKeys = [pathKey(scope, row.selector)];
+      for (const hash of row.pathKeys ?? []) {
+        const other = owners.get(hash);
+        if (other && other.sourceKey !== row.sourceKey) other.pathAmbiguous = row.pathAmbiguous = true;
+        else owners.set(hash, row);
+      }
+    }
+    for (const row of next.rows) if (next.pathsUncertain || row.pathAmbiguous) row.selector = null;
   }
   return {
     async load() {
@@ -346,6 +373,8 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
               opaque("e", r.sourceKey) !== r.eventId ||
               timestamp(r.firstObservedAtMs) === null ||
               timestamp(r.lastObservedAtMs) === null ||
+              (r.pathKeys !== undefined &&
+                (!Array.isArray(r.pathKeys) || r.pathKeys.length > 64 || !r.pathKeys.every(hex))) ||
               (r.cover &&
                 (!hex(r.cover.sha256) ||
                   r.cover.file !== `${r.eventId}.${r.cover.sha256}.jpg` ||
@@ -412,6 +441,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
           .filter((r) => !seen.has(r.eventId))
           .map((r) => ({ ...r, stationPresence: "not_in_latest_window" }))
           .concat(incoming);
+        checkPaths(next, scope);
         next.lastSuccessfulQueryAtMs = clock();
         if (!isCurrent()) return;
         await commit(next, isCurrent);

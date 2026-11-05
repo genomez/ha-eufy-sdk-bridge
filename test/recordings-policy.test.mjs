@@ -290,10 +290,12 @@ test("station queue has at most four unsent demands across camera interests", as
   const rows = Array.from({ length: 5 }, (_, i) => {
     const r = row(h.scope, i);
     r.cameraSn = inventory[i + 1].sn;
+    r.cameraId = h.scope.cameras[i].cameraId;
     r.coverSelector.cameraSn = r.cameraSn;
     r.coverSelector.selectorMac = recordingMac(
       h.store.key,
-      "selector",
+      "recordings.selector.v1",
+      h.scope.accountNamespace,
       r.sourceKey,
       r.cameraSn,
       h.scope.stationSn,

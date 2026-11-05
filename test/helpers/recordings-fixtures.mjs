@@ -75,23 +75,28 @@ export function row(scope, index = 0, extra = {}) {
   };
   selector.selectorMac = recordingMac(
     scope.sdkScope.identityKey,
-    "selector",
+    "recordings.selector.v1",
+    scope.accountNamespace,
     sourceKey,
     selector.cameraSn,
     selector.stationBinding,
     selector.thumbPath,
     selector.observedAtMs,
   );
-  const startedAtMs = 1_800_000_000_000 + index * 60_000;
+  const startedAtMs = Date.parse("2026-11-05T18:00:00Z") + index * 60_000;
+  const sourceStartLocal = new Date(startedAtMs - 6 * 3_600_000).toISOString().slice(0, 19).replace("T", " ");
   return {
+    scopeId: scope.scopeId,
+    cameraId: scope.cameras[0].cameraId,
+    eventId: `e_${Buffer.from(sourceKey, "hex").toString("base64url").slice(0, 22)}`,
     cameraSn: inventory[1].sn,
     sourceKey,
-    identityStartBasis: `string:fixture-${index}`,
-    sourceStartLocal: "2026-11-05 12:00:00",
+    identityStartBasis: recordingMac(scope.sdkScope.identityKey, "recordings.start.v1", sourceStartLocal),
+    sourceStartLocal,
     startedAtMs,
     endedAtMs: startedAtMs + 10_000,
     startedAtUtc: new Date(startedAtMs).toISOString(),
-    startedAtLocal: "2026-11-05T12:00:00-06:00",
+    startedAtLocal: sourceStartLocal.replace(" ", "T") + "-06:00",
     timeStatus: "valid",
     durationSeconds: 10,
     durationBasis: "end_minus_start",
@@ -109,6 +114,7 @@ export async function harness(t, options = {}) {
     calls = { catalog: [], cover: [] },
     events = [];
   eufy.api = { auth: { userId: "synthetic-account" } };
+  eufy.getRecordingAccountNamespace = (key) => `a_${recordingMac(key, "recordings.account.v1", eufy.api.auth.userId)}`;
   eufy.readRecordingCatalog = async (s, o) => {
     calls.catalog.push({ s, o });
     return options.catalog ? options.catalog(s, o) : { status: "ok", rows: [row(scope)] };
@@ -131,7 +137,11 @@ export async function harness(t, options = {}) {
   ctx.recordings = manager;
   await manager.load();
   await manager.syncInventory(inventory);
-  const scope = recordingBinding(store.key, eufy.api.auth.userId, recordingEnrollment(inventory));
+  const scope = recordingBinding(
+    store.key,
+    eufy.getRecordingAccountNamespace(store.key),
+    recordingEnrollment(inventory),
+  );
   t.after(() => manager.stop());
   const cameraId = scope.cameras[0].cameraId,
     owner = {};

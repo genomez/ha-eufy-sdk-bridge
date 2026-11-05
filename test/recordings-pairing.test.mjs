@@ -1,0 +1,376 @@
+import "./fixtures/no-socket-guard.mjs";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import http from "node:http";
+import { MemorySessionStore, MemoryFcmStore, buildPortalHeader, parsePortalHeader } from "@mega-yfue/eufy-sdk";
+import { createEufy } from "../src/client.mjs";
+import { createState } from "../src/state.mjs";
+import { createRecordings } from "../src/recordings.mjs";
+import { createRecordingsStore } from "../src/recordings-store.mjs";
+import { recordingsAdapter, safeSelector } from "../src/recordings-adapter.mjs";
+import { createWsServer } from "../src/ws-server.mjs";
+import { createHttpHandler } from "../src/http-routes.mjs";
+import { createEventImageStore } from "../src/event-image-store.mjs";
+import { eventPlaybackCodePins } from "../src/event-playback-probe.mjs";
+import { eventPlaybackProbeSdkSha256, eventPlaybackProbeSdkRuntimeSha256 } from "../src/event-playback-probe-pins.mjs";
+import { fileURLToPath } from "node:url";
+import { temporary, inventory, jpeg, clock, until } from "./helpers/recordings-fixtures.mjs";
+
+const account = "SYNTHETIC_ACCOUNT_CANARY";
+const recordId = 987654321;
+const coverPath = "/synthetic/PATH_CANARY.jpg";
+const rawRow = (extra = {}) => ({
+  device_sn: inventory[1].sn,
+  record_id: recordId,
+  start_time: "2026-11-05 12:00:00",
+  end_time: "2026-11-05 12:00:12",
+  thumb_path: coverPath,
+  event_type: 3,
+  detect_type: 4,
+  unknown: "VENDOR_CANARY",
+  ...extra,
+});
+
+/** Synthetic RTC wire boundary; the installed SDK owns the router, facade and normalization. */
+class SyntheticSession extends EventEmitter {
+  isConnected = false;
+  sent = [];
+  rows = [rawRow()];
+  reply = true;
+  async connect() {
+    this.isConnected = true;
+    this.emit("connected");
+  }
+  close() {
+    this.isConnected = false;
+    this.emit("close");
+  }
+  notify(commandId, data) {
+    const body = Buffer.from(JSON.stringify(data));
+    this.emit("commandData", Buffer.concat([buildPortalHeader(commandId, body.length, 255, 0), body]), 3);
+  }
+  sendCommand(packet) {
+    this.sent.push(packet);
+    queueMicrotask(() => {
+      const h = parsePortalHeader(packet);
+      this.emit(
+        "commandData",
+        Buffer.concat([buildPortalHeader(h.commandId, 4, h.channel, h.segment, 1), Buffer.alloc(4)]),
+        1,
+      );
+      if (h.commandId === 1103) this.notify(1103, { params: [{ channel: 255, param_type: 1224, param_value: 1 }] });
+      if (h.commandId !== 1350 || !this.reply) return;
+      const query = JSON.parse(packet.subarray(16).toString());
+      if (query.cmd === 1306)
+        this.notify(1306, {
+          cmd: 10000,
+          table: "history_record_info",
+          transaction: query.payload.transaction,
+          mIntRet: 0,
+          data: this.rows,
+        });
+      if (query.cmd === 1308) this.notify(1308, { file: query.payload[0].file, content: jpeg.toString("base64") });
+    });
+    return true;
+  }
+  queries(cmd) {
+    return this.sent
+      .filter((p) => parsePortalHeader(p).commandId === 1350)
+      .map((p) => JSON.parse(p.subarray(16).toString()))
+      .filter((p) => p.cmd === cmd);
+  }
+}
+
+async function paired(t) {
+  const root = await temporary(t),
+    clocks = clock(),
+    logs = [];
+  const baseMono = clocks.monotonic;
+  let fractionalTick = 0;
+  clocks.monotonic = () => baseMono() + ++fractionalTick * 0.01;
+  let monotonic = 100_000;
+  t.mock.method(performance, "now", () => monotonic);
+  const logger = Object.fromEntries(
+    ["debug", "info", "warn", "error"].map((level) => [level, (...args) => logs.push(args)]),
+  );
+  const eufy = createEufy(
+    { cfg: { email: "synthetic@example.invalid", password: "synthetic", recordings: { enabled: true } } },
+    {
+      store: new MemorySessionStore(),
+      pushStore: new MemoryFcmStore(),
+      storedSnapshotCache: false,
+      pollMs: 0,
+      rtc: { idleCloseMs: 600_000 },
+      logger,
+    },
+  );
+  // Seed only local auth/roster/lifecycle state; no facade method is replaced.
+  eufy.mega.auth_ = { userId: "SYNTHETIC_PORTAL_CANARY", accountUserId: account, authToken: "synthetic-unused" };
+  eufy.registry.devices = inventory.map((r, index) => ({
+    ...r,
+    params: {},
+    raw: index ? { device_channel: index - 1 } : {},
+  }));
+  eufy.realtimeGeneration = { epoch: eufy.realtimeEpoch, abort: new AbortController() };
+  const session = new SyntheticSession();
+  eufy.rtc.deps.createSession = () => session;
+  const store = createRecordingsStore(root, { clock: clocks.now });
+  const ctx = {
+    cfg: { recordings: { enabled: true, root }, go2rtcApi: "", streamIdleMs: 0 },
+    eufy,
+    state: createState(),
+    SCHEMA_VERSION: 1,
+    authStatus: () => ({ ready: false }),
+    DEBUG: true,
+    dbg: (...args) => logs.push(args),
+    broadcast: () => {},
+  };
+  ctx.state.flags.ready = true;
+  const manager = createRecordings(ctx, { store, clocks });
+  ctx.recordings = manager;
+  t.after(async () => {
+    await manager.stop();
+    eufy.realtimeGeneration.abort.abort();
+    eufy.realtimeGeneration = undefined;
+    await eufy.disconnect();
+  });
+  await manager.load();
+  await manager.syncInventory(inventory);
+  const cameraId = manager.cameras().cameras[0].cameraId;
+  await eufy.rtc.dispatchCommand(inventory[0].sn, {
+    kind: "set-payload",
+    cmd: 1224,
+    payload: { mode_type: 1 },
+    channel: 0,
+  });
+  await eufy.rtc.refreshInformation(inventory[0].sn);
+  monotonic += 61_000;
+  session.sent.length = 0;
+  logs.length = 0;
+  const control = createWsServer(ctx, http.createServer());
+  const ws = new EventEmitter(),
+    replies = [];
+  ws.readyState = ws.OPEN = 1;
+  ws.send = (data) => replies.push(JSON.parse(data));
+  ws.close = ws.terminate = () => ws.emit("close");
+  control.wss.emit("connection", ws);
+  t.after(async () => {
+    ws.close();
+    await control.closeWebSocketServer();
+  });
+  let id = 0;
+  const rpc = async (cmd, args = {}) => {
+    const requestId = ++id;
+    ws.emit("message", Buffer.from(JSON.stringify({ id: requestId, cmd, ...args })));
+    await until(() => replies.some((r) => r.id === requestId));
+    const reply = replies.find((r) => r.id === requestId);
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    return reply.recordings;
+  };
+  const request = async (eventId) => {
+    const res = new EventEmitter();
+    res.headers = {};
+    res.setHeader = (name, value) => {
+      res.headers[name.toLowerCase()] = value;
+    };
+    res.writeHead = (status, headers = {}) => {
+      res.status = status;
+      for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
+    };
+    res.end = (body) => {
+      res.body = body;
+      res.emit("finish");
+    };
+    await createHttpHandler(ctx)(
+      { url: `/recordings/v1/covers/${cameraId}/${eventId}`, method: "GET", headers: { host: "synthetic.invalid" } },
+      res,
+    );
+    return res;
+  };
+  return {
+    ctx,
+    eufy,
+    manager,
+    store,
+    clocks,
+    cameraId,
+    session,
+    logs,
+    replies,
+    rpc,
+    request,
+    advance(ms) {
+      monotonic += ms;
+      clocks.advance(ms);
+    },
+  };
+}
+
+test("packed SDK facade pairs RTC catalog and cover with public WS and cache-only HTTP", async (t) => {
+  const h = await paired(t);
+  h.ctx.eventImageStore = createEventImageStore(h.ctx.cfg.recordings.root);
+  const latestTime = Date.parse("2026-11-05T19:00:00Z");
+  const latest = h.ctx.eventImageStore.put(inventory[1].sn, { jpeg, eventTime: latestTime }).snapshot;
+  assert.deepEqual(h.eufy.opts.rtc.recordings.allowedCameras, new Set(inventory.slice(1, 6).map((c) => c.sn)));
+  assert.equal(h.eufy.opts.rtc.recordings.stationBinding, inventory[0].sn);
+  assert.equal((await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" })).events.length, 0);
+  await until(() => h.store.snapshot.rows.length === 1);
+  const page = await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  const event = page.events[0];
+  assert.equal(event.startedAtUtc, "2026-11-05T18:00:00.000Z");
+  assert.equal(event.startedAtLocal, "2026-11-05T12:00:00-06:00");
+  assert.equal(event.startedAtMs, Date.parse(event.startedAtUtc));
+  assert.equal(event.durationSeconds, 12);
+  assert.equal(event.timeStatus, "valid");
+  assert.equal(event.playable, false);
+  assert.equal(event.cameraId, h.cameraId);
+  assert.ok(page.coverEligibleEventIds.includes(event.eventId));
+  assert.equal(h.session.queries(1306).length, 1);
+  assert.equal((await h.request(event.eventId)).status, 404);
+  assert.equal(h.session.queries(1308).length, 0);
+  const scope = { stationSn: inventory[0].sn, accountNamespace: h.eufy.getRecordingAccountNamespace(h.store.key) };
+  const stored = h.store.snapshot.rows[0];
+  assert.ok(
+    safeSelector(stored.selector, { sourceKey: stored.sourceKey, cameraSn: inventory[1].sn }, scope, h.store.key),
+  );
+  assert.equal(
+    safeSelector(
+      stored.selector,
+      { sourceKey: stored.sourceKey, cameraSn: inventory[1].sn },
+      { ...scope, accountNamespace: "a_" + "0".repeat(64) },
+      h.store.key,
+    ),
+    null,
+  );
+  const pending = await h.rpc("recordings.cover", {
+    cameraId: h.cameraId,
+    eventId: event.eventId,
+    browseId: page.browseId,
+    mode: "request_if_admitted",
+  });
+  assert.equal(pending.state, "pending");
+  await until(() => h.store.snapshot.rows[0].cover !== null);
+  const ready = await h.rpc("recordings.cover", {
+    cameraId: h.cameraId,
+    eventId: event.eventId,
+    browseId: null,
+    mode: "cache_only",
+  });
+  assert.equal(ready.state, "ready");
+  h.ctx.state.flags.ready = false;
+  const res = await h.request(event.eventId);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, jpeg);
+  assert.equal(res.headers["x-eufy-event-time"], event.startedAtUtc);
+  assert.equal(res.headers["x-eufy-image-sha256"], ready.sha256);
+  assert.equal(res.headers["content-type"], "image/jpeg");
+  assert.equal(h.session.queries(1308).length, 1);
+  assert.deepEqual(h.session.queries(1308)[0].payload, [{ file: coverPath }]);
+  assert.equal(
+    (await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "cache_only" })).events[0].coverState,
+    "cached",
+  );
+  const publicOutput = JSON.stringify([h.replies, res.headers, h.logs]);
+  for (const value of [
+    account,
+    "SYNTHETIC_PORTAL_CANARY",
+    String(recordId),
+    coverPath,
+    "VENDOR_CANARY",
+    ...inventory.map((r) => r.sn),
+    "sourceKey",
+    "selectorMac",
+    "identityStartBasis",
+    "coverPathKey",
+    "pathKeys",
+  ])
+    assert.ok(!publicOutput.includes(value), value);
+  assert.deepEqual(h.ctx.eventImageStore.read(inventory[1].sn), latest);
+});
+
+test("real SDK shared-path suppression stays unavailable across windows and store restart", async (t) => {
+  const h = await paired(t);
+  h.session.rows = [rawRow(), rawRow({ record_id: recordId + 1 })];
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.store.snapshot.rows.length === 2);
+  assert.ok(h.store.snapshot.rows.every((r) => r.selector === null && r.pathKeys.length === 1));
+  const restored = createRecordingsStore(h.ctx.cfg.recordings.root, { clock: h.clocks.now });
+  await restored.load();
+  assert.ok(restored.snapshot.rows.every((r) => r.pathAmbiguous));
+  await restored.close();
+  h.advance(120_001);
+  h.session.rows = [rawRow({ record_id: recordId + 2 })];
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.store.snapshot.rows.length === 3);
+  const page = await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  assert.ok(page.events.every((r) => r.coverState === "unavailable"));
+  const result = await h.rpc("recordings.cover", {
+    cameraId: h.cameraId,
+    eventId: page.events[0].eventId,
+    browseId: page.browseId,
+    mode: "request_if_admitted",
+  });
+  assert.equal(result.state, "unavailable");
+  assert.equal(h.session.queries(1308).length, 0);
+});
+
+test("bridge deadline aborts the real SDK without retaining catalog rows", async (t) => {
+  const h = await paired(t);
+  h.session.reply = false;
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.session.queries(1306).length === 1);
+  h.advance(8_001);
+  await until(() => h.eufy.rtc.recordingReads.size === 0);
+  const page = await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "cache_only" });
+  assert.equal(page.refresh.reason, "timeout");
+  assert.equal(page.refresh.state, "failed");
+  assert.deepEqual(page.events, []);
+});
+
+test("real SDK catalog abort releases local work and suppresses late synthetic replies", async (t) => {
+  const h = await paired(t);
+  h.session.reply = false;
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.session.queries(1306).length === 1);
+  h.manager.preempt();
+  await until(() => h.eufy.rtc.recordingReads.size === 0);
+  const query = h.session.queries(1306)[0];
+  h.session.notify(1306, {
+    cmd: 10000,
+    table: "history_record_info",
+    transaction: query.payload.transaction,
+    mIntRet: 0,
+    data: [rawRow()],
+  });
+  assert.equal(h.store.snapshot.rows.length, 0);
+  assert.equal(h.session.isConnected, true);
+  assert.equal(h.eufy.rtc.sessions.get(inventory[0].sn).leases, 0);
+});
+
+test("adapter preserves public failure vocabulary and forwards SDK abort and integer timeout", async () => {
+  let seen;
+  const eufy = {
+    getRecordingAccountNamespace: () => "a_" + "1".repeat(64),
+    readRecordingCover() {},
+    readRecordingCatalog: async (scope, opts) => {
+      seen = opts;
+      return { status: "deferred", reason: "renewal_due" };
+    },
+  };
+  const adapter = recordingsAdapter(eufy, () => Buffer.alloc(32));
+  const controller = new AbortController();
+  assert.deepEqual(await adapter.catalog({}, { signal: controller.signal, timeoutMs: 7999 }), {
+    status: "deferred",
+    reason: "renewal",
+  });
+  assert.equal(seen.signal, controller.signal);
+  assert.equal(seen.timeoutMs, 7999);
+});
+
+test("playback gate pins the installed SDK bundle separately from the distribution tarball", () => {
+  const pins = eventPlaybackCodePins(fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")), []);
+  assert.equal(pins.sdkSha256, eventPlaybackProbeSdkRuntimeSha256);
+  assert.match(eventPlaybackProbeSdkSha256, /^[a-f0-9]{64}$/);
+  assert.notEqual(eventPlaybackProbeSdkSha256, eventPlaybackProbeSdkRuntimeSha256);
+});
