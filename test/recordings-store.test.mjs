@@ -27,6 +27,25 @@ test("store key and IDs survive restart and camera rename", async (t) => {
   assert.equal((await second.readCover(h.cameraId, before.eventId)).sha256, imageDigest(jpeg));
 });
 
+test("manifest timestamps require strict UTC syntax and real calendar dates", async (t) => {
+  const h = await harness(t);
+  await seed(h, 2);
+  for (const event of h.catalog().events) await h.store.putCover(h.scope, h.cameraId, event.eventId, jpeg);
+  await h.manager.stop();
+  const manifestPath = path.join(h.root, "catalog.json");
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  manifest.rows[0].startedAtUtc = "2026-02-30T18:00:00Z";
+  manifest.rows[1].startedAtUtc = "2026-11-05T12:00:00-06:00";
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+  const second = createRecordingsStore(h.root, { clock: h.clocks.now });
+  t.after(() => second.close());
+  await second.load();
+  for (const event of second.snapshot.rows) {
+    assert.equal(event.startedAtUtc, null);
+    assert.equal((await second.readCover(h.cameraId, event.eventId)).startedAtUtc, null);
+  }
+});
+
 test("cross-window path ambiguity survives restart and selector replacement without invalidating cached bytes", async (t) => {
   const h = await harness(t),
     a = row(h.scope, 1),

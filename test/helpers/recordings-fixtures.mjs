@@ -136,7 +136,8 @@ export async function harness(t, options = {}) {
   const manager = createRecordings(ctx, { store, clocks });
   ctx.recordings = manager;
   await manager.load();
-  await manager.syncInventory(inventory);
+  if (!options.early) await manager.syncInventory(inventory);
+  events.length = 0;
   const scope = recordingBinding(
     store.key,
     eufy.getRecordingAccountNamespace(store.key),

@@ -42,7 +42,13 @@ async function read(operation) {
   try {
     const result = await operation();
     if (result?.status === "ok") return result;
-    return { status: result?.status === "deferred" ? "deferred" : "unavailable", reason: sdkReason(result?.reason) };
+    return {
+      status: result?.status === "deferred" ? "deferred" : "unavailable",
+      reason: sdkReason(result?.reason),
+      ...(Number.isFinite(result?.retryAfterMs) && result.retryAfterMs >= 0
+        ? { retryAfterMs: result.retryAfterMs }
+        : {}),
+    };
   } catch {
     return { status: "unavailable", reason: "invalid_reply" };
   }

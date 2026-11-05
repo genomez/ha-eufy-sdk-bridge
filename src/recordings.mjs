@@ -25,7 +25,6 @@ export function createRecordings(
   let timer, expireTimer, notifying, notificationTimer;
   let queued = [],
     interests = new Map();
-  let idleRequested = false;
   let account;
   let inventoryGeneration = 0;
   const negatives = new Map();
@@ -67,9 +66,18 @@ export function createRecordings(
     pageSize: 100,
     coverBudget: 4,
   });
+  let lastCapability = JSON.stringify(base());
+  function publishCapability() {
+    const recordings = base();
+    const signature = JSON.stringify(recordings);
+    if (signature === lastCapability) return;
+    lastCapability = signature;
+    ctx.broadcast?.({ event: "recordings.capability", recordings });
+  }
   function guard() {
     if (!enabled() || stopped) {
       preempt();
+      publishCapability();
       throw failure("disabled");
     }
     if (!adapter.supported()) throw failure("unsupported");
@@ -77,6 +85,7 @@ export function createRecordings(
     if (adapter.account() !== account) {
       preempt();
       scope = undefined;
+      publishCapability();
     }
     if (!scope) throw failure("scope_invalid");
     return scope;
@@ -117,7 +126,6 @@ export function createRecordings(
     flight?.controller.abort();
     flight = null;
     queued = [];
-    idleRequested = false;
     cancel(timer);
     timer = null;
     cancel(expireTimer);
@@ -128,6 +136,10 @@ export function createRecordings(
     const time = mono();
     for (const [token, interest] of interests) if (interest.until <= time) interests.delete(token);
     queued = queued.filter((job) => interests.has(job.browseId));
+    if (!queued.length) {
+      cancel(timer);
+      timer = null;
+    }
     if (flight?.job && !interests.has(flight.job.browseId)) preempt();
     if (interests.size) {
       expireTimer = schedule(expire, Math.max(1, Math.min(...[...interests.values()].map((i) => i.until)) - time));
@@ -252,24 +264,23 @@ export function createRecordings(
     timer = null;
     if (!queued.length) return;
     const deadline = Math.min(...queued.map((j) => interests.get(j.browseId)?.until ?? mono()));
-    if (mono() + wait >= deadline) {
-      queued = [];
-      return;
-    }
     timer = schedule(
       () => {
         timer = null;
         flush();
       },
-      Math.max(1, wait),
+      Math.max(1, Math.min(wait, deadline - mono())),
     );
     timer?.unref?.();
   }
   function flush() {
     expire();
-    if (stopped || flight || !queued.length || !available() || !scope || !scopeValid) return;
-    idleRequested = false;
-    const wait = policy.coverWait();
+    if (stopped || flight || !queued.length || !scope || !scopeValid) return;
+    if (!available()) {
+      arm(1_000);
+      return;
+    }
+    const wait = Math.max(policy.coverWait(), (queued[0].retryAt ?? 0) - mono());
     if (wait) {
       arm(wait);
       return;
@@ -301,6 +312,9 @@ export function createRecordings(
         const result = await bounded("cover", (opts) => adapter.cover(s.sdkScope, row.selector, opts), s, generation);
         if (!current(s, generation)) return;
         if (result.status === "deferred") {
+          // The installed SDK has no idle event or retry hint. A bounded backoff
+          // re-enters all bridge and SDK admission checks without extending interest.
+          job.retryAt = mono() + Math.max(1_000, result.retryAfterMs ?? 1_000);
           if (interests.has(job.browseId) && queued.length < LIMITS.queue) queued.unshift(job);
           return;
         }
@@ -317,8 +331,7 @@ export function createRecordings(
         if (attempted) policy.completeCover();
         await persistBudget().catch(() => {});
         if (flight?.controller === controller) flight = null;
-        // A deferred SDK result waits for an explicit idle notification; no retry loop.
-        if (queued.length && (idleRequested || !queued.some((j) => j === job))) flush();
+        if (current(s, generation)) flush();
       }
     })();
   }
@@ -344,7 +357,13 @@ export function createRecordings(
       }
     },
     async syncInventory(records) {
-      if (!loaded || storeFailed || stopped || !enabled()) return;
+      if (!enabled()) {
+        preempt();
+        interests.clear();
+        publishCapability();
+        return;
+      }
+      if (!loaded || storeFailed || stopped) return;
       const sequence = ++inventoryGeneration,
         capturedAccount = adapter.account();
       try {
@@ -370,6 +389,7 @@ export function createRecordings(
         if (adapter.account() !== account) scope = undefined;
         interests.clear();
       }
+      publishCapability();
     },
     cameras(args = {}) {
       fields(args, []);
@@ -504,7 +524,6 @@ export function createRecordings(
     },
     preempt,
     idle() {
-      idleRequested = true;
       flush();
     },
     ownerLost(owner) {
@@ -516,6 +535,7 @@ export function createRecordings(
     async stop() {
       stopped = true;
       preempt();
+      publishCapability();
       interests.clear();
       cancel(notificationTimer);
       notifying = null;

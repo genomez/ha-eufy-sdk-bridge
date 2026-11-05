@@ -138,7 +138,10 @@ export function createHttpHandler(ctx) {
           "Cache-Control": "private, no-store",
           "X-Content-Type-Options": "nosniff",
           "X-Eufy-Image-Sha256": cover.sha256,
-          ...(cover.startedAtUtc ? { "X-Eufy-Event-Time": cover.startedAtUtc } : {}),
+          ...(typeof cover.startedAtUtc === "string" &&
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(cover.startedAtUtc)
+            ? { "X-Eufy-Event-Time": cover.startedAtUtc }
+            : {}),
         });
         return res.end(cover.jpeg);
       } catch {

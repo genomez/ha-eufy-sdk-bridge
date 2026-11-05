@@ -7,16 +7,29 @@ import { opaque, safeSelector, recordingMac } from "./recordings-adapter.mjs";
 
 export const imageDigest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const hex = (s) => typeof s === "string" && /^[a-f0-9]{64}$/.test(s);
-const timestamp = (v) => (Number.isSafeInteger(v) && v >= 0 ? v : null);
-const local = (v) => (typeof v === "string" && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(v) ? v : null);
-const iso = (v, utc = false) =>
-  typeof v === "string" &&
-  (utc
-    ? /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/
-    : /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?[+-]\d\d:\d\d$/
-  ).test(v)
-    ? v
-    : null;
+const timestamp = (v) => (Number.isSafeInteger(v) && v >= 0 && v <= 253402300799999 ? v : null);
+const calendar = (v) => {
+  const ms = Date.parse(v + "Z");
+  return (
+    Number.isFinite(ms) &&
+    new Date(ms).toISOString() === v.slice(0, 19) + (v.length === 19 ? ".000" : v.slice(19)) + "Z"
+  );
+};
+const local = (v) =>
+  typeof v === "string" && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(v) && calendar(v.replace(" ", "T")) ? v : null;
+const iso = (v, utc = false) => {
+  if (
+    typeof v !== "string" ||
+    !(
+      utc
+        ? /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/
+        : /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?[+-]\d\d:\d\d$/
+    ).test(v)
+  )
+    return null;
+  const wall = v.slice(0, utc ? -1 : -6);
+  return calendar(wall) && Number.isFinite(Date.parse(v)) ? v : null;
+};
 const kind = (v, label) => {
   const code = Number.isSafeInteger(v?.code) && v.code >= 0 && v.code <= 65535 ? v.code : null;
   return { code, label: code === null ? `${label} unknown` : `${label} ${code}` };
@@ -88,11 +101,11 @@ export function publicRecording(row, coverState = "not_requested") {
     durationBasis: duration === null ? "unknown" : "end_minus_start",
     eventType: kind(row.eventType, "Event"),
     detectType: kind(row.detectType, "Detection"),
-    firstObservedAtMs: row.firstObservedAtMs,
-    lastObservedAtMs: row.lastObservedAtMs,
+    firstObservedAtMs: timestamp(row.firstObservedAtMs),
+    lastObservedAtMs: timestamp(row.lastObservedAtMs),
     stationPresence: row.stationPresence === "seen_in_latest_window" ? "seen_in_latest_window" : "not_in_latest_window",
     coverState,
-    coverRevision: row.cover?.sha256?.slice(0, 22) ?? null,
+    coverRevision: hex(row.cover?.sha256) ? row.cover.sha256.slice(0, 22) : null,
     playable: false,
   };
 }
@@ -362,6 +375,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
             !Array.isArray(parsed.rows) ||
             parsed.rows.length > LIMITS.rows ||
             !Number.isSafeInteger(parsed.revision) ||
+            parsed.revision < 0 ||
             (parsed.scopeId !== null && !validId(parsed.scopeId, "s"))
           )
             throw failure("store_unavailable");
@@ -379,12 +393,42 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
                 (!hex(r.cover.sha256) ||
                   r.cover.file !== `${r.eventId}.${r.cover.sha256}.jpg` ||
                   !Number.isSafeInteger(r.cover.bytes) ||
+                  r.cover.bytes <= 0 ||
                   r.cover.bytes > LIMITS.imageBytes ||
                   timestamp(r.cover.fetchedAtMs) === null))
             )
               throw failure("store_unavailable");
           }
-          data = parsed;
+          // Treat disk metadata as untrusted. Reuse the public allowlist for
+          // display values and retain only the explicitly needed private fields.
+          data = {
+            version: 1,
+            scopeId: parsed.scopeId,
+            revision: parsed.revision,
+            accountNamespace: /^a_[a-f0-9]{64}$/.test(parsed.accountNamespace ?? "") ? parsed.accountNamespace : null,
+            history: parsed.history ?? {},
+            lastSuccessfulQueryAtMs: timestamp(parsed.lastSuccessfulQueryAtMs),
+            pathsUncertain: parsed.pathsUncertain === true,
+            rows: parsed.rows.map((r) => ({
+              ...publicRecording(r),
+              sourceKey: r.sourceKey,
+              selector: r.selector ?? null,
+              pathKeys: r.pathKeys,
+              pathHistoryFull: r.pathHistoryFull === true,
+              pathAmbiguous: r.pathAmbiguous === true,
+              coverEvicted: r.coverEvicted === true,
+              negativeUntilMs: timestamp(r.negativeUntilMs),
+              cover: r.cover
+                ? {
+                    file: r.cover.file,
+                    sha256: r.cover.sha256,
+                    bytes: r.cover.bytes,
+                    fetchedAtMs: r.cover.fetchedAtMs,
+                    accessedAtMs: timestamp(r.cover.accessedAtMs) ?? r.cover.fetchedAtMs,
+                  }
+                : null,
+            })),
+          };
           await io.chmod(file("catalog.json"), 0o600);
         }
         loaded = true;
@@ -482,7 +526,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
             bytes: jpeg.length,
             sha256: row.cover.sha256,
             coverRevision: row.cover.sha256.slice(0, 22),
-            startedAtUtc: row.startedAtUtc,
+            startedAtUtc: row.timeStatus === "valid" ? iso(row.startedAtUtc, true) : null,
           };
         } catch {
           const next = structuredClone(data),

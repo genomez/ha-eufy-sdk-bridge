@@ -2,15 +2,24 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { createWsServer } from "../src/ws-server.mjs";
 import { createHttpHandler } from "../src/http-routes.mjs";
 import { harness, seed, jpeg, until, tick, inventory, row } from "./helpers/recordings-fixtures.mjs";
 import { recordingBinding } from "../src/recordings-adapter.mjs";
 import { recordingEnrollment } from "../src/recordings-policy.mjs";
+import { createRecordingsStore } from "../src/recordings-store.mjs";
+import { createRecordings } from "../src/recordings.mjs";
 
 async function socket(t, h, allowCommand) {
   const server = http.createServer();
   const control = createWsServer(h.ctx, server, { allowCommand });
+  const previous = h.ctx.broadcast;
+  h.ctx.broadcast = (event) => {
+    previous(event);
+    control.broadcast(event);
+  };
   const ws = new EventEmitter();
   ws.readyState = ws.OPEN = 1;
   const replies = [];
@@ -60,6 +69,85 @@ test("hello advertises additive browse-only capability without changing schema",
     pageSize: 100,
     coverBudget: 4,
   });
+});
+
+test("early clients receive enrollment, invalidation and replacement capabilities without reconnecting", async (t) => {
+  const h = await harness(t, { early: true }),
+    s = await socket(t, h);
+  assert.equal(s.replies[0].recordings.enabled, false);
+  await h.manager.syncInventory(inventory);
+  assert.deepEqual(s.replies.at(-1), { event: "recordings.capability", recordings: h.manager.capability() });
+  assert.equal(s.replies.at(-1).recordings.enabled, true);
+  const count = s.replies.length;
+  await h.manager.syncInventory(inventory);
+  assert.equal(s.replies.length, count);
+  await h.manager.syncInventory([...inventory, inventory[0]]);
+  assert.equal(s.replies.at(-1).recordings.enabled, false);
+  h.eufy.api.auth.userId = "replacement-fixture";
+  await h.manager.syncInventory(inventory);
+  assert.equal(s.replies.at(-1).recordings.enabled, true);
+  assert.notEqual(s.replies.at(-1).recordings.scopeId, h.scope.scopeId);
+  assert.deepEqual(h.calls, { catalog: [], cover: [] });
+});
+
+test("corrupt manifest metadata cannot reach HTTP headers or catalog DTOs", async (t) => {
+  const h = await harness(t);
+  await seed(h);
+  const eventId = h.catalog().events[0].eventId;
+  await h.store.putCover(h.scope, h.cameraId, eventId, jpeg);
+  await h.manager.stop();
+  const manifestPath = path.join(h.root, "catalog.json");
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  const canary = "PRIVATE_MANIFEST_CANARY";
+  Object.assign(manifest.rows[0], {
+    startedAtUtc: canary,
+    startedAtLocal: canary,
+    sourceStartLocal: canary,
+    startedAtMs: canary,
+    endedAtMs: canary,
+    eventType: { code: 1, label: canary },
+    detectType: { code: 2, label: canary },
+    stationPresence: canary,
+    durationSeconds: canary,
+    unknown: canary,
+  });
+  manifest.lastSuccessfulQueryAtMs = canary;
+  manifest.rows[0].cover.accessedAtMs = canary;
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+  const store = createRecordingsStore(h.root, { clock: h.clocks.now });
+  const manager = createRecordings(h.ctx, { store, clocks: h.clocks });
+  t.after(() => manager.stop());
+  h.ctx.recordings = manager;
+  await manager.load();
+  await manager.syncInventory(inventory);
+  const response = await request(h, `/recordings/v1/covers/${h.cameraId}/${eventId}`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, jpeg);
+  assert.equal(response.headers["x-eufy-event-time"], undefined);
+  const page = manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" });
+  assert.equal(page.events[0].startedAtUtc, null);
+  assert.equal(page.lastSuccessfulQueryAtMs, null);
+  assert.ok(!JSON.stringify({ headers: response.headers, page }).includes(canary));
+  assert.ok(!JSON.stringify(store.snapshot).includes(canary));
+  assert.deepEqual(h.calls, { catalog: [], cover: [] });
+});
+
+test("HTTP independently omits non-UTC or untrusted time header values", async (t) => {
+  const h = await harness(t);
+  const eventId = row(h.scope).eventId;
+  for (const startedAtUtc of [
+    "PRIVATE_HEADER_CANARY",
+    "2026-11-05T12:00:00-06:00",
+    "2026-11-05T18:00:00Z\r\nX-Leak: private",
+    null,
+  ]) {
+    h.ctx.recordings = {
+      cachedCover: async () => ({ jpeg, bytes: jpeg.length, sha256: "a".repeat(64), startedAtUtc }),
+    };
+    const response = await request(h, `/recordings/v1/covers/${h.cameraId}/${eventId}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers["x-eufy-event-time"], undefined);
+  }
 });
 test("WS cameras/catalog use recordings envelope even when Eufy session is offline", async (t) => {
   const h = await harness(t);
@@ -287,5 +375,5 @@ test("account replacement cancels the old notification coalescer", async (t) => 
   await tick();
   h.clocks.advance(1000);
   h.clocks.advance(1000);
-  assert.ok(h.events.every((event) => event.scopeId === scope.scopeId));
+  assert.ok(h.events.every((event) => (event.scopeId ?? event.recordings?.scopeId) === scope.scopeId));
 });

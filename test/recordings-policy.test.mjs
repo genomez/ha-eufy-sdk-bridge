@@ -5,7 +5,7 @@ import { loadConfig } from "../src/config.mjs";
 import { createRecordingsStore } from "../src/recordings-store.mjs";
 import { createRecordings } from "../src/recordings.mjs";
 import { recordingMac } from "../src/recordings-adapter.mjs";
-import { clock, inventory, harness, row, seed, until, tick } from "./helpers/recordings-fixtures.mjs";
+import { clock, inventory, harness, row, seed, until, tick, jpeg } from "./helpers/recordings-fixtures.mjs";
 
 test("model enrollment excludes J Safe and rejects ambiguous station ownership", () => {
   assert.equal(recordingEnrollment(inventory).cameras.length, 5);
@@ -239,8 +239,36 @@ test("post-cover gap serializes a second queued event without a polling timer", 
   await until(() => h.calls.cover.length === 2);
   await until(() => h.store.snapshot.rows.filter((r) => r.cover).length === 2);
 });
-test("SDK deferred covers wait for idle notification and never retry on a loop", async (t) => {
-  const h = await harness(t, { cover: () => ({ status: "deferred", reason: "busy" }) });
+test("SDK-deferred covers retry on a bounded timer without an idle event", async (t) => {
+  let attempts = 0;
+  const h = await harness(t, {
+    cover: () =>
+      ++attempts === 1 ? { status: "deferred", reason: "quiet_period", retryAfterMs: 12000 } : { status: "ok", jpeg },
+  });
+  await seed(h);
+  h.ctx.state.flags.ready = false;
+  const page = h.catalog("if_due");
+  h.ctx.state.flags.ready = true;
+  const args = {
+    cameraId: h.cameraId,
+    eventId: page.events[0].eventId,
+    browseId: page.browseId,
+    mode: "request_if_admitted",
+  };
+  await h.manager.cover(h.owner, args);
+  await until(() => [...h.clocks.timers.values()].some((e) => e.at === 12000));
+  assert.equal((await h.manager.cover(h.owner, args)).state, "pending");
+  h.catalog("if_due");
+  h.clocks.advance(11999);
+  await tick();
+  assert.equal(h.calls.cover.length, 1);
+  h.clocks.advance(1);
+  await until(() => h.store.snapshot.rows[0].cover !== null);
+  assert.equal(h.calls.cover.length, 2);
+});
+
+test("SDK deferrals without hints respect the gap, rate cap and interest expiry", async (t) => {
+  const h = await harness(t, { cover: () => ({ status: "deferred", reason: "quiet_period" }) });
   await seed(h);
   h.ctx.state.flags.ready = false;
   const page = h.catalog("if_due");
@@ -251,16 +279,53 @@ test("SDK deferred covers wait for idle notification and never retry on a loop",
     browseId: page.browseId,
     mode: "request_if_admitted",
   });
-  await until(() => h.calls.cover.length === 1);
-  await until(() => h.store.snapshot.history.coverCompleted != null);
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    await until(() => h.calls.cover.length === attempt);
+    await until(() => [...h.clocks.timers.values()].some((e) => e.at === (attempt < 6 ? attempt * 5000 : 60000)));
+    assert.equal(h.calls.cover.length, attempt);
+    if (attempt < 6) {
+      h.clocks.advance(4999);
+      await tick();
+      assert.equal(h.calls.cover.length, attempt);
+      h.clocks.advance(1);
+    }
+  }
+  h.clocks.advance(35000);
   await tick();
-  h.clocks.advance(10000);
+  assert.equal(h.calls.cover.length, 6);
+  assert.equal(h.clocks.timers.size, 0);
+  h.clocks.advance(120000);
   await tick();
-  assert.equal(h.calls.cover.length, 1);
-  h.eufy.emit("recordingsIdle");
-  await until(() => h.calls.cover.length === 2);
-  h.manager.preempt();
+  assert.equal(h.calls.cover.length, 6);
 });
+
+test("deferred retry timers are cancelled on preemption, scope teardown, socket loss and shutdown", async (t) => {
+  for (const teardown of [
+    (h) => h.manager.preempt(),
+    (h) => h.manager.syncInventory([...inventory, inventory[0]]),
+    (h) => h.manager.ownerLost(h.owner),
+    (h) => h.manager.stop(),
+  ]) {
+    const h = await harness(t, { cover: () => ({ status: "deferred", reason: "busy" }) });
+    await seed(h);
+    h.ctx.state.flags.ready = false;
+    const page = h.catalog("if_due");
+    h.ctx.state.flags.ready = true;
+    await h.manager.cover(h.owner, {
+      cameraId: h.cameraId,
+      eventId: page.events[0].eventId,
+      browseId: page.browseId,
+      mode: "request_if_admitted",
+    });
+    await until(() => [...h.clocks.timers.values()].some((e) => e.at === 5000));
+    await teardown(h);
+    assert.equal(h.clocks.timers.size, 0);
+    h.clocks.advance(120000);
+    await tick();
+    assert.equal(h.calls.cover.length, 1);
+  }
+});
+
 test("scope-invalid topology retains safe cache but cannot authorize station work", async (t) => {
   const h = await harness(t);
   await seed(h);

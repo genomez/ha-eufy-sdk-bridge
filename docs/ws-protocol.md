@@ -551,6 +551,27 @@ Complete a pending Solix 2FA (only when `state == "2fa"`). The code is never log
 
 ## Events (unsolicited)
 
+### Recordings capability changes
+
+`hello.recordings` remains the initial optional v1 browse-only advertisement.
+After enrollment, scope replacement, scope invalidation or disablement, the bridge
+broadcasts `{ "event": "recordings.capability", "recordings": { ... } }` to
+connected clients. `recordings` has exactly the same fields as `hello.recordings`:
+`version`, `browseOnly`, `enabled`, `scopeId`, `timezone`, `stationWindow`,
+`pageSize`, and `coverBudget`. Disabled advertisements may have a null `scopeId`.
+Clients replace their advertisement, retire old scope interests/covers, and update
+media source availability without reconnecting. Every reconnect `hello` replaces
+the advertisement too; absent or unsupported capabilities disable browsing.
+Older clients may ignore this additive event. Existing `recordings.changed`
+catalog/cover notifications are unchanged. Capability events initiate no reads.
+
+SDK-deferred cover demands retry within their original 60-second browse interest,
+using a supplied `retryAfterMs` or a short backoff. Each retry passes normal
+single-flight, five-second completion gap, six-attempt/minute and SDK station
+admission checks. Expiry, preemption, scope teardown and shutdown cancel retries.
+The cache-only cover HTTP route omits `X-Eufy-Event-Time` unless it is strict ISO
+UTC (`YYYY-MM-DDTHH:mm:ss[.sss]Z`); corrupt persisted metadata is never echoed.
+
 ### Lifecycle
 
 | event   | payload                                                       | when                               |
