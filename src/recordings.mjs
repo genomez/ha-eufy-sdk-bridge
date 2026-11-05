@@ -166,6 +166,7 @@ export function createRecordings(
     expireTimer = null;
     cancel(retryTimer);
     retryTimer = null;
+    catalogCycle = null;
   }
   function expire() {
     cancel(expireTimer);
@@ -219,6 +220,7 @@ export function createRecordings(
           scope.cameras.some((c) => c.cameraId === r.cameraId) &&
           r.selector &&
           !r.cover &&
+          !r.coverEvicted &&
           Number.isSafeInteger(r.startedAtMs) &&
           r.startedAtMs <= now() &&
           r.startedAtMs >= now() - LIMITS.prefetchAge &&
@@ -264,7 +266,7 @@ export function createRecordings(
     nextPrefetch = mono() + LIMITS.prefetchGap;
     background.coverPrefetch.lastAtMs = now();
     policy.admitCover();
-    flight = { controller, kind: "prefetch_reservation", background: true, startedAt: mono() };
+    flight = { controller, kind: "prefetch_reservation", eventId: row.eventId, background: true, startedAt: mono() };
     void (async () => {
       try {
         await persistBudget();
@@ -309,9 +311,24 @@ export function createRecordings(
     })();
   }
   function retryWanted(cycle) {
-    return (cycle.background && backgroundEnabled()) || activeCameras().size > 0;
+    // Catalog intent may outlive cover interest only long enough to cross an SDK gate.
+    const gatedBrowse =
+      ["observing", "renewal_due"].includes(cycle.reason) &&
+      cycle.owners.size > 0 &&
+      mono() - cycle.startedAt < LIMITS.catalogInterval;
+    return (cycle.background && backgroundEnabled()) || activeCameras().size > 0 || gatedBrowse;
+  }
+  function catalogRetryDelay(result, cycle) {
+    if (Number.isFinite(result.retryAfterMs))
+      return Math.max(1_000, Math.min(LIMITS.backgroundCatalogInterval, result.retryAfterMs));
+    // The installed SDK returns no remaining gate time. Allow its full 60 s
+    // observation gate, or 8 s exchange + 5 s renewal reserve, with 1 s margin.
+    if (result.reason === "observing") return 61_000;
+    if (result.reason === "renewal_due") return 14_000;
+    return cycle.retries ? 30_000 : 5_000;
   }
   function armCatalogRetry(cycle) {
+    if (catalogCycle !== cycle || !current(cycle.s, cycle.generation)) return;
     cancel(retryTimer);
     retryTimer = null;
     if (!cycle.retryAt || cycle.retries >= LIMITS.catalogRetries || !retryWanted(cycle)) return;
@@ -503,6 +520,13 @@ export function createRecordings(
     })();
   }
   function requestCatalog(source = "browse", retry = false) {
+    if (catalogCycle && !current(catalogCycle.s, catalogCycle.generation)) {
+      cancel(retryTimer);
+      retryTimer = null;
+      catalogCycle = null;
+    }
+    if (source === "browse" && catalogCycle)
+      for (const i of interests.values()) if (i.until > mono()) catalogCycle.owners.add(i.owner);
     if (!scopeValid) {
       refresh = { state: "deferred", reason: "scope_invalid", retryAfterMs: null };
       return;
@@ -549,6 +573,7 @@ export function createRecordings(
         startedAt: mono(),
         retries: 0,
         background: source === "background",
+        owners: new Set([...interests.values()].filter((i) => i.until > mono()).map((i) => i.owner)),
       };
     const cycle = catalogCycle;
     cycle.retryAt = null;
@@ -572,8 +597,7 @@ export function createRecordings(
           attempt.reason = reasonOf(result.reason);
           if (result.status === "deferred" && transientReasons.has(attempt.reason)) {
             policy.deferCatalog(previousCatalog);
-            const hint = Number.isFinite(result.retryAfterMs) ? result.retryAfterMs : cycle.retries ? 30_000 : 5_000;
-            cycle.retryAt = mono() + Math.max(1_000, Math.min(LIMITS.backgroundCatalogInterval, hint));
+            cycle.retryAt = mono() + catalogRetryDelay(result, cycle);
             cycle.reason = attempt.reason;
             await persistBudget();
             armCatalogRetry(cycle);
@@ -668,6 +692,8 @@ export function createRecordings(
     const row = store.row(job.cameraId, job.eventId);
     if (
       !row?.selector ||
+      row.cover ||
+      negativeWait(row) ||
       !safeSelector(row.selector, { sourceKey: row.sourceKey, cameraSn: row.selector.cameraSn }, s, store.key)
     ) {
       flush();
@@ -681,8 +707,26 @@ export function createRecordings(
       try {
         await persistBudget();
         if (!current(s, generation) || controller.signal.aborted || !interests.has(job.browseId)) return;
+        const latest = store.row(job.cameraId, job.eventId);
+        if (
+          !latest?.selector ||
+          latest.cover ||
+          negativeWait(latest) ||
+          !safeSelector(
+            latest.selector,
+            { sourceKey: latest.sourceKey, cameraSn: latest.selector.cameraSn },
+            s,
+            store.key,
+          )
+        )
+          return;
         attempted = true;
-        const result = await bounded("cover", (opts) => adapter.cover(s.sdkScope, row.selector, opts), s, generation);
+        const result = await bounded(
+          "cover",
+          (opts) => adapter.cover(s.sdkScope, latest.selector, opts),
+          s,
+          generation,
+        );
         if (!current(s, generation)) return;
         if (result.status === "deferred") {
           // The installed SDK has no idle event or retry hint. A bounded backoff
@@ -851,7 +895,9 @@ export function createRecordings(
               ? "cached"
               : negativeWait(r) || !r.selector
                 ? "unavailable"
-                : queued.some((j) => j.eventId === r.eventId) || flight?.job?.eventId === r.eventId
+                : queued.some((j) => j.eventId === r.eventId) ||
+                    flight?.job?.eventId === r.eventId ||
+                    flight?.eventId === r.eventId
                   ? "pending"
                   : r.coverEvicted
                     ? "evicted"
@@ -949,6 +995,7 @@ export function createRecordings(
       flush();
     },
     ownerLost(owner) {
+      catalogCycle?.owners.delete(owner);
       for (const [id, i] of interests) if (i.owner === owner) interests.delete(id);
       queued = queued.filter((j) => j.owner !== owner);
       if (flight?.job?.owner === owner || (!interests.size && !flight?.background && !catalogCycle?.background))

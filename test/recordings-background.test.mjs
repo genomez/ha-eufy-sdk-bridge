@@ -59,13 +59,13 @@ test("transient catalog deferral releases the window and schedules exactly one h
 
 for (const reason of ["observing", "busy", "quiet_period", "renewal_due", "reply_capacity", "owner_unhealthy"]) {
   test(`catalog ${reason} retries are bounded even with repeated browse requests`, async (t) => {
-    const h = await harness(t, { catalog: () => ({ status: "deferred", reason }) });
+    const h = await harness(t, { catalog: () => ({ status: "deferred", reason, retryAfterMs: 5_000 }) });
     h.catalog("if_due");
     await settled(h);
     await advance(h, 5_000);
     await until(() => h.calls.catalog.length === 2);
     await settled(h);
-    await advance(h, 30_000);
+    await advance(h, 5_000);
     await until(() => h.calls.catalog.length === 3);
     await settled(h);
     for (let i = 0; i < 20; i++) h.catalog("if_due");
@@ -79,7 +79,7 @@ for (const reason of ["observing", "busy", "quiet_period", "renewal_due", "reply
 
 test("expired interest, owner loss, stop and scope loss cancel catalog retries", async (t) => {
   for (const action of ["expire", "owner", "stop", "scope"]) {
-    const h = await harness(t, { catalog: () => ({ status: "deferred", reason: "observing", retryAfterMs: 61_000 }) });
+    const h = await harness(t, { catalog: () => ({ status: "deferred", reason: "busy", retryAfterMs: 61_000 }) });
     h.catalog("if_due");
     await settled(h);
     if (action === "owner") h.manager.ownerLost(h.owner);
@@ -89,6 +89,89 @@ test("expired interest, owner loss, stop and scope loss cancel catalog retries",
     await tick();
     assert.equal(h.calls.catalog.length, 1, action);
   }
+});
+
+for (const action of ["owner loss", "preemption"]) {
+  test(`${action} invalidates a deferred cycle before a new owner's browse`, async (t) => {
+    let count = 0;
+    const h = await harness(t, {
+      catalog: () =>
+        ++count === 1 ? { status: "deferred", reason: "observing", retryAfterMs: 30_000 } : { status: "ok", rows: [] },
+    });
+    h.catalog("if_due");
+    await settled(h);
+    if (action === "owner loss") h.manager.ownerLost(h.owner);
+    else h.manager.preempt();
+    const page = h.manager.catalog({}, { cameraId: h.cameraId, refresh: "if_due" });
+    assert.equal(page.refresh.state, "scheduled");
+    await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
+    assert.equal(h.calls.catalog.length, 2);
+    await advance(h, 30_000);
+    assert.equal(h.calls.catalog.length, 2);
+    assert.equal(h.manager.diagnostics().background.retries, 0);
+  });
+}
+
+for (const [reason, delay] of [
+  ["observing", 61_000],
+  ["renewal_due", 14_000],
+]) {
+  test(`unhinted ${reason} retries cross the SDK gate without spending the catalog window`, async (t) => {
+    const times = [];
+    const h = await harness(t, {
+      catalog: () => {
+        times.push(h.clocks.monotonic());
+        return h.clocks.monotonic() < delay - 1_000 ? { status: "deferred", reason } : { status: "ok", rows: [] };
+      },
+    });
+    h.catalog("if_due");
+    await settled(h);
+    assert.equal(h.store.snapshot.history.catalog, null);
+    await advance(h, delay - 1);
+    assert.deepEqual(times, [0]);
+    await advance(h, 1);
+    await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
+    assert.deepEqual(times, [0, delay]);
+    assert.equal(h.manager.diagnostics().background.retries, 1);
+    await advance(h, 60_000);
+    assert.equal(h.calls.catalog.length, 2);
+  });
+}
+
+test("observation gate retries retain only bounded catalog intent and cancel on owner loss", async (t) => {
+  const h = await harness(t, { catalog: () => ({ status: "deferred", reason: "observing" }) });
+  h.catalog("if_due");
+  await settled(h);
+  await advance(h, 60_000);
+  h.manager.ownerLost(h.owner);
+  await advance(h, 1_000);
+  assert.equal(h.calls.catalog.length, 1);
+});
+
+test("a new browse owner can retain a pending gate retry when the first owner leaves", async (t) => {
+  let count = 0;
+  const h = await harness(t, {
+    catalog: () => (++count === 1 ? { status: "deferred", reason: "observing" } : { status: "ok", rows: [] }),
+  });
+  h.catalog("if_due");
+  await settled(h);
+  h.manager.catalog({}, { cameraId: h.cameraId, refresh: "if_due" });
+  h.manager.ownerLost(h.owner);
+  await advance(h, 61_000);
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
+  assert.equal(h.calls.catalog.length, 2);
+});
+
+test("repeated unhinted observation deferrals stop at the catalog intent deadline", async (t) => {
+  const h = await harness(t, { catalog: () => ({ status: "deferred", reason: "observing" }) });
+  h.catalog("if_due");
+  await settled(h);
+  await advance(h, 61_000);
+  await settled(h);
+  await advance(h, 300_000);
+  assert.equal(h.calls.catalog.length, 2);
+  assert.equal(h.manager.diagnostics().background.retries, 1);
+  assert.equal(h.store.snapshot.history.catalog, null);
 });
 
 test("a new admitted cycle cancels a long retry hint from the previous cycle", async (t) => {
@@ -262,6 +345,109 @@ test("prefetch negative waits last five minutes and three failures survive resta
   await tick();
   assert.equal(h.calls.cover.length, 3);
 });
+
+test("capacity eviction drains background prefetch permanently while focused browse can refill", async (t) => {
+  const largeJpeg = Buffer.concat([
+    jpeg.subarray(0, -2),
+    Buffer.alloc(LIMITS.imageBytes - jpeg.length),
+    jpeg.subarray(-2),
+  ]);
+  const h = await harness(t, {
+    background: true,
+    catalog: () => ({ status: "ok", rows: [] }),
+    cover: () => ({ status: "ok", jpeg: largeJpeg }),
+  });
+  const rows = Array.from({ length: 260 }, (_, i) =>
+    row(h.scope, i, {
+      startedAtMs: h.clocks.now() - (i + 1) * 1_000,
+    }),
+  );
+  for (let offset = 0; offset < rows.length; offset += 20)
+    await h.store.mergeCatalog(h.scope, rows.slice(offset, offset + 20));
+  for (const r of rows.slice(0, 256)) await h.store.putCover(h.scope, h.cameraId, r.eventId, largeJpeg);
+  await h.manager.syncInventory(inventory);
+  assert.equal(h.manager.diagnostics().coverCache.bytes, LIMITS.coverBytes);
+  assert.equal(h.manager.diagnostics().background.coverPrefetch.queued, 4);
+  for (let count = 1; count <= 4; count++) {
+    await advance(h, 15_000);
+    await prefetched(h, count);
+  }
+  const evicted = h.store.snapshot.rows.filter((r) => r.coverEvicted);
+  assert.equal(evicted.length, 27);
+  assert.equal(h.manager.diagnostics().background.coverPrefetch.queued, 0);
+  await advance(h, 30 * 15_000);
+  assert.equal(h.calls.cover.length, 4);
+  assert.equal(h.manager.diagnostics().background.coverPrefetch.queued, 0);
+  const page = h.catalog("if_due", { focusEventId: evicted[0].eventId });
+  assert.deepEqual(page.coverEligibleEventIds, [evicted[0].eventId]);
+  await drain(h);
+  await h.manager.cover(h.owner, {
+    cameraId: h.cameraId,
+    eventId: evicted[0].eventId,
+    browseId: page.browseId,
+    mode: "request_if_admitted",
+  });
+  await until(() => !!h.store.row(h.cameraId, evicted[0].eventId)?.cover);
+  assert.equal(h.calls.cover.length, 5);
+  await advance(h, 60_000);
+  assert.equal(h.calls.cover.length, 5);
+  assert.equal(h.manager.diagnostics().background.coverPrefetch.queued, 0);
+});
+
+test("a browse shares an in-flight prefetch without reading the event twice", async (t) => {
+  let finish;
+  const h = await harness(t, {
+    background: true,
+    catalog: () => ({ status: "ok", rows: [] }),
+    cover: () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  });
+  const r = row(h.scope);
+  await h.store.mergeCatalog(h.scope, [r]);
+  await h.manager.syncInventory(inventory);
+  await advance(h, 15_000);
+  await until(() => !!finish);
+  const page = h.catalog("if_due");
+  assert.equal(page.events[0].coverState, "pending");
+  const response = await h.manager.cover(h.owner, {
+    cameraId: h.cameraId,
+    eventId: r.eventId,
+    browseId: page.browseId,
+    mode: "request_if_admitted",
+  });
+  assert.equal(response.state, "pending");
+  assert.equal(h.manager.diagnostics().coverCache.pending, 0);
+  finish({ status: "ok", jpeg });
+  await prefetched(h, 1);
+  await advance(h, 60_000);
+  assert.equal(h.calls.cover.length, 1);
+});
+
+for (const state of ["cached", "negative"]) {
+  test(`queued cover rechecks ${state} state before a station read`, async (t) => {
+    const h = await harness(t, { catalog: () => ({ status: "ok", rows: [] }) });
+    const r = row(h.scope);
+    await h.store.mergeCatalog(h.scope, [r]);
+    h.ctx.state.flags.ready = false;
+    const page = h.catalog("if_due");
+    await h.manager.cover(h.owner, {
+      cameraId: h.cameraId,
+      eventId: r.eventId,
+      browseId: page.browseId,
+      mode: "request_if_admitted",
+    });
+    assert.equal(h.manager.diagnostics().coverCache.pending, 1);
+    if (state === "cached") await h.store.putCover(h.scope, h.cameraId, r.eventId, jpeg);
+    else await h.store.negative(h.cameraId, r.eventId);
+    h.ctx.state.flags.ready = true;
+    h.manager.idle();
+    await drain(h);
+    assert.equal(h.calls.cover.length, 0);
+    assert.equal(h.manager.diagnostics().coverCache.pending, 0);
+  });
+}
 
 test("browse cover demands take priority over background prefetch and reads never overlap", async (t) => {
   let rows, finish;
