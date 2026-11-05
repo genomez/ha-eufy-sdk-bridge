@@ -183,6 +183,69 @@ const clean = {
   correlationBasis: "exclusive_timing",
 };
 
+const noStart = {
+  captureOutcome: "time_refused",
+  selectionOutcome: "end_not_past",
+  startAttempted: false,
+  ownerContinuous: true,
+  healthOutcome: "clean",
+  releaseOutcome: "not_started",
+  cessationOutcome: "not_started",
+  latchRetained: false,
+  latchPersistenceFailed: false,
+};
+
+for (const captureOutcome of ["time_refused", "not_admitted", "timeout"])
+  test(`no-start ${captureOutcome} consumes an index without blocking or re-latching, including restart`, async (t) => {
+    const f = fixture(t),
+      probe = f.makeProbe();
+    f.run(async () => ({ ...noStart, captureOutcome }));
+    const result = await probe.invoke(f.request(1));
+    assert.equal(result.healthOutcome, "clean");
+    assert.equal(result.selectionOutcome, "end_not_past");
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), false);
+    assert.equal(f.files.has(path.join(f.dir, "complete-1.json")), true);
+    assert.equal(f.safety.load(), false);
+    assert.equal(f.makeStore().state(f.grant).nextAttemptIndex, 2);
+    assert.deepEqual(await control("readback", undefined, { ...f.options, attemptIndex: 1 }), result);
+    const restarted = f.makeProbe();
+    assert.equal(restarted.status(), "armed");
+    f.advance(59999);
+    assert.equal((await restarted.invoke(f.request(2))).captureOutcome, "denied");
+    f.advance(1);
+    f.run(async () => clean);
+    assert.equal((await restarted.invoke(f.request(2))).captureOutcome, "eof");
+    assert.equal(f.calls(), 2);
+    assert.equal(f.safety.load(), false);
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), false);
+  });
+
+for (const patch of [
+  { startAttempted: true },
+  { startAttempted: undefined },
+  { ownerContinuous: false },
+  { latchRetained: true },
+  { latchPersistenceFailed: true },
+  { unknown: true },
+  { stopSent: true },
+  { healthOutcome: "degraded" },
+])
+  test(`uncertain no-start claim still blocks and latches: ${JSON.stringify(patch)}`, async (t) => {
+    const f = fixture(t),
+      probe = f.makeProbe();
+    f.run(async () => ({ ...noStart, ...patch }));
+    await probe.invoke(f.request(1));
+    assert.equal(probe.status(), "blocked");
+    assert.equal(f.files.has(path.join(f.dir, "blocked.json")), true);
+    assert.equal(f.safety.load(), true);
+  });
+
+test("selection receipt values use a closed enum", () => {
+  for (const selectionOutcome of ["selected", "no_rows", "no_camera_rows", "time_invalid", "end_not_past"])
+    assert.equal(sanitizePlaybackReceipt({ selectionOutcome }).selectionOutcome, selectionOutcome);
+  assert.equal(sanitizePlaybackReceipt({ selectionOutcome: "private-arbitrary-value" }).selectionOutcome, "no_rows");
+});
+
 test("multi-attempt success, durable separate receipts and exhaustion", async (t) => {
   const f = fixture(t, 2),
     probe = f.makeProbe();

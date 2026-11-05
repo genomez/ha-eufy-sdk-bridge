@@ -93,6 +93,20 @@ const rejectionReasons = [
 const sizeBucket = (n) =>
   n === 0 ? "zero" : n <= 8192 ? "le8KiB" : n <= 262144 ? "le256KiB" : n <= 8388608 ? "le8MiB" : "gt8MiB";
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
+const knownNoPlaybackStart = (result) =>
+  result.startAttempted === false &&
+  result.ownerContinuous === true &&
+  result.releaseOutcome === "not_started" &&
+  result.cessationOutcome === "not_started" &&
+  !result.startAcknowledged &&
+  !result.pauseAttempted &&
+  !result.stopAttempted &&
+  !result.pauseSent &&
+  !result.stopSent &&
+  !result.latchRetained &&
+  !result.latchPersistenceFailed &&
+  !result.unknown &&
+  result.captureOutcome !== "receipt_failed";
 
 /** Independent receipt reconstruction; arbitrary keys, values, suffixes and Unicode are discarded. */
 export function sanitizePlaybackReceipt(value) {
@@ -122,6 +136,11 @@ export function sanitizePlaybackReceipt(value) {
         ? value.admissionGate
         : 0,
     captureOutcome: outcomes.includes(value?.captureOutcome) ? value.captureOutcome : "invalid_media",
+    selectionOutcome: ["selected", "no_rows", "no_camera_rows", "time_invalid", "end_not_past"].includes(
+      value?.selectionOutcome,
+    )
+      ? value.selectionOutcome
+      : "no_rows",
     cessationOutcome: ["not_started", "ceased", "media_continues", "cessation_unknown"].includes(
       value?.cessationOutcome,
     )
@@ -178,6 +197,8 @@ export function sanitizePlaybackReceipt(value) {
     )
   )
     result.releaseOutcome = "release_unknown";
+  if (value?.healthOutcome === "clean" && value?.startAttempted === false && knownNoPlaybackStart(result))
+    result.healthOutcome = "clean";
   return result;
 }
 
@@ -219,9 +240,10 @@ const blockPlaybackGrant = (store, safety) => {
     safety?.save(true);
   } catch {}
 };
+/** Dispatched no-start attempts use their index and spacing, without blocking later attempts. */
 const cleanPlaybackRelease = (result) =>
-  result.releaseOutcome === "release_confirmed" &&
-  result.latchCleared &&
+  ((result.healthOutcome === "clean" && knownNoPlaybackStart(result)) ||
+    (result.releaseOutcome === "release_confirmed" && result.latchCleared)) &&
   !result.latchRetained &&
   !result.latchPersistenceFailed &&
   !result.unknown &&
