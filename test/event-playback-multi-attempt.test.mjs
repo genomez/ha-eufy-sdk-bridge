@@ -761,7 +761,10 @@ for (const refusal of ["expired", "not_yet_valid", "invalid", "consumed"])
     assert.equal(listens(), 0);
     assert.equal(attached.status, ["invalid", "not_yet_valid"].includes(refusal) ? "unavailable" : refusal);
     assert.equal(f.files.has(path.join(f.dir, "blocked.json")), false);
-    assert.deepEqual([...f.files].filter(([name]) => path.dirname(name) === f.safetyDir), safetyBefore);
+    assert.deepEqual(
+      [...f.files].filter(([name]) => path.dirname(name) === f.safetyDir),
+      safetyBefore,
+    );
     assert.deepEqual([...f.directories], directoriesBefore);
     assert.equal(f.calls(), refusal === "consumed" ? 1 : 0);
     await attached.stop();
@@ -775,9 +778,10 @@ for (const phase of ["stat", "open", "safety_setup", "attempt_store"])
     let injected = false,
       directoryReads = 0;
     fs[method] = (name, ...args) => {
-      const target = phase === "attempt_store"
-        ? name === f.dir && ++directoryReads === 4
-        : name === (phase === "safety_setup" ? f.safetyDir : path.join(f.dir, "authorization.json"));
+      const target =
+        phase === "attempt_store"
+          ? name === f.dir && ++directoryReads === 4
+          : name === (phase === "safety_setup" ? f.safetyDir : path.join(f.dir, "authorization.json"));
       if (!injected && target) {
         injected = true;
         throw Object.assign(Error("synthetic_storage_EIO"), { code: "EIO" });
@@ -872,7 +876,9 @@ for (const persistent of [false, true])
     assert.equal(f.files.has(path.join(f.dir, "blocked.json")), false);
     assert.equal(attachEventPlaybackProbe(f.ctx, f.options).status, "armed");
     assert.deepEqual(JSON.parse(f.files.get(path.join(f.safetyDir, "state.json"))), {
-      schema: 3, state: "clear", reason: "prepared",
+      schema: 3,
+      state: "clear",
+      reason: "prepared",
     });
     assert.equal(f.calls(), 0);
   });
