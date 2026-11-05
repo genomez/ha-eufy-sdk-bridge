@@ -392,7 +392,7 @@ test("a sibling describe failure no longer blocks healthy-camera HTTP live view"
   try {
     await f.handler(req, res);
     assert.equal(res.statusCode, 200);
-    assert.equal(res.headers["content-type"], "video/H265");
+    assert.equal(res.headers["content-type"], "application/octet-stream");
     assert.deepEqual(f.calls, { roster: 2, models: 4, opens: 1, consumers: 0 });
     assert.deepEqual(f.ctx.topologySnapshotDiagnostics(), { hits: 0, misses: 1, refreshes: 1, fallbacks: 1, rejections: 0 });
     await assert.rejects(f.relay.acquireFeed("B"), { code: "webrtc_releasing" });
@@ -417,7 +417,7 @@ for (const [name, mutate, station] of [
       assert.equal(f.sockets.length, 0);
       await f.handler(req, res);
       assert.equal(res.statusCode, 200); assert.equal(streamClients, 1);
-      assert.equal(res.headers["content-type"], "video/H264");
+      assert.equal(res.headers["content-type"], "application/octet-stream");
       assert.deepEqual(f.calls, { roster: 6, models: 10, opens: 1, consumers: 0 });
       const lease = await f.relay.acquireFeed("B"); lease.finish();
     } finally { req.emit("aborted"); res.destroy(); f.stop(); }

@@ -386,7 +386,7 @@ Fired when a camera's live P2P feed opens (`active: true`) or is torn down / idl
 | -------------------- | ------------------------------------------------------------------------------------------------- |
 | `GET /healthz`       | `{ ok, schemaVersion, auth: { state }, streaming: [sn,…] }` — always available (even before auth) |
 | `GET /snapshot/<sn>` | a JPEG still (`image/jpeg`). _Requires auth._                                                     |
-| `GET /stream/<sn>`   | live Annex-B H.264/H.265 (`video/H264`) — what go2rtc pulls. _Requires auth._                     |
+| `GET /stream/<sn>`   | live Annex-B H.264/H.265 (`application/octet-stream`) — what go2rtc pulls. _Requires auth._       |
 
 `/healthz` also reports `lastActivitySec`, the age of the last observed device activity. Quiet devices
 can leave it high while polling succeeds; it is not a poll-stall indicator and there is no `stalled` field.

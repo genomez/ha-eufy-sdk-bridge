@@ -474,7 +474,7 @@ export function createHttpHandler(ctx) {
         registered = true;
         rtspLastActive.set(sn, Date.now());
         res.writeHead(200, {
-          "content-type": onT9000 ? "video/H265" : "video/H264",
+          "content-type": "application/octet-stream",
           "cache-control": "no-cache",
         });
         feed.pipe(res);
