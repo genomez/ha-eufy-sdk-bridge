@@ -493,6 +493,8 @@ export function createDeviceView(ctx) {
           stationSn: record.stationSn ?? record.sn,
           model: record.model,
           name: summaries[index].name,
+          isCamera: !!summaries[index].stream,
+          channel: record.raw?.device_channel,
         })),
       );
       topology.publish(

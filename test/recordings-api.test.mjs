@@ -377,3 +377,21 @@ test("account replacement cancels the old notification coalescer", async (t) => 
   h.clocks.advance(1000);
   assert.ok(h.events.every((event) => (event.scopeId ?? event.recordings?.scopeId) === scope.scopeId));
 });
+
+test("diagnostics HTTP and optional WS RPC are sanitized cache-only reads", async (t) => {
+  const h = await harness(t);
+  await seed(h);
+  const s = await socket(t, h);
+  const ws = await s.rpc({ id: 7, cmd: "recordings.diagnostics" });
+  assert.equal(ws.ok, true);
+  assert.equal(ws.recordings.rowsKeptPerCamera[0].rows, 1);
+  const res = await request(h, "/diagnostics");
+  assert.equal(res.status, 200);
+  assert.deepEqual(JSON.parse(res.body).recordings, ws.recordings);
+  const serialized = JSON.stringify(ws.recordings);
+  assert.ok(!serialized.includes(inventory[1].sn));
+  assert.ok(!serialized.includes(h.store.snapshot.rows[0].selector.thumbPath));
+  assert.equal(h.calls.catalog.length, 0);
+  assert.equal(h.calls.cover.length, 0);
+  assert.equal((await s.rpc({ id: 8, cmd: "recordings.diagnostics", start_id: 1 })).ok, false);
+});

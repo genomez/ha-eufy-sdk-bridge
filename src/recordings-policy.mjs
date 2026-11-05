@@ -43,18 +43,27 @@ export function recordingEnrollment(records, conflicts = []) {
   const station = stations[0].sn;
   if (stations[0].stationSn && stations[0].stationSn !== station) return null;
   if (new Set(records.map((r) => r.sn)).size !== records.length) return null;
-  const family = records.filter((r) => /^T(?:842|84A)[A-Za-z0-9]/i.test(r.model ?? ""));
+  const candidates = records.filter((r) => r.isCamera === true && r.name?.trim().toLowerCase() !== "j safe");
+  if (candidates.some((r) => !r.sn || !r.stationSn)) return null;
+  const cameras = candidates.filter((r) => r.stationSn === station && r.sn !== station);
   if (
-    family.some(
-      (r) => typeof r.name !== "string" || !r.name.trim() || /[\x00-\x1f\x7f]/.test(r.name) || r.name.length > 128,
+    !cameras.length ||
+    cameras.some(
+      (r) =>
+        typeof r.name !== "string" ||
+        !r.name.trim() ||
+        /[\x00-\x1f\x7f-\x9f]/.test(r.name) ||
+        r.name.length > 128 ||
+        !Number.isInteger(r.channel) ||
+        r.channel < 0 ||
+        r.channel >= 255,
     )
   )
     return null;
-  const cameras = family.filter((r) => r.name.trim().toLowerCase() !== "j safe");
-  if (!cameras.length || cameras.some((r) => !r.sn || r.stationSn !== station || r.sn === station)) return null;
+  if (new Set(cameras.map((r) => r.channel)).size !== cameras.length) return null;
   return {
     stationSn: station,
-    cameras: cameras.map((r) => ({ sn: r.sn, name: typeof r.name === "string" ? r.name.slice(0, 128) : "Camera" })),
+    cameras: cameras.map((r) => ({ sn: r.sn, name: r.name.trim() })),
   };
 }
 
@@ -77,7 +86,7 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
         .slice(-6)
         .map((t) => restoreTime(t, 60_000))
         .filter((t) => monotonic() - t < 60_000);
-      for (const [camera, entry] of Object.entries(history.windows ?? {}).slice(0, 5)) {
+      for (const [camera, entry] of Object.entries(history.windows ?? {}).slice(0, LIMITS.rows)) {
         if (!validId(camera, "c") || !entry || !Array.isArray(entry.ids) || !Array.isArray(entry.used)) continue;
         const at = restoreTime(entry.at, 60_000);
         if (monotonic() - at < 60_000)

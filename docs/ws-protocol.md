@@ -649,3 +649,50 @@ raw video protocol.
 - Guard / station security mode (arm home/away/disarm).
 - Per-device event subscription/filtering (events broadcast to all clients).
 - Audio / recording / timelapse.
+
+### Recordings follow-up: station child cameras, deeper reads and diagnostics
+
+Recordings v1 retains all existing RPC/HTTP routes, fields, reason vocabulary and
+100-event response bound. Enrollment uses the existing inventory's camera/video
+classification and unambiguous station/channel ownership beneath the single
+T9000. It includes wired, battery and doorbell cameras, excludes other stations
+and non-camera devices, and always excludes a trimmed, case-insensitive J Safe
+name. Scope/camera HMAC inputs are unchanged when the camera set grows.
+
+A catalog cycle starts with the same latest-20 station-wide query, no more often
+than two minutes. While a camera folder has a live 60-second interest, it may
+perform four additional reads (100 station rows total). The private SDK cursor
+uses the existing `start_id`, `end_id`, `count` payload shape; its semantics remain
+unverified on hardware. Each read uses independent station arbitration, renewal
+reserve, abort/preemption and a five-second gap. Covers retain priority over an
+unsent deeper read. No browse read connects to or wakes a child camera.
+
+Paging stops at the seven-day boundary, a short page, cursor exhaustion, camera
+retention cap, interest expiry or the four-page limit. An invalid/empty deeper
+reply, repeated/overlapping IDs, duplicate events, invalid envelope/time evidence
+or a newer time bound permanently changes `pagingStatus` to `unsupported_stopped`
+for the bridge process. Ordinary page-one cycles continue. `working` means a
+synthetic/runtime page made progress; it is not a claim of firmware qualification.
+SDK deferral or foreground preemption abandons the current continuation.
+
+Optional `recordings.diagnostics` takes no arguments (besides `id` and `cmd`) and
+returns the usual `{id, ok, recordings}` envelope. This is a cache-only read and
+uses the existing host command policy. `/diagnostics` also includes `recordings`:
+
+- `rowsKeptPerCamera`: `{name, rows}` entries using trimmed display names;
+- `rejected`: cumulative process counts for `not_in_scope`, `bad_record_id`,
+  `bad_start_time`, `other`; `identity_conflict`: cumulative conflict count;
+- `timeStatus`: retained-row counts for `valid`, `unknown_format`, `ambiguous`, `invalid`;
+- `pagingStatus`: `unverified`, `working` or `unsupported_stopped`; `lastPageCount`;
+- `lastCatalogTime`: last successful catalog receipt time in epoch milliseconds or null;
+- `coverCache`: `{files, bytes, pending}`;
+- `unknownStartTimeShapes`: at most 32 `{shape, count}` entries. At most 32 code
+  points from each raw start token are masked: numbers become `9`, letters become
+  `a`, date separators remain, and all remaining characters become `?`.
+
+No serials, raw record IDs, selectors, paths, account identities or raw time tokens
+are included. Display names are the sole new human labels in diagnostics. Private
+SDK paging evidence is never forwarded to WS, HTTP or HA. HA projects this schema
+again and keeps opaque folder links under `recordings.folders` in its diagnostics.
+Event titles omit type labels; camera folder titles use only the trimmed name,
+with incomplete-history and cache status in an information child.

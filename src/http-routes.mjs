@@ -157,6 +157,7 @@ export function createHttpHandler(ctx) {
         mediaDiagnostics
           ? {
               ...(ctx.diagnostics?.() ?? { schemaVersion: 1, available: false }),
+              recordings: ctx.recordings?.diagnostics() ?? null,
               t9000Media: {
                 ...mediaDiagnostics.snapshot(),
                 topologySnapshot: ctx.topologySnapshotDiagnostics?.() ?? {
@@ -167,7 +168,10 @@ export function createHttpHandler(ctx) {
                 },
               },
             }
-          : (ctx.diagnostics?.() ?? { schemaVersion: 1, available: false }),
+          : {
+              ...(ctx.diagnostics?.() ?? { schemaVersion: 1, available: false }),
+              recordings: ctx.recordings?.diagnostics() ?? null,
+            },
       );
 
     if (url.pathname === "/healthz") {

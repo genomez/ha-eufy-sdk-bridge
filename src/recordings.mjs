@@ -22,7 +22,12 @@ export function createRecordings(
     epoch = 0;
   let dirty = false,
     refresh = { state: "idle", reason: "none", retryAfterMs: null };
-  let timer, expireTimer, notifying, notificationTimer;
+  let timer, expireTimer, notifying, notificationTimer, pageTimer, pendingPage;
+  let pagingStatus = "unverified",
+    lastPageCount = 0;
+  const rejected = { not_in_scope: 0, bad_record_id: 0, bad_start_time: 0, other: 0 };
+  let identityConflict = 0;
+  const timeShapes = new Map();
   let queued = [],
     interests = new Map();
   let account;
@@ -123,6 +128,9 @@ export function createRecordings(
   }
   function preempt() {
     epoch++;
+    cancel(pageTimer);
+    pageTimer = null;
+    pendingPage = null;
     flight?.controller.abort();
     flight = null;
     queued = [];
@@ -140,7 +148,12 @@ export function createRecordings(
       cancel(timer);
       timer = null;
     }
-    if (flight?.job && !interests.has(flight.job.browseId)) preempt();
+    if ((flight?.job && !interests.has(flight.job.browseId)) || (flight?.kind === "page" && !interests.size)) preempt();
+    if (!interests.size) {
+      cancel(pageTimer);
+      pageTimer = null;
+      pendingPage = null;
+    }
     if (interests.size) {
       expireTimer = schedule(expire, Math.max(1, Math.min(...[...interests.values()].map((i) => i.until)) - time));
       expireTimer?.unref?.();
@@ -199,6 +212,140 @@ export function createRecordings(
       cancel(deadline);
     }
   }
+  function collectDiagnostics(result) {
+    for (const reason of Object.keys(rejected)) {
+      const count = result.diagnostics?.rejectedByReason?.[reason];
+      if (Number.isSafeInteger(count) && count >= 0) rejected[reason] += count;
+    }
+    const conflicts = result.diagnostics?.identity_conflict;
+    if (Number.isSafeInteger(conflicts) && conflicts >= 0) identityConflict += conflicts;
+    for (const entry of (result.diagnostics?.unknownStartTimeShapes ?? []).slice(0, 20)) {
+      if (
+        typeof entry?.shape !== "string" ||
+        !/^[9a :/.+?\-]{0,32}$/.test(entry.shape) ||
+        !Number.isSafeInteger(entry.count) ||
+        entry.count < 1
+      )
+        continue;
+      if (timeShapes.has(entry.shape) || timeShapes.size < 32)
+        timeShapes.set(entry.shape, (timeShapes.get(entry.shape) ?? 0) + entry.count);
+    }
+  }
+  const activeCameras = () => new Set([...interests.values()].filter((i) => i.until > mono()).map((i) => i.cameraId));
+  function stopPaging() {
+    pagingStatus = "unsupported_stopped";
+    pendingPage = null;
+    cancel(pageTimer);
+    pageTimer = null;
+  }
+  function pageValid(page) {
+    return (
+      page?.consistent === true &&
+      Number.isInteger(page.count) &&
+      page.count >= 1 &&
+      page.count <= 20 &&
+      Number.isSafeInteger(page.nextBefore) &&
+      page.nextBefore > 0 &&
+      Number.isSafeInteger(page.newestRecordId) &&
+      page.newestRecordId >= page.nextBefore &&
+      Number.isSafeInteger(page.oldestAtMs) &&
+      page.oldestAtMs >= 0 &&
+      Number.isSafeInteger(page.newestAtMs) &&
+      page.newestAtMs >= page.oldestAtMs
+    );
+  }
+  function deeper(cycle, result) {
+    if (pagingStatus === "unsupported_stopped" || !result.page || result.page.count === 0) return;
+    if (!pageValid(result.page)) {
+      stopPaging();
+      return;
+    }
+    if (
+      result.page.count < 20 ||
+      result.page.nextBefore <= 1 ||
+      cycle.extra >= 4 ||
+      result.page.oldestAtMs < now() - LIMITS.ttl
+    )
+      return;
+    const active = activeCameras();
+    const retained = store.snapshot.rows;
+    if (![...active].some((id) => retained.filter((r) => r.cameraId === id).length < LIMITS.cameraRows)) return;
+    pendingPage = { ...cycle, previous: result.page };
+    pageTimer = schedule(readOlder, LIMITS.coverGap);
+    pageTimer?.unref?.();
+  }
+  function readOlder() {
+    pageTimer = null;
+    const cycle = pendingPage;
+    if (
+      !cycle ||
+      !current(cycle.s, cycle.generation) ||
+      !scopeValid ||
+      !activeCameras().size ||
+      mono() - cycle.startedAt >= LIMITS.interest
+    ) {
+      pendingPage = null;
+      return;
+    }
+    if (flight || queued.length || !available() || policy.featureWait() > 0) {
+      pageTimer = schedule(readOlder, Math.max(1_000, policy.featureWait()));
+      pageTimer?.unref?.();
+      return;
+    }
+    pendingPage = null;
+    refresh = { state: "scheduled", reason: "none", retryAfterMs: null };
+    const controller = new AbortController();
+    flight = { controller, kind: "page", startedAt: mono() };
+    void (async () => {
+      try {
+        const result = await bounded(
+          "page",
+          (opts) => adapter.catalog(cycle.s.sdkScope, { ...opts, beforeRecordId: cycle.previous.nextBefore }),
+          cycle.s,
+          cycle.generation,
+        );
+        if (!current(cycle.s, cycle.generation)) return;
+        if (result.status !== "ok") {
+          if (result.status !== "deferred") stopPaging();
+          return;
+        }
+        lastPageCount = result.page?.count ?? 0;
+        collectDiagnostics(result);
+        if (
+          !Array.isArray(result.rows) ||
+          result.rows.length > 20 ||
+          !pageValid(result.page) ||
+          result.page.newestRecordId >= cycle.previous.nextBefore ||
+          result.page.newestAtMs > cycle.previous.oldestAtMs ||
+          result.rows.some((row) => cycle.seen.has(row.eventId))
+        ) {
+          stopPaging();
+          return;
+        }
+        pagingStatus = "working";
+        for (const row of result.rows) cycle.seen.add(row.eventId);
+        await store.mergeCatalog(
+          cycle.s,
+          result.rows.filter((r) => r.startedAtMs === null || r.startedAtMs >= now() - LIMITS.ttl),
+          () => current(cycle.s, cycle.generation),
+          false,
+        );
+        if (!current(cycle.s, cycle.generation)) return;
+        notify("catalog");
+        deeper({ ...cycle, extra: cycle.extra + 1 }, result);
+      } catch {
+        if (current(cycle.s, cycle.generation)) stopPaging();
+      } finally {
+        policy.completeCover();
+        await persistBudget().catch(() => {});
+        if (flight?.controller === controller) flight = null;
+        if (current(cycle.s, cycle.generation)) {
+          refresh = { state: "idle", reason: "none", retryAfterMs: null };
+          flush();
+        }
+      }
+    })();
+  }
   function requestCatalog() {
     if (!scopeValid) {
       refresh = { state: "deferred", reason: "scope_invalid", retryAfterMs: null };
@@ -220,6 +367,9 @@ export function createRecordings(
     refresh = { state: "scheduled", reason: "none", retryAfterMs: null };
     const s = scope,
       generation = epoch;
+    cancel(pageTimer);
+    pageTimer = null;
+    pendingPage = null;
     // Reserve synchronously, before any asynchronous persistence or a second browser request.
     policy.admitCatalog();
     const controller = new AbortController();
@@ -242,11 +392,21 @@ export function createRecordings(
           refresh = { state: "failed", reason: "invalid_reply", retryAfterMs: null };
           return;
         }
-        await store.mergeCatalog(s, result.rows, () => current(s, generation));
+        lastPageCount = result.page?.count ?? result.rows.length;
+        collectDiagnostics(result);
+        await store.mergeCatalog(
+          s,
+          result.rows.filter((r) => r.startedAtMs === null || r.startedAtMs >= now() - LIMITS.ttl),
+          () => current(s, generation),
+        );
         if (!current(s, generation)) return;
         dirty = false;
         refresh = { state: "idle", reason: "none", retryAfterMs: null };
         notify("catalog");
+        deeper(
+          { s, generation, startedAt: mono(), extra: 0, seen: new Set(result.rows.map((r) => r.eventId)) },
+          result,
+        );
       } catch (error) {
         refresh = {
           state: "failed",
@@ -346,6 +506,38 @@ export function createRecordings(
   }
   const api = {
     capability: base,
+    diagnostics(args = {}) {
+      fields(args, []);
+      const snapshot =
+        loaded && !storeFailed && adapter.account() === account
+          ? store.snapshot
+          : { rows: [], lastSuccessfulQueryAtMs: null };
+      const rows = snapshot.rows.filter((r) => scope?.cameras.some((c) => c.cameraId === r.cameraId));
+      const cameras = scope && adapter.account() === account ? scope.cameras : [];
+      return {
+        rowsKeptPerCamera: cameras.map((c) => ({
+          name: c.name,
+          rows: rows.filter((r) => r.cameraId === c.cameraId).length,
+        })),
+        rejected: { ...rejected },
+        identity_conflict: identityConflict,
+        timeStatus: Object.fromEntries(
+          ["valid", "unknown_format", "ambiguous", "invalid"].map((status) => [
+            status,
+            rows.filter((r) => r.timeStatus === status).length,
+          ]),
+        ),
+        pagingStatus,
+        lastPageCount,
+        lastCatalogTime: snapshot.lastSuccessfulQueryAtMs,
+        coverCache: {
+          files: rows.filter((r) => r.cover).length,
+          bytes: rows.reduce((n, r) => n + (r.cover?.bytes ?? 0), 0),
+          pending: queued.length + (flight?.job ? 1 : 0),
+        },
+        unknownStartTimeShapes: [...timeShapes].map(([shape, count]) => ({ shape, count })),
+      };
+    },
     async load() {
       if (!enabled() || !adapter.supported() || stopped) return;
       try {

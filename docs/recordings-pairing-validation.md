@@ -110,3 +110,55 @@ filesystem ACLs, historical-cover firmware attribution and live contention
 remain separate acceptance work. Deferred cover jobs still expire without
 polling when the SDK supplies no idle notification. Existing test skips remain
 visible; no new pairing test is skipped.
+
+## Follow-up 3o-r2 local pairing (2026-11-05)
+
+SDK commit `0fa773d` on `recordings-browse-20261105` is built and packed as
+`../artifacts/genomez-eufy-sdk-0.2.1-s1.experimental.12-recordings-3o-r2-0fa773d.tgz`.
+SHA-256: `c03ba77534d26aeafe27216b5bd239be6294231093548e60b8f4ecd7ac7ced29`.
+Installed `dist/index.js` SHA-256:
+`cef88015dfac33693446dd736a8fd9f34790e7462699882669052653014a0b08`.
+The package dependency, lockfile integrity and distribution/runtime probe pins
+match this artifact. Previous tarballs were preserved. The previous installed
+SDK was moved to `../artifacts/installed-sdk-before-3o-r2-0fa773d` before the
+offline reinstall, avoiding npm's same-version retention. No install scripts ran.
+Inherited SDK build-provenance metadata is unchanged; this receipt identifies
+the actual source revision and bundle used for the follow-up.
+
+The installed-SDK synthetic pairing suite now covers ten enrolled camera entries
+across wired, battery and doorbell children, excludes another station, a display
+and case/whitespace variants of J Safe, and proves the original five camera IDs
+are byte-identical across roster growth. A battery catalog and selected cover
+create no child RTC session: only the already connected station owner is used.
+
+Successful paging consumes exactly five station reads for 100 rows, with a
+five-second completion gap and four-continuation maximum. Repeated, overlapping,
+empty, malformed and newer-time pages latch `unsupported_stopped` without
+merging the offending page. Retention, per-camera cap and expired interest stop
+further reads. Continuations preserve foreground preemption and renewal reserve;
+a late reply after preemption cannot publish. Raw cursors stay private.
+
+The WS diagnostics RPC and HTTP diagnostics section are cache-only and tested
+for identical, sanitized output. Unknown-time shapes and rejection reasons are
+verified against source-identity/path/account/time canaries. The optional RPC
+and all additions are documented in `docs/ws-protocol.md`; existing v1 commands,
+HTTP cover route, response bounds and finite refusal vocabulary are retained.
+
+Final validation with Node v24.15.0 / npm 11.12.1:
+
+- SDK `npm run typecheck`: pass; `npm run build`: pass.
+- SDK `npm test`: 6,624 passed, 0 failed, 8 existing skips.
+- Bridge `npm test`: 668 passed, 0 failed, 28 existing skips, including 19 real-SDK pairing tests.
+- Integration full offline suite: 960 passed, 0 failed, 1,200 subtests; changed Python Ruff check and format pass.
+- Changed JavaScript/Markdown Prettier and repository `git diff --check`: pass.
+
+Detailed logs are task-owned `../artifacts/recordings-3o-r2-*.log`. An interrupted
+first pairing attempt exposed a synthetic-clock wait race; fixture waits now use
+real monotonic time for failure bounds and wait for completed store publication.
+Its leftover synthetic test directory is preserved outside the checkout.
+
+No SSH, device, cloud, Home Assistant, private capture or credentials were
+accessed. No push, tag, deployment or live qualification occurred. Paging field
+semantics remain unverified: invalid time/envelope evidence can conservatively
+stop deeper reads for the process. Windows ACL, hardware paging and frontend
+acceptance remain lead gates.

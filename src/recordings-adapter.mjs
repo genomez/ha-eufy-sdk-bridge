@@ -22,7 +22,7 @@ export function recordingsAdapter(eufy, identityKey) {
     },
     enrollment: (rows) => {
       const enrollment = recordingEnrollment(rows, eufy.getInventoryConflicts?.() ?? []);
-      const valid = enrollment?.cameras.length === 5 ? enrollment : null;
+      const valid = enrollment;
       const policy = policies.get(eufy);
       if (policy) {
         policy.stationBinding = valid?.stationSn ?? "";

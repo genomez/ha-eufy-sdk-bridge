@@ -38,6 +38,7 @@ class SyntheticSession extends EventEmitter {
   sent = [];
   rows = [rawRow()];
   reply = true;
+  pages;
   async connect() {
     this.isConnected = true;
     this.emit("connected");
@@ -68,7 +69,11 @@ class SyntheticSession extends EventEmitter {
           table: "history_record_info",
           transaction: query.payload.transaction,
           mIntRet: 0,
-          data: this.rows,
+          version: "1",
+          count: (this.pages?.(query.payload.payload) ?? this.rows).length,
+          start_id: 0,
+          end_id: 1,
+          data: this.pages?.(query.payload.payload) ?? this.rows,
         });
       if (query.cmd === 1308) this.notify(1308, { file: query.payload[0].file, content: jpeg.toString("base64") });
     });
@@ -82,7 +87,7 @@ class SyntheticSession extends EventEmitter {
   }
 }
 
-async function paired(t) {
+async function paired(t, roster = inventory) {
   const root = await temporary(t),
     clocks = clock(),
     logs = [];
@@ -107,7 +112,7 @@ async function paired(t) {
   );
   // Seed only local auth/roster/lifecycle state; no facade method is replaced.
   eufy.mega.auth_ = { userId: "SYNTHETIC_PORTAL_CANARY", accountUserId: account, authToken: "synthetic-unused" };
-  eufy.registry.devices = inventory.map((r, index) => ({
+  eufy.registry.devices = roster.map((r, index) => ({
     ...r,
     params: {},
     raw: index ? { device_channel: index - 1 } : {},
@@ -136,7 +141,7 @@ async function paired(t) {
     await eufy.disconnect();
   });
   await manager.load();
-  await manager.syncInventory(inventory);
+  await manager.syncInventory(roster);
   const cameraId = manager.cameras().cameras[0].cameraId;
   await eufy.rtc.dispatchCommand(inventory[0].sn, {
     kind: "set-payload",
@@ -373,4 +378,218 @@ test("playback gate pins the installed SDK bundle separately from the distributi
   assert.equal(pins.sdkSha256, eventPlaybackProbeSdkRuntimeSha256);
   assert.match(eventPlaybackProbeSdkSha256, /^[a-f0-9]{64}$/);
   assert.notEqual(eventPlaybackProbeSdkSha256, eventPlaybackProbeSdkRuntimeSha256);
+});
+
+const expandedInventory = [
+  ...inventory,
+  ...["T8416", "T8170", "T8171", "T8134", "T8214"].map((model, i) => ({
+    sn: `additional-camera-${i}`,
+    model,
+    name: `Additional camera ${i} `,
+    stationSn: inventory[0].sn,
+    isCamera: true,
+    channel: 10 + i,
+  })),
+  { sn: "display-fixture", model: "T87A0", name: "Display", stationSn: inventory[0].sn, isCamera: false },
+  { sn: "other-station", model: "T8010", name: "Other station", stationSn: "other-station" },
+  { sn: "other-camera", model: "T8170", name: "Other camera", stationSn: "other-station", isCamera: true, channel: 0 },
+  { sn: "excluded-indoor", model: "T8416", name: " j SaFe  ", stationSn: inventory[0].sn, isCamera: true, channel: 19 },
+];
+const syntheticPage = (start, camera = inventory[1].sn) =>
+  Array.from({ length: 20 }, (_, i) =>
+    rawRow({
+      device_sn: camera,
+      record_id: start - i,
+      start_time: `2026-11-05 ${String(12 - Math.floor((100 - start + i) / 60)).padStart(2, "0")}:${String(59 - ((100 - start + i) % 60)).padStart(2, "0")}:00`,
+      end_time: "",
+      thumb_path: "",
+    }),
+  );
+
+test("real SDK enrolls child wired, battery and doorbell cameras with stable existing IDs and station-only reads", async (t) => {
+  const h = await paired(t, expandedInventory);
+  const before = h.manager
+    .cameras()
+    .cameras.slice(0, 5)
+    .map((c) => c.cameraId);
+  assert.equal(h.manager.cameras().cameras.length, 10);
+  assert.ok(h.manager.cameras().cameras.every((c) => c.name === c.name.trim()));
+  await h.manager.syncInventory(inventory);
+  assert.deepEqual(
+    h.manager.cameras().cameras.map((c) => c.cameraId),
+    before,
+  );
+  await h.manager.syncInventory(expandedInventory);
+  h.session.rows = [rawRow({ device_sn: "additional-camera-1" })];
+  const camera = h.manager.cameras().cameras.find((c) => c.name === "Additional camera 1");
+  await h.rpc("recordings.catalog", { cameraId: camera.cameraId, refresh: "if_due" });
+  await until(() => h.store.snapshot.rows.length === 1);
+  const page = await h.rpc("recordings.catalog", { cameraId: camera.cameraId, refresh: "if_due" });
+  await h.rpc("recordings.cover", {
+    cameraId: camera.cameraId,
+    eventId: page.events[0].eventId,
+    browseId: page.browseId,
+    mode: "request_if_admitted",
+  });
+  await until(() => h.store.snapshot.rows[0].cover);
+  assert.deepEqual([...h.eufy.rtc.sessions.keys()], [inventory[0].sn]);
+  assert.equal(h.session.queries(1306).length, 1);
+  assert.equal(h.session.queries(1308).length, 1);
+});
+
+test("real SDK pages at five-second gaps to four extra reads and exposes sanitized diagnostics", async (t) => {
+  const h = await paired(t);
+  // Keep retention aligned with the entirely synthetic station date.
+  h.clocks.wallJump(Date.parse("2026-11-05T20:00:00Z") - h.clocks.now());
+  h.session.pages = (query) => syntheticPage(query.start_id === 0 ? 100 : query.start_id);
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.store.snapshot.rows.length === 20);
+  await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
+  for (let i = 1; i <= 4; i++) {
+    h.advance(4_999);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(h.session.queries(1306).length, i);
+    h.advance(1);
+    await until(() => h.store.snapshot.rows.length === (i + 1) * 20);
+    await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
+    await until(() => !h.eufy.rtc.recordingReads.size);
+    await new Promise((r) => setImmediate(r));
+  }
+  h.advance(5_000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.session.queries(1306).length, 5);
+  const diagnostics = await h.rpc("recordings.diagnostics");
+  assert.equal(diagnostics.pagingStatus, "working");
+  assert.equal(diagnostics.lastPageCount, 20);
+  assert.equal(diagnostics.rowsKeptPerCamera[0].rows, 100);
+  assert.ok(!JSON.stringify(diagnostics).includes(inventory[1].sn));
+});
+
+for (const mode of ["repeat", "empty", "invalid", "overlap", "newer_time"]) {
+  test(`real SDK permanently stops inconsistent paging: ${mode}`, async (t) => {
+    const h = await paired(t);
+    h.clocks.wallJump(Date.parse("2026-11-05T20:00:00Z") - h.clocks.now());
+    h.session.pages = (q) => {
+      if (!q.start_id) return syntheticPage(100);
+      if (mode === "repeat") return syntheticPage(100);
+      if (mode === "empty") return [];
+      if (mode === "invalid") return syntheticPage(80).map((row) => ({ ...row, record_id: "bad" }));
+      if (mode === "overlap") return syntheticPage(85);
+      return syntheticPage(80).map((row) => ({ ...row, start_time: "2026-11-05 20:00:00" }));
+    };
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(() => h.store.snapshot.rows.length === 20);
+    await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
+    h.advance(5_000);
+    await until(() => h.manager.diagnostics().pagingStatus === "unsupported_stopped");
+    assert.equal(h.store.snapshot.rows.length, 20);
+    h.advance(120_001);
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(() => h.session.queries(1306).length === 3);
+    h.advance(5_000);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(h.session.queries(1306).length, 3);
+  });
+}
+
+test("real SDK cancels deeper reads when folder interest expires", async (t) => {
+  const h = await paired(t);
+  h.clocks.wallJump(Date.parse("2026-11-05T20:00:00Z") - h.clocks.now());
+  h.session.pages = () => syntheticPage(100);
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.store.snapshot.rows.length === 20);
+  await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
+  h.advance(60_001);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.session.queries(1306).length, 1);
+});
+
+test("real SDK diagnostic time shapes and rejection reasons contain no source identifiers", async (t) => {
+  const h = await paired(t);
+  h.session.rows = [
+    rawRow({ start_time: "PRIVATE_CANARY123!?" }),
+    rawRow({ device_sn: "excluded-fixture" }),
+    rawRow({ record_id: "bad" }),
+    rawRow({ start_time: null }),
+  ];
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.store.snapshot.rows.length === 1);
+  const result = await h.rpc("recordings.diagnostics");
+  assert.deepEqual(result.rejected, { not_in_scope: 1, bad_record_id: 1, bad_start_time: 1, other: 0 });
+  assert.deepEqual(result.unknownStartTimeShapes, [{ shape: "aaaaaaa?aaaaaa999??", count: 1 }]);
+  assert.equal(result.timeStatus.unknown_format, 1);
+  const wire = JSON.stringify(result);
+  for (const canary of ["PRIVATE", "CANARY", coverPath, account, String(recordId), inventory[1].sn])
+    assert.ok(!wire.includes(canary));
+});
+
+for (const stop of ["retention", "cap"]) {
+  test(`real SDK deeper read stops at ${stop}`, async (t) => {
+    const h = await paired(t);
+    h.clocks.wallJump(Date.parse("2026-11-05T20:00:00Z") - h.clocks.now());
+    h.session.pages = () =>
+      syntheticPage(100).map((row) => (stop === "retention" ? { ...row, start_time: "2026-10-20 10:00:00" } : row));
+    if (stop === "cap") {
+      const { recordingBinding } = await import("../src/recordings-adapter.mjs");
+      const { recordingEnrollment } = await import("../src/recordings-policy.mjs");
+      const { row } = await import("./helpers/recordings-fixtures.mjs");
+      const scope = recordingBinding(
+        h.store.key,
+        h.eufy.getRecordingAccountNamespace(h.store.key),
+        recordingEnrollment(inventory),
+      );
+      for (let i = 0; i < 20; i++)
+        await h.store.mergeCatalog(
+          scope,
+          Array.from({ length: 20 }, (_, j) => row(scope, i * 20 + j)),
+        );
+    }
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(() => h.manager.diagnostics().lastPageCount === 20);
+    await until(() => !h.eufy.rtc.recordingReads.size);
+    // Allow the store publication to settle before driving its scheduled continuation.
+    await new Promise((r) => setTimeout(r, 50));
+    h.advance(5_000);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(h.session.queries(1306).length, 1);
+  });
+}
+
+test("real SDK continuation is preemptible and cannot publish a late table", async (t) => {
+  const h = await paired(t);
+  h.session.pages = () => syntheticPage(100);
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
+  h.session.reply = false;
+  h.advance(5_000);
+  await until(() => h.session.queries(1306).length === 2);
+  h.manager.preempt();
+  await until(() => !h.eufy.rtc.recordingReads.size);
+  const query = h.session.queries(1306)[1];
+  h.session.notify(1306, {
+    cmd: 10000,
+    table: "history_record_info",
+    transaction: query.payload.transaction,
+    mIntRet: 0,
+    version: "1",
+    count: 20,
+    start_id: 80,
+    end_id: 61,
+    data: syntheticPage(80),
+  });
+  assert.equal(h.store.snapshot.rows.length, 20);
+  assert.equal(h.session.isConnected, true);
+  assert.equal(h.eufy.rtc.sessions.get(inventory[0].sn).leases, 0);
+});
+
+test("real SDK renewal reserve defers a deeper page without marking paging unsupported", async (t) => {
+  const h = await paired(t);
+  h.session.pages = () => syntheticPage(100);
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
+  h.eufy.rtc.sessions.get(inventory[0].sn).refreshDueMonotonicMs = performance.now() + 10_000;
+  h.advance(5_000);
+  await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
+  assert.equal(h.session.queries(1306).length, 1);
+  assert.equal(h.manager.diagnostics().pagingStatus, "unverified");
 });

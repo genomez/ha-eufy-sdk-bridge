@@ -461,7 +461,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
         await commit(next);
       });
     },
-    mergeCatalog(scope, rows, isCurrent = () => true) {
+    mergeCatalog(scope, rows, isCurrent = () => true, latest = true) {
       return serial(async () => {
         if (!isCurrent() || scope.scopeId !== data.scopeId || !Array.isArray(rows) || rows.length > 20)
           throw failure("invalid");
@@ -483,8 +483,9 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
         }
         next.rows = next.rows
           .filter((r) => !seen.has(r.eventId))
-          .map((r) => ({ ...r, stationPresence: "not_in_latest_window" }))
+          .map((r) => (latest ? { ...r, stationPresence: "not_in_latest_window" } : r))
           .concat(incoming);
+        if (!latest) for (const row of incoming) row.stationPresence = "not_in_latest_window";
         checkPaths(next, scope);
         next.lastSuccessfulQueryAtMs = clock();
         if (!isCurrent()) return;

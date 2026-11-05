@@ -11,7 +11,7 @@ test("model enrollment excludes J Safe and rejects ambiguous station ownership",
   assert.equal(recordingEnrollment(inventory).cameras.length, 5);
   for (const rows of [
     [...inventory, inventory[0]],
-    inventory.map((r, i) => (i === 1 ? { ...r, stationSn: "other-station" } : r)),
+    inventory.map((r, i) => (i === 1 ? { ...r, stationSn: "" } : r)),
     inventory.filter((r) => r.model !== "T9000"),
   ])
     assert.equal(recordingEnrollment(rows), null);
@@ -438,4 +438,11 @@ test("interest expiration aborts a cover admitted near its deadline", async (t) 
   resolve({ status: "ok", jpeg: Buffer.alloc(0) });
   await tick();
   assert.equal(h.store.snapshot.rows[0].cover, null);
+});
+
+test("duplicate and unresolved child channels invalidate enrollment", () => {
+  for (const channel of [undefined, -1, 255, 0]) {
+    const rows = inventory.map((row, index) => (index === 2 ? { ...row, channel } : row));
+    assert.equal(recordingEnrollment(rows), null);
+  }
 });

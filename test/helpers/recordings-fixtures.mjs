@@ -14,6 +14,8 @@ export const inventory = [
   ...Array.from({ length: 5 }, (_, i) => ({
     sn: `synthetic-camera-${i}`,
     model: "T8425",
+    isCamera: true,
+    channel: i,
     stationSn: "synthetic-station",
     name: `Fixture camera ${i}`,
   })),
@@ -34,7 +36,7 @@ export async function temporary(t) {
   return root;
 }
 export function clock() {
-  let wall = 1_800_000_000_000,
+  let wall = Date.parse("2026-11-05T20:00:00Z"),
     tick = 0,
     next = 0;
   const timers = new Map();
@@ -71,7 +73,7 @@ export function row(scope, index = 0, extra = {}) {
     cameraSn: inventory[1].sn,
     stationBinding: inventory[0].sn,
     thumbPath: `/fixture/cover-${index}.jpg`,
-    observedAtMs: 1_800_000_000_000,
+    observedAtMs: Date.parse("2026-11-05T20:00:00Z"),
   };
   selector.selectorMac = recordingMac(
     scope.sdkScope.identityKey,
@@ -150,9 +152,9 @@ export async function harness(t, options = {}) {
   return { root, clocks, store, eufy, calls, events, ctx, manager, scope, cameraId, owner, catalog };
 }
 export async function until(predicate) {
-  const end = performance.now() + 5_000;
+  const end = process.hrtime.bigint() + 5_000_000_000n;
   while (!predicate()) {
-    if (performance.now() > end) throw new Error("Synthetic operation did not settle");
+    if (process.hrtime.bigint() > end) throw new Error("Synthetic operation did not settle");
     await new Promise((r) => setImmediate(r));
   }
 }
