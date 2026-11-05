@@ -30,6 +30,15 @@ export function recordingsAdapter(eufy, identityKey) {
       }
       return valid;
     },
+    backgroundReady(stationSn) {
+      try {
+        const playback = eufy.rtc?.getPlaybackSafetyDiagnostics?.();
+        if (playback?.active || playback?.unresolved || eufy.rtc?.playbackActive?.()) return "playback";
+        return eufy.rtc?.informationRefreshReady?.(stationSn) === true ? "ready" : "offline";
+      } catch {
+        return "offline";
+      }
+    },
     async catalog(scope, opts) {
       return read(() => eufy.readRecordingCatalog(scope, opts));
     },
@@ -44,7 +53,7 @@ async function read(operation) {
     if (result?.status === "ok") return result;
     return {
       status: result?.status === "deferred" ? "deferred" : "unavailable",
-      reason: sdkReason(result?.reason),
+      reason: reasonOf(result?.reason),
       ...(Number.isFinite(result?.retryAfterMs) && result.retryAfterMs >= 0
         ? { retryAfterMs: result.retryAfterMs }
         : {}),
@@ -52,15 +61,6 @@ async function read(operation) {
   } catch (error) {
     return { status: "unavailable", reason: error?.name === "TimeoutError" ? "timeout" : "busy" };
   }
-}
-
-/** Map SDK-only refusals into the existing finite public vocabulary. */
-function sdkReason(reason) {
-  if (["owner_unavailable", "owner_changed", "disabled"].includes(reason)) return "offline";
-  if (reason === "renewal_due") return "renewal";
-  if (reason === "send_refused") return "busy";
-  if (["selector_invalid", "selector_reserved", "invalid_options"].includes(reason)) return "invalid_reply";
-  return reasonOf(reason);
 }
 
 /** Length-prefixed UTF-8 tuples; SDK sourceKey is already the full event HMAC. */

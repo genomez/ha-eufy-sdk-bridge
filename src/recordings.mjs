@@ -1,7 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { createRecordingsStore, publicRecording } from "./recordings-store.mjs";
 import { recordingsAdapter, recordingBinding, safeSelector } from "./recordings-adapter.mjs";
-import { LIMITS, createRecordingsPolicy, failure, validId, reasonOf } from "./recordings-policy.mjs";
+import {
+  LIMITS,
+  createRecordingsPolicy,
+  failure,
+  validId,
+  reasonOf,
+  publicReason,
+  transientReasons,
+} from "./recordings-policy.mjs";
 
 export function createRecordings(
   ctx,
@@ -23,6 +31,19 @@ export function createRecordings(
   let dirty = false,
     refresh = { state: "idle", reason: "none", retryAfterMs: null };
   let lastCatalogAttempt = null;
+  let backgroundTimer, retryTimer, catalogCycle;
+  let nextCatalog = Infinity,
+    nextPrefetch = 0;
+  const backgroundEnabled = () => enabled() && ctx.cfg.recordings?.background !== false;
+  const background = {
+    lastCatalogAtMs: null,
+    catalogRuns: 0,
+    ok: 0,
+    deferred: 0,
+    failed: 0,
+    retries: 0,
+    coverPrefetch: { fetched: 0, failed: 0, skippedPlayback: 0, lastAtMs: null },
+  };
   let timer, expireTimer, notifying, notificationTimer, pageTimer, pendingPage;
   let pagingStatus = "unverified",
     lastPageCount = 0,
@@ -48,11 +69,14 @@ export function createRecordings(
       negatives.delete(row.eventId);
       return 0;
     }
-    if (!negatives.has(row.eventId)) {
+    if (negatives.get(row.eventId)?.wall !== row.negativeUntilMs) {
       if (negatives.size >= LIMITS.rows) negatives.delete(negatives.keys().next().value);
-      negatives.set(row.eventId, mono() + Math.min(LIMITS.negative, Math.max(0, row.negativeUntilMs - now())));
+      negatives.set(row.eventId, {
+        wall: row.negativeUntilMs,
+        until: mono() + Math.min(LIMITS.negative, Math.max(0, row.negativeUntilMs - now())),
+      });
     }
-    return Math.max(0, negatives.get(row.eventId) - mono());
+    return Math.max(0, negatives.get(row.eventId).until - mono());
   }
   const current = (s, generation) =>
     !stopped && enabled() && scope === s && epoch === generation && adapter.account() === account;
@@ -140,6 +164,8 @@ export function createRecordings(
     timer = null;
     cancel(expireTimer);
     expireTimer = null;
+    cancel(retryTimer);
+    retryTimer = null;
   }
   function expire() {
     cancel(expireTimer);
@@ -180,6 +206,130 @@ export function createRecordings(
   }
   async function persistBudget() {
     await store.updateHistory(policy.snapshot());
+  }
+  function backgroundReady() {
+    if (ctx.state.streaming?.size || ctx.state.activeStreams?.size) return "playback";
+    return available() ? adapter.backgroundReady(scope?.stationSn) : "offline";
+  }
+  function prefetchRows() {
+    if (!loaded || !scope || !scopeValid || adapter.account() !== account || storeFailed) return [];
+    return store.snapshot.rows
+      .filter(
+        (r) =>
+          scope.cameras.some((c) => c.cameraId === r.cameraId) &&
+          r.selector &&
+          !r.cover &&
+          Number.isSafeInteger(r.startedAtMs) &&
+          r.startedAtMs <= now() &&
+          r.startedAtMs >= now() - LIMITS.prefetchAge &&
+          (r.coverFailures ?? 0) < LIMITS.coverFailures,
+      )
+      .sort((a, b) => b.startedAtMs - a.startedAtMs || a.eventId.localeCompare(b.eventId));
+  }
+  function armBackground() {
+    cancel(backgroundTimer);
+    backgroundTimer = null;
+    if (stopped || !backgroundEnabled() || !scope || !scopeValid) return;
+    const rows = prefetchRows();
+    const coverAt = rows.length
+      ? mono() +
+        Math.max(LIMITS.prefetchGap, nextPrefetch - mono(), policy.coverWait(), Math.min(...rows.map(negativeWait)))
+      : Infinity;
+    backgroundTimer = schedule(runBackground, Math.max(1, Math.min(nextCatalog, coverAt) - mono()));
+    backgroundTimer?.unref?.();
+  }
+  function runBackground() {
+    backgroundTimer = null;
+    if (stopped || !backgroundEnabled() || !scope || !scopeValid) return;
+    const ready = backgroundReady();
+    if (ready === "playback") background.coverPrefetch.skippedPlayback++;
+    if (nextCatalog <= mono()) {
+      nextCatalog = mono() + LIMITS.backgroundCatalogInterval;
+      if (ready === "ready") requestCatalog("background");
+    }
+    if (ready === "ready") prefetch();
+    armBackground();
+  }
+  function prefetch() {
+    if (flight || queued.length || pendingPage || nextPrefetch > mono() || policy.coverWait()) return;
+    const row = prefetchRows().find((r) => !negativeWait(r));
+    if (
+      !row ||
+      !safeSelector(row.selector, { sourceKey: row.sourceKey, cameraSn: row.selector.cameraSn }, scope, store.key)
+    )
+      return;
+    const s = scope,
+      generation = epoch,
+      controller = new AbortController();
+    nextPrefetch = mono() + LIMITS.prefetchGap;
+    background.coverPrefetch.lastAtMs = now();
+    policy.admitCover();
+    flight = { controller, kind: "prefetch_reservation", background: true, startedAt: mono() };
+    void (async () => {
+      try {
+        await persistBudget();
+        if (
+          !current(s, generation) ||
+          controller.signal.aborted ||
+          !backgroundEnabled() ||
+          backgroundReady() !== "ready"
+        )
+          return;
+        const result = await bounded(
+          "prefetch",
+          (opts) => adapter.cover(s.sdkScope, row.selector, opts),
+          s,
+          generation,
+        );
+        if (!current(s, generation)) return;
+        if (result.status === "deferred") {
+          nextPrefetch = mono() + Math.max(LIMITS.prefetchGap, result.retryAfterMs ?? 0);
+        } else if (result.status === "ok") {
+          await store.putCover(s, row.cameraId, row.eventId, result.jpeg, () => current(s, generation));
+          background.coverPrefetch.fetched++;
+          notify("cover", row.cameraId);
+        } else {
+          await store.negative(row.cameraId, row.eventId);
+          background.coverPrefetch.failed++;
+        }
+      } catch {
+        if (current(s, generation)) {
+          await store.negative(row.cameraId, row.eventId).catch(() => {});
+          background.coverPrefetch.failed++;
+        }
+      } finally {
+        policy.completeCover();
+        await persistBudget().catch(() => {});
+        if (flight?.controller === controller) flight = null;
+        if (current(s, generation)) {
+          flush();
+          armBackground();
+        }
+      }
+    })();
+  }
+  function retryWanted(cycle) {
+    return (cycle.background && backgroundEnabled()) || activeCameras().size > 0;
+  }
+  function armCatalogRetry(cycle) {
+    cancel(retryTimer);
+    retryTimer = null;
+    if (!cycle.retryAt || cycle.retries >= LIMITS.catalogRetries || !retryWanted(cycle)) return;
+    retryTimer = schedule(
+      () => {
+        retryTimer = null;
+        if (catalogCycle !== cycle || !current(cycle.s, cycle.generation) || !scopeValid || !retryWanted(cycle)) return;
+        cycle.retries++;
+        background.retries++;
+        const admitted = requestCatalog(cycle.background && backgroundEnabled() ? "background" : "browse", true);
+        if (!admitted) {
+          cycle.retryAt = mono() + Math.max(5_000, policy.catalogWait(), policy.featureWait());
+          armCatalogRetry(cycle);
+        }
+      },
+      Math.max(1, cycle.retryAt - mono()),
+    );
+    retryTimer?.unref?.();
   }
   async function bounded(kind, operation, s, generation) {
     const entry = flight;
@@ -337,6 +487,7 @@ export function createRecordings(
         );
         if (!current(cycle.s, cycle.generation)) return;
         notify("catalog");
+        armBackground();
         deeper({ ...cycle, extra: cycle.extra + 1 }, result);
       } catch {
         // Local persistence failures provide no evidence that station paging is unsupported.
@@ -351,13 +502,26 @@ export function createRecordings(
       }
     })();
   }
-  function requestCatalog() {
+  function requestCatalog(source = "browse", retry = false) {
     if (!scopeValid) {
       refresh = { state: "deferred", reason: "scope_invalid", retryAfterMs: null };
       return;
     }
     if (flight || queued.length) {
       refresh = { state: "deferred", reason: "busy", retryAfterMs: null };
+      return;
+    }
+    if (source === "background" && backgroundReady() !== "ready") return;
+    if (
+      catalogCycle?.retryAt &&
+      mono() - catalogCycle.startedAt < LIMITS.catalogInterval &&
+      (!retry || mono() < catalogCycle.retryAt)
+    ) {
+      refresh = {
+        state: "deferred",
+        reason: catalogCycle.reason,
+        retryAfterMs: Math.max(0, catalogCycle.retryAt - mono()),
+      };
       return;
     }
     const wait = Math.max(policy.catalogWait(), policy.featureWait());
@@ -376,11 +540,27 @@ export function createRecordings(
     pageTimer = null;
     pendingPage = null;
     // Reserve synchronously, before any asynchronous persistence or a second browser request.
-    policy.admitCatalog();
+    cancel(retryTimer);
+    retryTimer = null;
+    if (!retry || !catalogCycle)
+      catalogCycle = {
+        s,
+        generation,
+        startedAt: mono(),
+        retries: 0,
+        background: source === "background",
+      };
+    const cycle = catalogCycle;
+    cycle.retryAt = null;
+    const previousCatalog = policy.admitCatalog();
+    if (source === "background") {
+      background.catalogRuns++;
+      background.lastCatalogAtMs = now();
+    }
     const attempt = { atMs: now(), finishedAtMs: null, outcome: "pending", reason: "none" };
     lastCatalogAttempt = attempt;
     const controller = new AbortController();
-    flight = { controller, kind: "catalog_reservation", startedAt: mono() };
+    flight = { controller, kind: "catalog_reservation", background: source === "background", startedAt: mono() };
     void (async () => {
       try {
         await persistBudget();
@@ -390,10 +570,18 @@ export function createRecordings(
         if (result.status !== "ok") {
           attempt.outcome = ["deferred", "unavailable"].includes(result.status) ? result.status : "failed";
           attempt.reason = reasonOf(result.reason);
+          if (result.status === "deferred" && transientReasons.has(attempt.reason)) {
+            policy.deferCatalog(previousCatalog);
+            const hint = Number.isFinite(result.retryAfterMs) ? result.retryAfterMs : cycle.retries ? 30_000 : 5_000;
+            cycle.retryAt = mono() + Math.max(1_000, Math.min(LIMITS.backgroundCatalogInterval, hint));
+            cycle.reason = attempt.reason;
+            await persistBudget();
+            armCatalogRetry(cycle);
+          }
           refresh = {
             state: result.status === "deferred" ? "deferred" : "failed",
             reason: reasonOf(result.reason),
-            retryAfterMs: null,
+            retryAfterMs: cycle.retryAt ? Math.max(0, cycle.retryAt - mono()) : null,
           };
           return;
         }
@@ -416,6 +604,7 @@ export function createRecordings(
         attempt.reason = "none";
         refresh = { state: "idle", reason: "none", retryAfterMs: null };
         notify("catalog");
+        armBackground();
         deeper(
           { s, generation, startedAt: mono(), extra: 0, seen: new Set(result.rows.map((r) => r.eventId)) },
           result,
@@ -434,10 +623,14 @@ export function createRecordings(
           attempt.reason = "busy";
         }
         attempt.finishedAtMs = now();
+        if (source === "background")
+          background[attempt.outcome === "ok" ? "ok" : attempt.outcome === "deferred" ? "deferred" : "failed"]++;
         if (flight?.controller === controller) flight = null;
         flush();
+        armBackground();
       }
     })();
+    return true;
   }
   function arm(wait) {
     cancel(timer);
@@ -551,6 +744,20 @@ export function createRecordings(
         lastPageCount,
         lastCatalogTime: snapshot.lastSuccessfulQueryAtMs,
         lastCatalogAttempt: lastCatalogAttempt ? { ...lastCatalogAttempt } : null,
+        background: {
+          enabled: backgroundEnabled(),
+          lastCatalogAtMs: background.lastCatalogAtMs,
+          nextCatalogAtMs:
+            backgroundEnabled() && Number.isFinite(nextCatalog)
+              ? Math.floor(now() + Math.max(0, nextCatalog - mono()))
+              : null,
+          catalogRuns: background.catalogRuns,
+          ok: background.ok,
+          deferred: background.deferred,
+          failed: background.failed,
+          coverPrefetch: { queued: backgroundEnabled() ? prefetchRows().length : 0, ...background.coverPrefetch },
+          retries: background.retries,
+        },
         coverCache: {
           files: rows.filter((r) => r.cover).length,
           bytes: rows.reduce((n, r) => n + (r.cover?.bytes ?? 0), 0),
@@ -595,6 +802,8 @@ export function createRecordings(
           scope.cameras = binding.cameras;
         }
         scopeValid = true;
+        if (!Number.isFinite(nextCatalog)) nextCatalog = mono() + LIMITS.backgroundCatalogInterval;
+        armBackground();
       } catch {
         if (sequence !== inventoryGeneration) return;
         preempt();
@@ -656,7 +865,7 @@ export function createRecordings(
         lastSuccessfulQueryAtMs: state.lastSuccessfulQueryAtMs,
         lastAttemptAtMs: policy.snapshot().catalog,
         dirty,
-        refresh: { ...refresh },
+        refresh: { ...refresh, reason: publicReason(refresh.reason) },
         browseId: browse?.token ?? null,
         browseExpiresAtMs: browse?.expiresAtMs ?? null,
         coverEligibleEventIds: browse
@@ -742,12 +951,14 @@ export function createRecordings(
     ownerLost(owner) {
       for (const [id, i] of interests) if (i.owner === owner) interests.delete(id);
       queued = queued.filter((j) => j.owner !== owner);
-      if (flight?.job?.owner === owner || !interests.size) preempt();
+      if (flight?.job?.owner === owner || (!interests.size && !flight?.background && !catalogCycle?.background))
+        preempt();
       expire();
     },
     async stop() {
       stopped = true;
       preempt();
+      cancel(backgroundTimer);
       publishCapability();
       interests.clear();
       cancel(notificationTimer);

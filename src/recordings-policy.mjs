@@ -11,7 +11,12 @@ export const LIMITS = Object.freeze({
   rows: 2_000,
   cameraRows: 400,
   ttl: 604_800_000,
-  coverFiles: 256,
+  coverFiles: 2_000,
+  backgroundCatalogInterval: 300_000,
+  prefetchGap: 15_000,
+  prefetchAge: 86_400_000,
+  coverFailures: 3,
+  catalogRetries: 2,
   coverBytes: 134_217_728,
   imageBytes: 524_288,
   manifestBytes: 16_777_216,
@@ -20,7 +25,7 @@ export const LIMITS = Object.freeze({
 });
 export const validId = (id, prefix) => typeof id === "string" && new RegExp(`^${prefix}_[A-Za-z0-9_-]{22}$`).test(id);
 export const failure = (code) => Object.assign(new Error("Recordings unavailable"), { code: `recordings_${code}` });
-export const finiteReasons = new Set([
+export const publicReasons = new Set([
   "none",
   "busy",
   "playback",
@@ -33,7 +38,37 @@ export const finiteReasons = new Set([
   "invalid_reply",
   "store_unavailable",
 ]);
+export const finiteReasons = new Set([
+  ...publicReasons,
+  "disabled",
+  "invalid_options",
+  "owner_unavailable",
+  "owner_changed",
+  "owner_unhealthy",
+  "observing",
+  "quiet_period",
+  "renewal_due",
+  "selector_invalid",
+  "selector_reserved",
+  "reply_capacity",
+  "aborted",
+  "send_refused",
+]);
 export const reasonOf = (value) => (finiteReasons.has(value) ? value : "busy");
+export function publicReason(value) {
+  if (["disabled", "owner_unavailable", "owner_changed"].includes(value)) return "offline";
+  if (value === "renewal_due") return "renewal";
+  if (["invalid_options", "selector_invalid", "selector_reserved"].includes(value)) return "invalid_reply";
+  return publicReasons.has(value) ? value : "busy";
+}
+export const transientReasons = new Set([
+  "observing",
+  "busy",
+  "quiet_period",
+  "renewal_due",
+  "reply_capacity",
+  "owner_unhealthy",
+]);
 
 /** Local inventory only. A conflicting roster cannot authorize a station read. */
 export function recordingEnrollment(records, conflicts = []) {
@@ -100,7 +135,12 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
     catalogWait: () => Math.max(0, LIMITS.catalogInterval - (monotonic() - lastCatalog)),
     featureWait: () => Math.max(0, LIMITS.coverGap - (monotonic() - lastCover)),
     admitCatalog() {
+      const previous = lastCatalog;
       lastCatalog = monotonic();
+      return previous;
+    },
+    deferCatalog(previous) {
+      lastCatalog = previous;
     },
     coverWait() {
       attempts = attempts.filter((t) => monotonic() - t < 60_000);

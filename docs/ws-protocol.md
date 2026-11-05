@@ -146,15 +146,37 @@ type Cover = {
 Catalogs contain at most 100 newest entries, or the single requested focus event;
 there is no cursor or station paging. Known times precede unknown times.
 `if_due` returns cached data promptly, records a camera/socket interest for 60 s,
-and requests at most one station-wide refresh per 120 s, including failed attempts.
-Refresh completion never automatically starts covers. At most four uncached
+and requests at most one station-wide refresh per 120 s, including failed exchanges.
+Transient SDK deferrals (`observing`, `busy`, `quiet_period`, `renewal_due`,
+`reply_capacity`, `owner_unhealthy`) release that reservation. A shared cycle allows
+at most two automatic retries per 120 s, with one retry timer; repeated browsing
+cannot add retries. Retry hints are honored (bounded to 1–300 s); without a hint,
+the first retry waits 5 s and the second 30 s. Interest must still be active,
+unless the cycle belongs to the enabled background schedule.
+At most four uncached
 event IDs share one camera budget per 60 s across clients and detail browsing.
 Cached covers need no interest or connected owner. Uncached covers require an
 eligible event plus the matching socket's current browse ID. The station has one
 read in flight, at most four unsent unique cover demands, a 5 s post-cover gap,
 six cover attempts per rolling minute and a 5-minute event failure cache.
-Busy deferred reads wait for an explicit idle notification; there is no periodic
-retry or recordings poll. Ordinary foreground requests preempt feature work.
+Ordinary foreground requests preempt feature work.
+
+`RECORDINGS_BACKGROUND` defaults to `true`; `false` disables background catalogs
+and cover prefetch without disabling browsing or its bounded catalog retries.
+The background schedule starts five minutes after enrollment and requests the
+latest station window every five minutes, subject to the shared catalog interval
+and all SDK gates. It skips unhealthy sessions and pauses during live view,
+playback or an unresolved playback safety hold. It never acquires a session.
+After latest or deeper merges, uncached covers with a validated selector and a
+known start within the last 24 hours are eligible for background prefetch, newest
+first. Future and unknown starts are excluded. Background reads are serialized
+with browsing and paging, yield to browse cover demands, and start no faster than
+one per 15 s; all existing SDK, renewal and aggregate cover limits still apply.
+Unavailable covers wait five minutes. Three failures stop background attempts for
+that event; the count survives merges and restart. Deferrals do not count as
+failures. The cover cache allows 2,000 files while retaining the 128 MiB byte cap
+and existing row retention limits. Diagnostics and cache-only requests never
+create browse interest or start a station read themselves.
 
 ```ts
 { event: "recordings.changed", version: 1, scopeId,
@@ -186,7 +208,7 @@ Home Assistant must supply its own authenticated thumbnail proxy. Covers use
 immutable `<eventId>.<sha256>.jpg` filenames so a failed manifest replacement
 cannot publish an orphan or overwrite an earlier verified cover. Metadata has a
 non-sliding 7-day TTL, 2,000-row total / 400-row camera caps. Covers expire with
-their parent or after 7 days, capped at 256 files / 128 MiB; eviction trims to
+their parent or after 7 days, capped at 2,000 files / 128 MiB; eviction trims to
 90% of both cover caps. Atomic scratch is capped at two files / 8 MiB, with a
 64 MiB free-space floor. All new directories/files request 0700/0600 modes.
 
@@ -708,6 +730,25 @@ uses the existing host command policy. `/diagnostics` also includes `recordings`
   `outcome` is `pending` and `finishedAtMs` is null; completed outcomes are `ok`,
   `deferred`, `unavailable` or `failed`. Later rate-limited, busy, offline or invalid-scope
   browse decisions do not replace it. This summary is process-local and resets on restart;
+- Internal `lastCatalogAttempt.reason` preserves this finite vocabulary: `none`,
+  `busy`, `playback`, `renewal`, `refresh_hold`, `offline`, `scope_invalid`,
+  `rate_limited`, `timeout`, `invalid_reply`, `store_unavailable`, `disabled`,
+  `invalid_options`, `owner_unavailable`, `owner_changed`, `owner_unhealthy`,
+  `observing`, `quiet_period`, `renewal_due`, `selector_invalid`,
+  `selector_reserved`, `reply_capacity`, `aborted`, `send_refused`.
+  Unknown values sanitize to `busy`. **Catalog `refresh.reason` is unchanged**:
+  new internal reasons map to the original public vocabulary above (`renewal_due`
+  to `renewal`; disabled/missing/changed owners to `offline`; invalid options or
+  selectors to `invalid_reply`; other new codes to `busy`). No HA catalog schema
+  update is needed;
+- `background`: `{enabled, lastCatalogAtMs, nextCatalogAtMs, catalogRuns, ok,
+deferred, failed, coverPrefetch: {queued, fetched, failed, skippedPlayback,
+lastAtMs}, retries}`. Times are epoch milliseconds or null. `catalogRuns` and
+  outcomes count admitted background attempts, including retries; cadence skips
+  do not count as reads. `retries` counts automatic catalog retry opportunities
+  from either source. `queued` counts eligible uncached prefetch rows, including
+  negative waits. All counters are process-local; background diagnostics contain
+  no identifiers, paths or row data;
 - `coverCache`: `{files, bytes, pending}`;
 - `unknownStartTimeShapes`: at most 32 `{shape, count}` entries. At most 32 code
   points from each raw start token are masked: numbers become `9`, letters become

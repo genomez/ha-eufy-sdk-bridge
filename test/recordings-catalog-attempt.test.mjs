@@ -76,7 +76,7 @@ test("a busy browse preserves the admitted pending attempt through completion", 
     atMs,
     finishedAtMs: h.clocks.now(),
     outcome: "deferred",
-    reason: "renewal",
+    reason: "renewal_due",
   });
   await tick();
 });

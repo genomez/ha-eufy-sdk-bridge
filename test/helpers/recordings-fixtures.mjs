@@ -116,6 +116,11 @@ export async function harness(t, options = {}) {
     calls = { catalog: [], cover: [] },
     events = [];
   eufy.api = { auth: { userId: "synthetic-account" } };
+  eufy.rtc = {
+    informationRefreshReady: () => true,
+    getPlaybackSafetyDiagnostics: () => ({ active: false, unresolved: false }),
+    playbackActive: () => false,
+  };
   eufy.getRecordingAccountNamespace = (key) => `a_${recordingMac(key, "recordings.account.v1", eufy.api.auth.userId)}`;
   eufy.readRecordingCatalog = async (s, o) => {
     calls.catalog.push({ s, o });
@@ -126,7 +131,11 @@ export async function harness(t, options = {}) {
     return options.cover ? options.cover(s, selector, o) : { status: "ok", jpeg };
   };
   const ctx = {
-    cfg: { recordings: { enabled: true, root }, go2rtcApi: "", streamIdleMs: 0 },
+    cfg: {
+      recordings: { enabled: true, background: options.background ?? false, root },
+      go2rtcApi: "",
+      streamIdleMs: 0,
+    },
     eufy,
     state: createState(),
     eventImageDir: root,

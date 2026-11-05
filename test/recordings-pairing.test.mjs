@@ -122,7 +122,7 @@ async function paired(t, roster = inventory) {
   eufy.rtc.deps.createSession = () => session;
   const store = createRecordingsStore(root, { clock: clocks.now });
   const ctx = {
-    cfg: { recordings: { enabled: true, root }, go2rtcApi: "", streamIdleMs: 0 },
+    cfg: { recordings: { enabled: true, background: false, root }, go2rtcApi: "", streamIdleMs: 0 },
     eufy,
     state: createState(),
     SCHEMA_VERSION: 1,
@@ -353,7 +353,38 @@ test("real SDK catalog abort releases local work and suppresses late synthetic r
   assert.equal(h.eufy.rtc.sessions.get(inventory[0].sn).leases, 0);
 });
 
-test("adapter preserves public failure vocabulary and forwards SDK abort and integer timeout", async () => {
+test("real SDK observing deferral recovers within browse interest without waiting two minutes", async (t) => {
+  const h = await paired(t);
+  const owner = h.eufy.rtc.sessions.get(inventory[0].sn);
+  owner.connectedAtMonotonicMs = performance.now() - 30_000;
+  await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+  assert.equal(h.manager.diagnostics().lastCatalogAttempt.reason, "observing");
+  assert.equal(h.store.snapshot.history.catalog, null);
+  assert.equal(h.session.queries(1306).length, 0);
+  h.advance(5_001);
+  await until(() => h.manager.diagnostics().background.retries === 1);
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+  assert.equal(h.manager.diagnostics().lastCatalogAttempt.reason, "observing");
+  h.advance(30_001);
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
+  assert.equal(h.session.queries(1306).length, 1);
+  assert.equal(h.manager.diagnostics().background.retries, 2);
+});
+
+test("real SDK background catalog and prefetch use the healthy existing station session", async (t) => {
+  const h = await paired(t);
+  h.ctx.cfg.recordings.background = true;
+  await h.manager.syncInventory(inventory);
+  h.advance(300_001);
+  await until(() => h.manager.diagnostics().background.ok === 1);
+  assert.equal(h.session.queries(1306).length, 1);
+  h.advance(15_001);
+  await until(() => h.manager.diagnostics().background.coverPrefetch.fetched === 1);
+  assert.equal(h.session.queries(1308).length, 1);
+});
+
+test("adapter preserves SDK refusal vocabulary and forwards abort and integer timeout", async () => {
   let seen;
   const eufy = {
     getRecordingAccountNamespace: () => "a_" + "1".repeat(64),
@@ -367,7 +398,7 @@ test("adapter preserves public failure vocabulary and forwards SDK abort and int
   const controller = new AbortController();
   assert.deepEqual(await adapter.catalog({}, { signal: controller.signal, timeoutMs: 7999 }), {
     status: "deferred",
-    reason: "renewal",
+    reason: "renewal_due",
   });
   assert.equal(seen.signal, controller.signal);
   assert.equal(seen.timeoutMs, 7999);

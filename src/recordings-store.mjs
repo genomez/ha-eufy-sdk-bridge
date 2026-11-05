@@ -311,6 +311,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
       pathAmbiguous: previous?.pathAmbiguous === true,
       cover: previous?.cover ?? null,
       negativeUntilMs: previous?.negativeUntilMs ?? null,
+      coverFailures: previous?.coverFailures ?? 0,
       coverEvicted: previous?.coverEvicted === true,
     };
   }
@@ -418,6 +419,10 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
               pathAmbiguous: r.pathAmbiguous === true,
               coverEvicted: r.coverEvicted === true,
               negativeUntilMs: timestamp(r.negativeUntilMs),
+              coverFailures:
+                Number.isSafeInteger(r.coverFailures) && r.coverFailures >= 0
+                  ? Math.min(LIMITS.coverFailures, r.coverFailures)
+                  : 0,
               cover: r.cover
                 ? {
                     file: r.cover.file,
@@ -550,6 +555,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
         if (!(await atomic(`covers/${name}`, jpeg, isCurrent))) return;
         row.cover = { file: name, sha256, bytes: jpeg.length, fetchedAtMs: clock(), accessedAtMs: clock() };
         row.negativeUntilMs = null;
+        row.coverFailures = 0;
         row.coverEvicted = false;
         if (!isCurrent()) return;
         await commit(next, isCurrent);
@@ -561,6 +567,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
         const row = next.rows.find((r) => r.cameraId === cameraId && r.eventId === eventId);
         if (row) {
           row.negativeUntilMs = clock() + LIMITS.negative;
+          row.coverFailures = Math.min(LIMITS.coverFailures, (row.coverFailures ?? 0) + 1);
           await commit(next);
         }
       });

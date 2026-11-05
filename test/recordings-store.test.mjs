@@ -302,7 +302,7 @@ test("malformed manifest is not overwritten", async (t) => {
   await assert.rejects(createRecordingsStore(root).load());
   assert.equal(await fs.readFile(path.join(root, "catalog.json"), "utf8"), "BROKEN");
 });
-test("cover file quota evicts to 90 percent using immutable digest-named files", async (t) => {
+test("cover cache retains a busy day above the former 256-file quota", async (t) => {
   const h = await harness(t);
   for (let base = 0; base < 260; base += 20) {
     await h.store.mergeCatalog(
@@ -316,10 +316,9 @@ test("cover file quota evicts to 90 percent using immutable digest-named files",
     h.clocks.advance(1);
   }
   const files = await fs.readdir(path.join(h.root, "covers"));
-  assert.ok(files.length <= 256);
-  assert.ok(files.length >= 230);
+  assert.equal(files.length, 260);
   assert.equal(files.length, h.store.snapshot.rows.filter((r) => r.cover).length);
-  assert.ok(h.store.snapshot.rows.some((r) => r.coverEvicted));
+  assert.ok(h.store.snapshot.rows.every((r) => !r.coverEvicted));
 });
 test("temp ceiling refuses writes without removing fresh recovery material", async (t) => {
   const h = await harness(t);
