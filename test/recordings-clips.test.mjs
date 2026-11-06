@@ -80,6 +80,30 @@ async function ready(f, e) {
   await until(() => state(f, e).state === "ready");
 }
 
+test("conversion retimes frames to the catalog duration despite the stream's own frame rate", async () => {
+  let seen;
+  const child = new EventEmitter();
+  child.kill = () => {};
+  const conversion = convertClip({
+    input: "synthetic.hevc",
+    output: "synthetic.mp4",
+    frames: 289,
+    durationMs: 19000,
+    maxBytes: 1024,
+    spawnProcess: (_program, args) => {
+      seen = args;
+      return child;
+    },
+  });
+  const fps = String((289 * 1000) / 19000);
+  assert.equal(seen[seen.indexOf("-framerate") + 1], fps);
+  assert.equal(seen[seen.indexOf("-r") + 1], fps);
+  assert.ok(seen.indexOf("-r") > seen.indexOf("-i"), "output rate follows the input");
+  assert.ok(seen[seen.indexOf("-vf") + 1].startsWith(`setpts=N/(${fps}*TB),scale=`));
+  child.emit("close", 1);
+  await assert.rejects(conversion);
+});
+
 for (const durationMs of [10000, 60000])
   test(`conversion watchdog scales with duration ${durationMs} and awaits close after escalation`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });

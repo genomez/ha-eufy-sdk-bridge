@@ -116,6 +116,9 @@ export function convertClip({
 }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted || !Number.isFinite(durationMs) || durationMs <= 0) return reject(fault("convert_failed"));
+    // Station HEVC carries its own VUI frame rate, which overrides -framerate on raw input.
+    // Retime frames explicitly so the clip lasts the catalog duration.
+    const fps = String((frames * 1000) / durationMs);
     let failed = false,
       terminating = false,
       closed = false,
@@ -132,7 +135,7 @@ export function convertClip({
         "-err_detect",
         "explode",
         "-framerate",
-        String((frames * 1000) / durationMs),
+        fps,
         "-f",
         "hevc",
         "-i",
@@ -147,7 +150,9 @@ export function convertClip({
         "-threads",
         "2",
         "-vf",
-        "scale=w='trunc(min(1920,iw)/2)*2':h=-2",
+        `setpts=N/(${fps}*TB),scale=w='trunc(min(1920,iw)/2)*2':h=-2`,
+        "-r",
+        fps,
         "-pix_fmt",
         "yuv420p",
         "-movflags",
