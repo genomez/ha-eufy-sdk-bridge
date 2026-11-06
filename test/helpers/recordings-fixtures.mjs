@@ -122,6 +122,7 @@ export async function harness(t, options = {}) {
     playbackActive: () => false,
   };
   eufy.getRecordingAccountNamespace = (key) => `a_${recordingMac(key, "recordings.account.v1", eufy.api.auth.userId)}`;
+  eufy.setRecordingPacing = (pacing) => ({ ...pacing });
   eufy.readRecordingCatalog = async (s, o) => {
     calls.catalog.push({ s, o });
     return options.catalog ? options.catalog(s, o) : { status: "ok", rows: [row(scope)] };

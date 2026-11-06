@@ -212,6 +212,16 @@ async function paired(t, roster = inventory) {
   };
 }
 
+test("packed SDK pacing facade changes through WS without touching the synthetic station", async (t) => {
+  const h = await paired(t);
+  const reply = await h.rpc("recordings.set_pacing", { prefetchGap: 0, coverGap: 0, coverQuiet: 0, coverRate: null });
+  assert.deepEqual(reply.pacing, { prefetchGap: 0, coverGap: 0, coverQuiet: 0, coverRate: 0 });
+  assert.deepEqual(h.eufy.setRecordingPacing({}), { coverGapMs: 0, coverQuietMs: 0, coverRatePerMinute: 0 });
+  assert.equal(h.session.sent.length, 0);
+  await h.rpc("recordings.set_pacing", { reset: true });
+  assert.deepEqual(h.eufy.setRecordingPacing({}), { coverGapMs: 5_000, coverQuietMs: 2_000, coverRatePerMinute: 6 });
+});
+
 test("packed SDK facade pairs RTC catalog and cover with public WS and cache-only HTTP", async (t) => {
   const h = await paired(t);
   h.ctx.eventImageStore = createEventImageStore(h.ctx.cfg.recordings.root);
@@ -248,6 +258,7 @@ test("packed SDK facade pairs RTC catalog and cover with public WS and cache-onl
     ),
     null,
   );
+  h.advance(2_000);
   const pending = await h.rpc("recordings.cover", {
     cameraId: h.cameraId,
     eventId: event.eventId,
@@ -455,6 +466,7 @@ test("real SDK enrolls child wired, battery and doorbell cameras with stable exi
   await h.rpc("recordings.catalog", { cameraId: camera.cameraId, refresh: "if_due" });
   await until(() => h.store.snapshot.rows.length === 1);
   const page = await h.rpc("recordings.catalog", { cameraId: camera.cameraId, refresh: "if_due" });
+  h.advance(2_000);
   await h.rpc("recordings.cover", {
     cameraId: camera.cameraId,
     eventId: page.events[0].eventId,

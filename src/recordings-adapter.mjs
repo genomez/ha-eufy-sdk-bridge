@@ -45,6 +45,14 @@ export function recordingsAdapter(eufy, identityKey) {
     async cover(scope, selector, opts) {
       return read(() => eufy.readRecordingCover(scope, selector, opts));
     },
+    setPacing(pacing) {
+      if (typeof eufy.setRecordingPacing !== "function") throw failure("unsupported");
+      return eufy.setRecordingPacing({
+        coverGapMs: pacing.coverGap,
+        coverRatePerMinute: pacing.coverRate,
+        coverQuietMs: pacing.coverQuiet,
+      });
+    },
   };
 }
 async function read(operation) {

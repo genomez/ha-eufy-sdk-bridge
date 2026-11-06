@@ -102,7 +102,7 @@ export function recordingEnrollment(records, conflicts = []) {
   };
 }
 
-export function createRecordingsPolicy({ monotonic = () => performance.now(), now = Date.now } = {}) {
+export function createRecordingsPolicy({ monotonic = () => performance.now(), now = Date.now, pacing = LIMITS } = {}) {
   let lastCatalog = -Infinity;
   let lastCover = -Infinity;
   let attempts = [];
@@ -134,6 +134,9 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
     },
     catalogWait: () => Math.max(0, LIMITS.catalogInterval - (monotonic() - lastCatalog)),
     featureWait: () => Math.max(0, LIMITS.coverGap - (monotonic() - lastCover)),
+    setPacing(next) {
+      pacing = next;
+    },
     admitCatalog() {
       const previous = lastCatalog;
       lastCatalog = monotonic();
@@ -146,11 +149,13 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
       attempts = attempts.filter((t) => monotonic() - t < 60_000);
       return Math.max(
         0,
-        LIMITS.coverGap - (monotonic() - lastCover),
-        attempts.length >= LIMITS.coverRate ? 60_000 - (monotonic() - attempts[0]) : 0,
+        pacing.coverGap - (monotonic() - lastCover),
+        (pacing.coverQuiet ?? 0) - (monotonic() - lastCover),
+        pacing.coverRate && attempts.length >= pacing.coverRate ? 60_000 - (monotonic() - attempts[0]) : 0,
       );
     },
     admitCover() {
+      attempts = attempts.filter((t) => monotonic() - t < 60_000);
       attempts.push(monotonic());
     },
     completeCover() {
@@ -173,7 +178,7 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
       return {
         catalog: wall(lastCatalog),
         coverCompleted: wall(lastCover),
-        covers: attempts.map(wall),
+        covers: attempts.slice(-6).map(wall),
         windows: Object.fromEntries(
           [...windows]
             .filter(([, w]) => monotonic() - w.at < 60_000)

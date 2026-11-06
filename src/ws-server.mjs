@@ -130,6 +130,9 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
         if (!ctx.recordings) throw recordingsFailure("unsupported");
         let recordings;
         switch (cmd) {
+          case "recordings.set_pacing":
+            recordings = ctx.recordings.setPacing(msg);
+            break;
           case "recordings.diagnostics":
             recordings = ctx.recordings.diagnostics(msg);
             break;

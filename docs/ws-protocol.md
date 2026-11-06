@@ -715,6 +715,39 @@ never increment it. Latest-window reads do not reset it. Retry opportunities sti
 require interest, the two-minute catalog interval, a five-second completion gap,
 one feature read in flight and at most four extra pages per cycle.
 
+`recordings.set_pacing` updates process-local recording cover pacing through the
+same command-policy filter and enrollment guards as other recordings commands:
+
+```json
+{ "id": 1, "cmd": "recordings.set_pacing", "prefetchGap": 2000, "coverGap": 2000, "coverRate": 0, "coverQuiet": 0 }
+```
+
+All fields are optional partial updates. Defaults are `prefetchGap: 15000`,
+`coverGap: 5000`, `coverRate: 6`, `coverQuiet: 2000`. Gap/quiet values are finite
+nonnegative milliseconds; rate is a nonnegative safe integer. Rate 0 or null
+means no minute cap. Unknown fields, invalid numbers, empty updates and reset
+combined with pacing fields are rejected. `{ "id": 2, "cmd": "recordings.set_pacing",
+"reset": true }` restores defaults. Replies use `{id, ok: true, recordings:
+{pacing: {prefetchGap, coverGap, coverRate, coverQuiet}, setAtMs}}`. Restart also
+restores defaults; attempt history is not cleared by a change.
+
+For the ramp, set both gaps to 15000, 5000, 2000, then 0, with rate 0 and quiet 0.
+The prefetch gap measures starts; the cover gap measures time since completion.
+Zero quiet affects cover-to-cover only. Fixed foreground/catalog quiet,
+serialized reads, playback/live priority, owner health/observation, renewal,
+scope, reply capacity, queue and folder budgets remain in force.
+
+`recordings.background` diagnostics include `pacing`, `pacingSetAtMs`, and
+`coverReads: {maxBuckets: 16, samplesPerBucket: 512, buckets: [...]}`. Each pacing
+change starts an interval with `{pacing, setAtMs, count, sampleCount, minMs,
+medianMs, p95Ms, maxMs, failures: {reason: count}}`. The last 16 intervals survive
+in memory only. Count and finite-reason failures include all completed API
+attempts (including deferrals); latency statistics use the last 512 durations in
+that interval, excluding disk persistence and queue wait. Durations are measured
+with the monotonic clock; empty statistics are null. In-flight attempts remain
+attributed to the interval in which they started. No row identities, serials or
+URLs are retained in these measurements. Diagnostics reads do not issue requests.
+
 Optional `recordings.diagnostics` takes no arguments (besides `id` and `cmd`) and
 returns the usual `{id, ok, recordings}` envelope. This is a cache-only read and
 uses the existing host command policy. `/diagnostics` also includes `recordings`:

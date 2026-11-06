@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { DEFAULT_PACING, pacingUpdate, createCoverMeasurements } from "./recordings-pacing.mjs";
 import { createRecordingsStore, publicRecording } from "./recordings-store.mjs";
 import { recordingsAdapter, recordingBinding, safeSelector } from "./recordings-adapter.mjs";
 import {
@@ -19,8 +20,12 @@ export function createRecordings(
     mono = clocks.monotonic ?? (() => performance.now());
   const schedule = clocks.schedule ?? setTimeout,
     cancel = clocks.cancel ?? clearTimeout;
+  let pacing = { ...DEFAULT_PACING },
+    pacingSetAtMs = now();
+  const measurements = createCoverMeasurements();
+  measurements.set(pacing, pacingSetAtMs);
   const adapter = recordingsAdapter(ctx.eufy, () => (loaded ? store.key : null)),
-    policy = createRecordingsPolicy({ now, monotonic: mono });
+    policy = createRecordingsPolicy({ now, monotonic: mono, pacing });
   let scope,
     scopeValid = false,
     loaded = false,
@@ -34,6 +39,7 @@ export function createRecordings(
   let backgroundTimer, retryTimer, catalogCycle;
   let nextCatalog = Infinity,
     nextPrefetch = 0;
+  let lastPrefetch = -Infinity;
   const backgroundEnabled = () => enabled() && ctx.cfg.recordings?.background !== false;
   const background = {
     lastCatalogAtMs: null,
@@ -235,7 +241,13 @@ export function createRecordings(
     const rows = prefetchRows();
     const coverAt = rows.length
       ? mono() +
-        Math.max(LIMITS.prefetchGap, nextPrefetch - mono(), policy.coverWait(), Math.min(...rows.map(negativeWait)))
+        Math.max(
+          flight || queued.length || pendingPage ? 1_000 : 0,
+          Number.isFinite(lastPrefetch) ? 0 : pacing.prefetchGap,
+          nextPrefetch - mono(),
+          policy.coverWait(),
+          Math.min(...rows.map(negativeWait)),
+        )
       : Infinity;
     backgroundTimer = schedule(runBackground, Math.max(1, Math.min(nextCatalog, coverAt) - mono()));
     backgroundTimer?.unref?.();
@@ -263,7 +275,8 @@ export function createRecordings(
     const s = scope,
       generation = epoch,
       controller = new AbortController();
-    nextPrefetch = mono() + LIMITS.prefetchGap;
+    lastPrefetch = mono();
+    nextPrefetch = lastPrefetch + pacing.prefetchGap;
     background.coverPrefetch.lastAtMs = now();
     policy.admitCover();
     flight = { controller, kind: "prefetch_reservation", eventId: row.eventId, background: true, startedAt: mono() };
@@ -285,7 +298,7 @@ export function createRecordings(
         );
         if (!current(s, generation)) return;
         if (result.status === "deferred") {
-          nextPrefetch = mono() + Math.max(LIMITS.prefetchGap, result.retryAfterMs ?? 0);
+          nextPrefetch = mono() + Math.max(pacing.prefetchGap, result.retryAfterMs ?? 1_000);
         } else if (result.status === "ok") {
           await store.putCover(s, row.cameraId, row.eventId, result.jpeg, () => current(s, generation));
           background.coverPrefetch.fetched++;
@@ -352,8 +365,15 @@ export function createRecordings(
     const entry = flight;
     const controller = entry.controller;
     entry.kind = kind;
+    const finishMeasurement = ["cover", "prefetch"].includes(kind) ? measurements.begin() : null;
+    const readStarted = mono();
+    let measuredResult = { status: "unavailable", reason: "busy" };
     const remaining = LIMITS.timeout - (mono() - entry.startedAt);
-    if (remaining <= 0) return { status: "unavailable", reason: "timeout" };
+    if (remaining <= 0) {
+      measuredResult = { status: "unavailable", reason: "timeout" };
+      finishMeasurement?.(0, measuredResult);
+      return measuredResult;
+    }
     let deadline,
       timedOut = false;
     const abort = new Promise((resolve) => {
@@ -369,7 +389,7 @@ export function createRecordings(
       deadline?.unref?.();
     });
     try {
-      return await Promise.race([
+      measuredResult = await Promise.race([
         Promise.resolve().then(() => {
           if (!current(s, generation) || !available() || controller.signal.aborted)
             return { status: "deferred", reason: "offline" };
@@ -377,7 +397,9 @@ export function createRecordings(
         }),
         abort,
       ]);
+      return measuredResult;
     } finally {
+      finishMeasurement?.(mono() - readStarted, measuredResult);
       cancel(deadline);
     }
   }
@@ -763,6 +785,20 @@ export function createRecordings(
   }
   const api = {
     capability: base,
+    setPacing(args) {
+      fields(args, ["reset", ...Object.keys(DEFAULT_PACING)]);
+      guard();
+      const next = pacingUpdate(args, pacing);
+      adapter.setPacing(next);
+      pacing = next;
+      pacingSetAtMs = now();
+      policy.setPacing(pacing);
+      measurements.set(pacing, pacingSetAtMs);
+      nextPrefetch = Number.isFinite(lastPrefetch) ? lastPrefetch + pacing.prefetchGap : mono() + pacing.prefetchGap;
+      flush();
+      armBackground();
+      return { pacing: { ...pacing }, setAtMs: pacingSetAtMs };
+    },
     diagnostics(args = {}) {
       fields(args, []);
       const snapshot =
@@ -789,6 +825,9 @@ export function createRecordings(
         lastCatalogTime: snapshot.lastSuccessfulQueryAtMs,
         lastCatalogAttempt: lastCatalogAttempt ? { ...lastCatalogAttempt } : null,
         background: {
+          pacing: { ...pacing },
+          pacingSetAtMs,
+          coverReads: { maxBuckets: 16, samplesPerBucket: 512, buckets: measurements.snapshot() },
           enabled: backgroundEnabled(),
           lastCatalogAtMs: background.lastCatalogAtMs,
           nextCatalogAtMs:

@@ -55,6 +55,37 @@ async function request(h, url, method = "GET") {
   await createHttpHandler(h.ctx)(req, res);
   return res;
 }
+test("WS pacing follows recordings command filtering, validates strictly and passes SDK values atomically", async (t) => {
+  const h = await harness(t);
+  const passed = [];
+  h.eufy.setRecordingPacing = (pacing) => passed.push(pacing);
+  const s = await socket(t, h);
+  const result = await s.rpc({
+    id: 1,
+    cmd: "recordings.set_pacing",
+    prefetchGap: 0,
+    coverGap: 0,
+    coverRate: null,
+    coverQuiet: 0,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.recordings.pacing, { prefetchGap: 0, coverGap: 0, coverRate: 0, coverQuiet: 0 });
+  assert.deepEqual(passed[0], { coverGapMs: 0, coverRatePerMinute: 0, coverQuietMs: 0 });
+  for (const extra of [{ coverGap: -1 }, { coverRate: 0.1 }, { unknown: 1 }, { reset: true, coverGap: 0 }]) {
+    assert.equal((await s.rpc({ id: 2, cmd: "recordings.set_pacing", ...extra })).code, "recordings_invalid");
+  }
+  assert.equal(passed.length, 1);
+  const blocked = await socket(t, h, () => false);
+  assert.equal((await blocked.rpc({ cmd: "recordings.set_pacing", reset: true })).ok, false);
+  assert.equal(passed.length, 1);
+  assert.equal((await s.rpc({ id: 3, cmd: "recordings.set_pacing", reset: true })).ok, true);
+  assert.equal(passed[1].coverGapMs, 5_000);
+  h.eufy.setRecordingPacing = () => {
+    throw new Error("PRIVATE_CANARY");
+  };
+  assert.equal((await s.rpc({ id: 4, cmd: "recordings.set_pacing", coverGap: 0 })).ok, false);
+  assert.equal(h.manager.diagnostics().background.pacing.coverGap, 5_000);
+});
 test("hello advertises additive browse-only capability without changing schema", async (t) => {
   const h = await harness(t),
     s = await socket(t, h);

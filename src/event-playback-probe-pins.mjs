@@ -1,7 +1,7 @@
 /** SDK distribution tarball pin from the authorized offline build, 2026-11-05. */
-export const eventPlaybackProbeSdkSha256 = "8b07c4609d82ff9471e34fa203bdb61262ffac8ee05d24ad20536fd0bdb9c102";
+export const eventPlaybackProbeSdkSha256 = "1b4277b4eef7aa04fc1eafe4facc177425f512b68bdfb3519d19fcec2185e836";
 /** Probe gates hash the installed JavaScript bundle, separately from its distribution tarball. */
-export const eventPlaybackProbeSdkRuntimeSha256 = "15addbe93147b5722a8a894e426dc91f310d4b20b97d3b52756cee638afc7be3";
+export const eventPlaybackProbeSdkRuntimeSha256 = "89b16e4671a7e840c34bc3aa667564872547bee10e21167a187b60446cffcaa2";
 export const eventPlaybackProbeFiles = [
   "bin/event-playback-probe-control.mjs",
   "bin/event-table-probe-control.mjs",
@@ -44,6 +44,7 @@ export const eventPlaybackProbeFiles = [
   "src/property-value.mjs",
   "src/redact.mjs",
   "src/recordings-adapter.mjs",
+  "src/recordings-pacing.mjs",
   "src/recordings-policy.mjs",
   "src/recordings-store.mjs",
   "src/recordings.mjs",
