@@ -45,6 +45,7 @@ const admissionGates = [
   "inventory_conflict",
 ];
 const transientAdmission = new Set([
+  "unsafe_observation",
   "no_owner",
   "owner_changed",
   "no_observation",
@@ -117,7 +118,7 @@ export function convertClip({
   return new Promise((resolve, reject) => {
     if (signal?.aborted || !Number.isFinite(durationMs) || durationMs <= 0) return reject(fault("convert_failed"));
     // Station HEVC carries its own VUI frame rate, which overrides -framerate on raw input.
-    // Retime frames explicitly so the clip lasts the catalog duration.
+    // Retime frames explicitly to the retained media duration supplied by capture.
     const fps = String((frames * 1000) / durationMs);
     let failed = false,
       terminating = false,
@@ -433,7 +434,8 @@ export function createClipJobs({
         throw fault("station_error");
       if (!complete) throw fault("too_long");
       if (!Number.isSafeInteger(j.expectedMs) || j.expectedMs <= 0) throw fault("station_error");
-      j.durationMs = j.expectedMs;
+      j.durationMs = receipt.mediaDurationMs;
+      if (!Number.isSafeInteger(j.durationMs) || j.durationMs <= 0) throw fault("station_error");
       const reserve = Math.min(cap, Math.max(16 * 1024 ** 2, fs.statSync(j.input).size * 2));
       const maxBytes = room(reserve) - 8 * 1024 ** 2;
       if (maxBytes <= 0) throw fault("storage");

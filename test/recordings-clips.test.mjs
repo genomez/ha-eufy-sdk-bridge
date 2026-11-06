@@ -19,6 +19,7 @@ const clean = {
   admissionGate: 0,
   startAttempted: true,
   boundedMediaObserved: true,
+  mediaDurationMs: 10000,
   randomAccess: true,
   captureOutcome: "eof",
   releaseOutcome: "release_confirmed",
@@ -80,7 +81,7 @@ async function ready(f, e) {
   await until(() => state(f, e).state === "ready");
 }
 
-test("conversion retimes frames to the catalog duration despite the stream's own frame rate", async () => {
+test("conversion retimes frames to the supplied duration despite the stream's own frame rate", async () => {
   let seen;
   const child = new EventEmitter();
   child.kill = () => {};
@@ -203,7 +204,7 @@ test("timed-out conversion pins temporary files and the worker until process exi
   assert.deepEqual(fs.readdirSync(f.root), []);
 });
 
-test("burst delivery spreads video over catalog duration instead of arrival time", async (t) => {
+test("conversion uses capture duration rather than catalog or local delivery time", async (t) => {
   let time = 0,
     conversion;
   const f = await fixture(t, {
@@ -213,7 +214,7 @@ test("burst delivery spreads video over catalog duration instead of arrival time
         time = (n * 5000) / 119;
         o.video(Buffer.alloc(2));
       }
-      return clean;
+      return { ...clean, mediaDurationMs: 5042 };
     },
     convert: async (opts) => {
       conversion = opts;
@@ -222,9 +223,9 @@ test("burst delivery spreads video over catalog duration instead of arrival time
   });
   f.jobs.prepare("camera", "a", { selector: { expectedMs: 60000 } });
   await until(() => state(f, "a").state === "ready");
-  assert.equal(conversion.durationMs, 60000);
+  assert.equal(conversion.durationMs, 5042);
   assert.equal(conversion.frames, 120);
-  assert.equal(state(f, "a").durationMs, 60000);
+  assert.equal(state(f, "a").durationMs, 5042);
 });
 
 test("pre-dispatch marker persistence failure reports storage without cleanup uncertainty", async (t) => {
@@ -780,6 +781,7 @@ test("complete media stays ready through unconfirmed cleanup and reconnect", asy
 });
 
 for (const gate of [
+  "unsafe_observation",
   "observation_window",
   "renewal_soon",
   "scheduler_busy",
@@ -847,7 +849,6 @@ for (const gate of [
   "unresolved",
   "scope_invalid",
   "model",
-  "unsafe_observation",
   "realtime_disabled",
   "inventory_conflict",
 ])
@@ -948,3 +949,37 @@ test("model revocation refuses prepare even when a ready job exists", async (t) 
   assert.equal(h.catalog().events[0].playable, false);
   assert.equal(h.manager.clipPrepare(args).clip.reason, "not_found");
 });
+
+test("EOF conversion and published clip use retained media duration", async (t) => {
+  let conversion;
+  const f = await fixture(t, {
+    pull: async (_, o) => {
+      for (let n = 0; n < 5; n++) o.video(Buffer.from("frame"));
+      return { ...clean, mediaDurationMs: 3750 };
+    },
+    convert: async (opts) => {
+      conversion = opts;
+      fs.writeFileSync(opts.output, "mp4");
+    },
+  });
+  f.jobs.prepare("camera", "a", { selector: { expectedMs: 7000 } });
+  await until(() => state(f, "a").state === "ready");
+  assert.equal(conversion.durationMs, 3750);
+  assert.equal(conversion.frames, 5);
+  assert.equal(state(f, "a").durationMs, 3750);
+});
+
+for (const mediaDurationMs of [undefined, 0, -1, NaN, Infinity])
+  test(`invalid captured duration ${mediaDurationMs} cannot publish a clip`, async (t) => {
+    const f = await fixture(t, {
+      pull: async (_, o) => {
+        o.video(Buffer.from("a"));
+        o.video(Buffer.from("b"));
+        return { ...clean, mediaDurationMs };
+      },
+      convert: () => assert.fail("invalid duration reached conversion"),
+    });
+    f.jobs.prepare("camera", "a", selection);
+    await until(() => state(f, "a").state === "failed");
+    assert.equal(state(f, "a").reason, "station_error");
+  });

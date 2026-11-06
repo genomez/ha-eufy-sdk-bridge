@@ -70,6 +70,7 @@ test("clip RPCs retain recordings authorization and expose the exact public clip
       admissionGate: 0,
       startAttempted: true,
       boundedMediaObserved: true,
+      mediaDurationMs: 10000,
       randomAccess: true,
       captureOutcome: "eof",
       releaseOutcome: "release_confirmed",

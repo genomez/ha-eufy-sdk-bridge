@@ -518,3 +518,10 @@ failures report storage without implying uncertain station cleanup. Test re-read
 minutes are capped at 1440 and both computed deadlines must be finite. Public
 playback capability and playable-row shapes are unchanged; disabled is documented
 in the WebSocket protocol. Qualification is offline and synthetic only.
+
+
+## Playback 3p4 local fix (2026-11-06)
+
+Use the capture receipt mediaDurationMs for conversion retiming and published clip duration; invalid or missing captured durations fail instead of using the catalog duration. Preserve explicit frame retiming. Retry unsafe_observation through the existing 3-second, 90-second admission policy because the SDK live-stop drain now clears on its own. Other permanent observation uncertainty remains bounded by the retry deadline. The dependency pin and provenance identify the matching local 3p4 package.
+
+Offline synthetic validation only; installation acceptance remains false.
