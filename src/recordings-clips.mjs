@@ -2,9 +2,70 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 
 const HOUR = 3_600_000;
 const CAP = 2 * 1024 ** 3;
+const admissionGates = [
+  "none",
+  "disabled",
+  "no_marker",
+  "no_cameras",
+  "no_exclusions",
+  "unresolved",
+  "no_owner",
+  "owner_changed",
+  "aborted",
+  "no_observation",
+  "observation_window",
+  "no_ordinary_frames",
+  "no_keepalives",
+  "unsafe_observation",
+  "no_information",
+  "owner_not_connected",
+  "information_tainted",
+  "leases",
+  "pending_exchanges",
+  "scheduler_busy",
+  "replacement",
+  "refresh_pending",
+  "live_entry",
+  "playback_busy",
+  "table_busy",
+  "renewal_soon",
+  "start_not_allowed",
+  "scope_invalid",
+  "store_unavailable",
+  "reconnect_hold",
+  "recording_busy",
+  "reply_capacity",
+  "recordings_unavailable",
+  "model",
+];
+const transientAdmission = new Set([
+  "no_owner",
+  "owner_changed",
+  "no_observation",
+  "observation_window",
+  "no_ordinary_frames",
+  "no_keepalives",
+  "no_information",
+  "owner_not_connected",
+  "leases",
+  "pending_exchanges",
+  "scheduler_busy",
+  "replacement",
+  "refresh_pending",
+  "live_entry",
+  "playback_busy",
+  "table_busy",
+  "renewal_soon",
+  "start_not_allowed",
+  "reconnect_hold",
+  "recording_busy",
+  "reply_capacity",
+  "recordings_unavailable",
+]);
 export const clipStates = ["idle", "queued", "pulling", "converting", "ready", "failed", "refused", "cancelled"];
 export const clipReasons = [
   "none",
@@ -75,6 +136,8 @@ export function convertClip({
         "-i",
         input,
         "-an",
+        "-t",
+        String(durationMs / 1000),
         "-c:v",
         "libx264",
         "-preset",
@@ -147,6 +210,7 @@ function clipEvidence(receipt = {}) {
     "wrong_route",
   ];
   return {
+    admissionGate: finite(receipt.admissionGateName ?? admissionGates[receipt.admissionGate], admissionGates),
     captureOutcome: finite(receipt.captureOutcome, [
       "not_admitted",
       "time_refused",
@@ -154,6 +218,7 @@ function clipEvidence(receipt = {}) {
       "storage_failed",
       "begin_time_refused",
       "eof",
+      "complete",
       "capped",
       "capped_wrong_route",
       "no_media",
@@ -196,6 +261,7 @@ export function createClipJobs({
   convert = convertClip,
   now = Date.now,
   monotonic = () => performance.now(),
+  wait = (ms, signal) => delay(ms, undefined, { signal }),
   cap = CAP,
   queueLimit = 8,
   ttl = HOUR,
@@ -219,6 +285,7 @@ export function createClipJobs({
     releaseOutcomes: {},
     reconnectOutcomes: {},
     reconnectDurationMs: 0,
+    admissionGates: {},
   };
   const key = (c, e) => `${c}/${e}`;
   const view = (j) => ({
@@ -279,12 +346,13 @@ export function createClipJobs({
       j.input = path.join(root, `${name}.hevc`);
       j.output = path.join(root, `${name}.mp4`);
       fd = fs.openSync(j.input, "wx", 0o600);
-      state(j, "pulling");
       let writeFailed = false;
-      const receipt = await pull(j.selection, {
+      const pullOptions = {
         signal: j.controller.signal,
+        beforeDispatch: () => state(j, "pulling"),
         video(data) {
           if (j.controller.signal.aborted) throw fault("station_error");
+          if (j.state !== "pulling") state(j, "pulling");
           try {
             room(data.length);
             writeAll(fd, data);
@@ -298,12 +366,41 @@ export function createClipJobs({
             throw clipReasons.includes(e?.reason) ? e : fault("storage");
           }
         },
-      });
-      evidence = clipEvidence(receipt);
+      };
+      let receipt;
+      const admissionDeadline = monotonic() + 90_000;
+      for (;;) {
+        if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
+        if (live()) throw fault("live_view");
+        if (!enabled()) throw fault("disabled");
+        try {
+          receipt = await pull(j.selection, pullOptions);
+        } catch (error) {
+          if (!error?.admissionGateName) throw error;
+          receipt = { captureOutcome: "not_admitted", ...error, startAttempted: false };
+        }
+        evidence = clipEvidence(receipt);
+        if (evidence.admissionGate !== "none" && evidence.admissionGate !== "unknown")
+          counters.admissionGates[evidence.admissionGate] = (counters.admissionGates[evidence.admissionGate] ?? 0) + 1;
+        pullMs = Math.round(monotonic() - start);
+        last = { pullMs, convertMs, bytes: 0, audioIncluded: false, ...evidence };
+        if (receipt.startAttempted || frames || !transientAdmission.has(evidence.admissionGate)) break;
+        const remaining = admissionDeadline - monotonic();
+        if (remaining <= 0) break;
+        state(j, "queued");
+        await wait(Math.min(3000, remaining), j.controller.signal);
+        if (monotonic() >= admissionDeadline) break;
+      }
       pullMs = Math.round(monotonic() - start);
       fs.closeSync(fd);
       fd = undefined;
+      const complete =
+        receipt.boundedMediaObserved &&
+        ["complete", "eof"].includes(receipt.captureOutcome) &&
+        receipt.randomAccess &&
+        frames >= 2;
       if (
+        !complete &&
         receipt.startAttempted &&
         (receipt.releaseOutcome !== "release_confirmed" ||
           !receipt.latchCleared ||
@@ -313,17 +410,16 @@ export function createClipJobs({
       if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
       if (writeFailed) throw fault("storage");
       if (!receipt.startAttempted && receipt.latchPersistenceFailed) throw fault("storage");
-      if (receipt.admissionGate)
-        throw fault(receipt.admissionGate === 25 || receipt.admissionGate === 26 ? "too_long" : "owner_unavailable");
+      if (receipt.admissionGate || !["none", "unknown"].includes(evidence.admissionGate))
+        throw fault(evidence.admissionGate === "disabled" ? "disabled" : "owner_unavailable");
       if (
         !receipt.boundedMediaObserved ||
-        !["eof", "capped"].includes(receipt.captureOutcome) ||
+        !["complete", "eof", "capped"].includes(receipt.captureOutcome) ||
         !receipt.randomAccess ||
         frames < 2
       )
         throw fault("station_error");
-      // A budget cutoff without EOF cannot establish that the full clip arrived.
-      if (receipt.captureOutcome !== "eof") throw fault("too_long");
+      if (!complete) throw fault("too_long");
       if (!Number.isSafeInteger(j.expectedMs) || j.expectedMs <= 0) throw fault("station_error");
       j.durationMs = j.expectedMs;
       const reserve = Math.min(cap, Math.max(16 * 1024 ** 2, fs.statSync(j.input).size * 2));
@@ -354,7 +450,12 @@ export function createClipJobs({
       j.expiresAtMs = now() + ttl;
       state(j, "ready");
     } catch (e) {
-      const reason = clipReasons.includes(e.reason) ? e.reason : "station_error";
+      const reason =
+        j.controller.signal.aborted && e.reason !== "cleanup_uncertain"
+          ? (j.cancelReason ?? "none")
+          : clipReasons.includes(e.reason)
+            ? e.reason
+            : "station_error";
       if (fd !== undefined) {
         fs.closeSync(fd);
         fd = undefined;

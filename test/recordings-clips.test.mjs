@@ -93,7 +93,10 @@ for (const durationMs of [10000, 60000])
       frames: 100,
       durationMs,
       maxBytes: 1024,
-      spawnProcess: () => child,
+      spawnProcess: (_program, args) => {
+        assert.equal(args[args.indexOf("-t") + 1], String(durationMs / 1000));
+        return child;
+      },
     });
     conversion.then(
       () => {
@@ -223,6 +226,7 @@ test("one FIFO worker, event idempotency and finite public projections", async (
     order = [];
   const f = await fixture(t, {
     pull: async (s, o) => {
+      o.beforeDispatch();
       order.push(s.selector.expectedMs);
       await release.promise;
       o.video(Buffer.alloc(5));
@@ -693,6 +697,7 @@ test("failed clip exposes only finite receipt evidence and cumulative counts", a
   const d = f.jobs.diagnostics();
   assert.equal(state(f, "a").reason, "cleanup_uncertain");
   assert.deepEqual(d.lastJob, {
+    admissionGate: "none",
     pullMs: d.lastJob.pullMs,
     convertMs: 0,
     bytes: 0,
@@ -718,6 +723,123 @@ test("failed clip exposes only finite receipt evidence and cumulative counts", a
   assert.equal(d.counters.reconnectDurationMs, 246);
   d.counters.jobs = -1;
   assert.equal(f.jobs.diagnostics().counters.jobs, 2);
+});
+
+test("complete media stays ready through unconfirmed cleanup and reconnect", async (t) => {
+  let converted = false;
+  const f = await fixture(t, {
+    pull: async (_, o) => {
+      o.beforeDispatch();
+      o.video(Buffer.from("first"));
+      o.video(Buffer.from("last"));
+      return {
+        ...clean,
+        captureOutcome: "complete",
+        releaseOutcome: "stop_unconfirmed",
+        cessationOutcome: "media_continues",
+        latchCleared: false,
+        reconnectOutcome: "connected",
+      };
+    },
+    convert: async ({ input, output, durationMs, frames }) => {
+      assert.equal(fs.readFileSync(input, "utf8"), "firstlast");
+      assert.equal(durationMs, 10000);
+      assert.equal(frames, 2);
+      converted = true;
+      fs.writeFileSync(output, "converted");
+    },
+  });
+  await ready(f, "a");
+  assert.ok(converted);
+  assert.equal(f.jobs.diagnostics().lastJob.reconnectOutcome, "connected");
+  assert.equal(f.jobs.diagnostics().lastJob.captureOutcome, "complete");
+});
+
+for (const gate of [
+  "observation_window",
+  "renewal_soon",
+  "scheduler_busy",
+  "leases",
+  "pending_exchanges",
+  "refresh_pending",
+  "replacement",
+  "reconnect_hold",
+  "live_entry",
+  "recordings_unavailable",
+])
+  test(`transient admission ${gate} stays queued and succeeds on retry`, async (t) => {
+    let time = 0,
+      attempts = 0,
+      f;
+    f = await fixture(t, {
+      monotonic: () => time,
+      wait: async (ms) => {
+        assert.equal(state(f, "a").state, "queued");
+        assert.equal(ms, 3000);
+        time += ms;
+      },
+      pull: async (_, o) => {
+        if (++attempts === 1) {
+          if (gate === "recordings_unavailable") throw { admissionGateName: gate };
+          return { admissionGateName: gate, captureOutcome: "not_admitted" };
+        }
+        o.beforeDispatch();
+        o.video(Buffer.from("a"));
+        o.video(Buffer.from("b"));
+        return clean;
+      },
+    });
+    await ready(f, "a");
+    assert.equal(attempts, 2);
+    assert.equal(f.jobs.diagnostics().counters.admissionGates[gate], 1);
+  });
+
+test("admission waiting stops at exactly 90 seconds with named diagnostics", async (t) => {
+  let time = 0,
+    attempts = 0;
+  const f = await fixture(t, {
+    monotonic: () => time,
+    wait: async (ms) => {
+      time += ms;
+    },
+    pull: async () => {
+      attempts++;
+      return { admissionGate: 10, admissionGateName: "observation_window", captureOutcome: "not_admitted" };
+    },
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => state(f, "a").state === "refused");
+  assert.equal(time, 90000);
+  assert.equal(attempts, 30);
+  assert.equal(state(f, "a").reason, "owner_unavailable");
+  assert.equal(f.jobs.diagnostics().lastJob.admissionGate, "observation_window");
+  assert.equal(f.jobs.diagnostics().counters.admissionGates.observation_window, 30);
+});
+
+for (const gate of ["disabled", "no_marker", "unresolved", "scope_invalid", "model", "unsafe_observation"])
+  test(`permanent admission ${gate} refuses immediately`, async (t) => {
+    let attempts = 0;
+    const f = await fixture(t, {
+      wait: () => assert.fail("permanent gate waited"),
+      pull: async () => {
+        attempts++;
+        return { admissionGate: 1, admissionGateName: gate, captureOutcome: "not_admitted" };
+      },
+    });
+    f.jobs.prepare("camera", "a", selection);
+    await until(() => state(f, "a").state === "refused");
+    assert.equal(attempts, 1);
+  });
+
+test("waiting admission is cancelled promptly and never dispatches another attempt", async (t) => {
+  const f = await fixture(t, {
+    pull: async () => ({ admissionGateName: "observation_window", captureOutcome: "not_admitted" }),
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => f.jobs.diagnostics().lastJob?.admissionGate === "observation_window");
+  await f.jobs.cancel("camera", "a");
+  assert.equal(state(f, "a").state, "cancelled");
+  assert.equal(f.jobs.diagnostics().counters.admissionGates.observation_window, 1);
 });
 
 test("model revocation refuses prepare even when a ready job exists", async (t) => {

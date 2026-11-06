@@ -984,6 +984,7 @@ export function createRecordings(
         ctx.playbackProbeMarker,
       );
       if (!enabled() || !adapter.supported()) return;
+      if (typeof ctx.eufy.setRecordingPacing === "function") adapter.setPacing(pacing);
       try {
         await store.load();
         loaded = true;

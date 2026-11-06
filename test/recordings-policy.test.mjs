@@ -230,9 +230,9 @@ test("post-cover gap serializes a second queued event without a polling timer", 
       mode: "request_if_admitted",
     });
   await until(() => h.store.snapshot.rows.filter((r) => r.cover).length === 1);
-  await until(() => [...h.clocks.timers.values()].some((e) => e.at === 5000));
+  await until(() => [...h.clocks.timers.values()].some((e) => e.at === 2000));
   assert.equal(h.calls.cover.length, 1);
-  h.clocks.advance(4999);
+  h.clocks.advance(1999);
   await tick();
   assert.equal(h.calls.cover.length, 1);
   h.clocks.advance(1);
@@ -279,24 +279,24 @@ test("SDK deferrals without hints respect the gap, rate cap and interest expiry"
     browseId: page.browseId,
     mode: "request_if_admitted",
   });
-  for (let attempt = 1; attempt <= 6; attempt++) {
+  for (let attempt = 1; attempt <= 20; attempt++) {
     await until(() => h.calls.cover.length === attempt);
-    await until(() => [...h.clocks.timers.values()].some((e) => e.at === (attempt < 6 ? attempt * 5000 : 60000)));
+    await until(() => [...h.clocks.timers.values()].some((e) => e.at === (attempt < 20 ? attempt * 2000 : 60000)));
     assert.equal(h.calls.cover.length, attempt);
-    if (attempt < 6) {
-      h.clocks.advance(4999);
+    if (attempt < 20) {
+      h.clocks.advance(1999);
       await tick();
       assert.equal(h.calls.cover.length, attempt);
       h.clocks.advance(1);
     }
   }
-  h.clocks.advance(35000);
+  h.clocks.advance(22000);
   await tick();
-  assert.equal(h.calls.cover.length, 6);
+  assert.equal(h.calls.cover.length, 20);
   assert.equal(h.clocks.timers.size, 0);
   h.clocks.advance(120000);
   await tick();
-  assert.equal(h.calls.cover.length, 6);
+  assert.equal(h.calls.cover.length, 20);
 });
 
 test("deferred retry timers are cancelled on preemption, scope teardown, socket loss and shutdown", async (t) => {
@@ -317,7 +317,7 @@ test("deferred retry timers are cancelled on preemption, scope teardown, socket 
       browseId: page.browseId,
       mode: "request_if_admitted",
     });
-    await until(() => [...h.clocks.timers.values()].some((e) => e.at === 5000));
+    await until(() => [...h.clocks.timers.values()].some((e) => e.at === 2000));
     await teardown(h);
     assert.equal(h.clocks.timers.size, 0);
     h.clocks.advance(120000);

@@ -278,7 +278,7 @@ test("background deferrals retry without interest and report outcomes", async (t
   assert.equal(h.manager.diagnostics().background.deferred, 1);
 });
 
-test("prefetch is newest-first, at least 15 seconds apart, limited to valid last-day selectors", async (t) => {
+test("prefetch is newest-first, at least 3 seconds apart, limited to valid last-day selectors", async (t) => {
   let rows;
   const times = [];
   const h = await harness(t, {
@@ -300,19 +300,19 @@ test("prefetch is newest-first, at least 15 seconds apart, limited to valid last
   h.catalog("if_due");
   await settled(h);
   assert.equal(h.manager.diagnostics().background.coverPrefetch.queued, 2);
-  await advance(h, 14_999);
+  await advance(h, 2_999);
   await tick();
   assert.equal(h.calls.cover.length, 0);
   await advance(h, 1);
   await prefetched(h, 1);
   assert.equal(h.calls.cover[0].selector.sourceKey, rows[1].sourceKey);
-  await advance(h, 14_999);
+  await advance(h, 2_999);
   await tick();
   assert.equal(h.calls.cover.length, 1);
   await advance(h, 1);
   await prefetched(h, 2);
   assert.equal(h.calls.cover[1].selector.sourceKey, rows[0].sourceKey);
-  assert.ok(times[1] - times[0] >= 15_000);
+  assert.ok(times[1] - times[0] >= 3_000);
 });
 
 test("prefetch negative waits last five minutes and three failures survive restart", async (t) => {
@@ -326,7 +326,7 @@ test("prefetch negative waits last five minutes and three failures survive resta
   h.catalog("if_due");
   await settled(h);
   for (let count = 1; count <= 3; count++) {
-    await advance(h, count === 1 ? 15_000 : 1);
+    await advance(h, count === 1 ? 3_000 : 1);
     await until(() => h.manager.diagnostics().background.coverPrefetch.failed === count);
     await tick();
     await advance(h, 299_999);
@@ -369,7 +369,7 @@ test("capacity eviction drains background prefetch permanently while focused bro
   assert.equal(h.manager.diagnostics().coverCache.bytes, LIMITS.coverBytes);
   assert.equal(h.manager.diagnostics().background.coverPrefetch.queued, 4);
   for (let count = 1; count <= 4; count++) {
-    await advance(h, 15_000);
+    await advance(h, 3_000);
     await prefetched(h, count);
   }
   const evicted = h.store.snapshot.rows.filter((r) => r.coverEvicted);
@@ -407,7 +407,7 @@ test("a browse shares an in-flight prefetch without reading the event twice", as
   const r = row(h.scope);
   await h.store.mergeCatalog(h.scope, [r]);
   await h.manager.syncInventory(inventory);
-  await advance(h, 15_000);
+  await advance(h, 3_000);
   await until(() => !!finish);
   const page = h.catalog("if_due");
   assert.equal(page.events[0].coverState, "pending");
@@ -476,7 +476,7 @@ test("browse cover demands take priority over background prefetch and reads neve
   finish({ status: "ok", jpeg });
   await until(() => !!h.store.snapshot.rows.find((r) => r.eventId === rows[0].eventId).cover);
   await tick();
-  await advance(h, 15_000);
+  await advance(h, 3_000);
   await until(() => h.calls.cover.length === 2);
   finish({ status: "ok", jpeg });
   await prefetched(h, 1);
@@ -493,12 +493,12 @@ test("prefetch pauses during playback and deferrals preserve the negative and fa
   h.catalog("if_due");
   await settled(h);
   h.eufy.rtc.getPlaybackSafetyDiagnostics = () => ({ active: true });
-  await advance(h, 15_000);
+  await advance(h, 3_000);
   await tick();
   assert.equal(h.calls.cover.length, 0);
   assert.equal(h.manager.diagnostics().background.coverPrefetch.skippedPlayback, 1);
   h.eufy.rtc.getPlaybackSafetyDiagnostics = () => ({});
-  await advance(h, 15_000);
+  await advance(h, 3_000);
   await until(() => h.calls.cover.length === 1);
   await tick();
   assert.equal(h.store.snapshot.rows[0].negativeUntilMs, null);
@@ -521,7 +521,7 @@ test("kill switch defaults on and disables background catalog and prefetch only"
   assert.equal(h.calls.catalog.length, 0);
   h.catalog("if_due");
   await settled(h);
-  await advance(h, 15_000);
+  await advance(h, 3_000);
   await tick();
   assert.equal(h.calls.cover.length, 0);
   const page = h.catalog("if_due");
@@ -550,14 +550,14 @@ test("background diagnostics are detached aggregate values with no row data", as
   const h = await harness(t, { background: true });
   const value = h.manager.diagnostics().background;
   assert.deepEqual(value, {
-    pacing: { prefetchGap: 15_000, coverGap: 5_000, coverRate: 6, coverQuiet: 2_000 },
+    pacing: { prefetchGap: 3_000, coverGap: 2_000, coverRate: 20, coverQuiet: 2_000 },
     pacingSetAtMs: h.clocks.now(),
     coverReads: {
       maxBuckets: 16,
       samplesPerBucket: 512,
       buckets: [
         {
-          pacing: { prefetchGap: 15_000, coverGap: 5_000, coverRate: 6, coverQuiet: 2_000 },
+          pacing: { prefetchGap: 3_000, coverGap: 2_000, coverRate: 20, coverQuiet: 2_000 },
           setAtMs: h.clocks.now(),
           count: 0,
           failures: {},

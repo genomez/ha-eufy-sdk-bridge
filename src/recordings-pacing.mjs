@@ -1,9 +1,9 @@
-import { LIMITS, failure, reasonOf } from "./recordings-policy.mjs";
+import { failure, reasonOf } from "./recordings-policy.mjs";
 
 export const DEFAULT_PACING = Object.freeze({
-  prefetchGap: LIMITS.prefetchGap,
-  coverGap: LIMITS.coverGap,
-  coverRate: LIMITS.coverRate,
+  prefetchGap: 3_000,
+  coverGap: 2_000,
+  coverRate: 20,
   coverQuiet: 2_000,
 });
 

@@ -134,6 +134,7 @@ export async function harness(t, options = {}) {
     store = createRecordingsStore(root, { clock: clocks.now, ...options.storeOptions });
   const eufy = new EventEmitter(),
     calls = { catalog: [], cover: [] },
+    pacingCalls = [],
     events = [];
   eufy.api = { auth: { userId: "synthetic-account" } };
   eufy.rtc = {
@@ -142,7 +143,10 @@ export async function harness(t, options = {}) {
     playbackActive: () => false,
   };
   eufy.getRecordingAccountNamespace = (key) => `a_${recordingMac(key, "recordings.account.v1", eufy.api.auth.userId)}`;
-  eufy.setRecordingPacing = (pacing) => ({ ...pacing });
+  eufy.setRecordingPacing = (pacing) => {
+    pacingCalls.push({ ...pacing });
+    return { ...pacing };
+  };
   eufy.readRecordingCatalog = async (s, o) => {
     calls.catalog.push({ s, o });
     return options.catalog ? options.catalog(s, o) : { status: "ok", rows: [row(scope)] };
@@ -179,7 +183,7 @@ export async function harness(t, options = {}) {
   const cameraId = scope.cameras[0].cameraId,
     owner = {};
   const catalog = (refresh = "cache_only", extra = {}) => manager.catalog(owner, { cameraId, refresh, ...extra });
-  return { root, clocks, store, eufy, calls, events, ctx, manager, scope, cameraId, owner, catalog };
+  return { root, clocks, store, eufy, calls, pacingCalls, events, ctx, manager, scope, cameraId, owner, catalog };
 }
 export async function until(predicate) {
   const end = process.hrtime.bigint() + 5_000_000_000n;
