@@ -142,13 +142,22 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           case "recordings.catalog":
             recordings = ctx.recordings.catalog(ws, msg);
             break;
+          case "recordings.clip_prepare":
+            recordings = ctx.recordings.clipPrepare(msg);
+            break;
+          case "recordings.clip_status":
+            recordings = ctx.recordings.clipStatus(msg);
+            break;
+          case "recordings.clip_cancel":
+            recordings = await ctx.recordings.clipCancel(msg);
+            break;
           case "recordings.cover":
             recordings = await ctx.recordings.cover(ws, msg);
             break;
           default:
             throw recordingsFailure("invalid");
         }
-        return send(ws, { id: safeId, ok: true, recordings });
+        return send(ws, { id: safeId, ok: true, recordings, ...(recordings.clip ? { clip: recordings.clip } : {}) });
       } catch (error) {
         const code = [
           "recordings_disabled",
@@ -250,9 +259,15 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           throw { code: "webrtc_closed" };
         let result;
         switch (cmd) {
-          case "webrtc.open":
-            result = await relay.open(ws, msg);
+          case "webrtc.open": {
+            const release = await ctx.recordings?.liveStart();
+            try {
+              result = await relay.open(ws, msg);
+            } finally {
+              release?.();
+            }
             break;
+          }
           case "webrtc.candidate":
             result = relay.candidate(ws, msg);
             break;
@@ -451,6 +466,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           return reply({ pollMs: eufy.pollIntervalMs });
         }
         case "stream.start":
+          (await ctx.recordings?.liveStart())?.();
           // Returns URLs; does NOT open the camera — the media connection does that.
           return reply({
             path: `/stream/${msg.sn}`,

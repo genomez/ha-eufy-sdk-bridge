@@ -34,8 +34,9 @@ async function socket(t, h, allowCommand) {
   async function rpc(msg) {
     const count = replies.length;
     ws.emit("message", Buffer.from(JSON.stringify(msg)));
-    await until(() => replies.length > count);
-    return replies.at(-1);
+    const matching = (reply) => Object.hasOwn(reply, "ok") && (msg.id === undefined || reply.id === msg.id);
+    await until(() => replies.slice(count).some(matching));
+    return replies.slice(count).find(matching);
   }
   return { ws, replies, rpc };
 }
@@ -55,6 +56,71 @@ async function request(h, url, method = "GET") {
   await createHttpHandler(h.ctx)(req, res);
   return res;
 }
+
+test("clip RPCs retain recordings authorization and expose the exact public clip response", async (t) => {
+  const h = await harness(t, {
+    clipOptions: { convert: async ({ output }) => fs.writeFile(output, Buffer.alloc(32)) },
+  });
+  await seed(h);
+  h.eufy.pullRecordingClip = async (_, selector, options) => {
+    assert.equal(selector.record, 1);
+    options.video(Buffer.alloc(4));
+    options.video(Buffer.alloc(4));
+    return {
+      admissionGate: 0,
+      startAttempted: true,
+      boundedMediaObserved: true,
+      randomAccess: true,
+      captureOutcome: "eof",
+      releaseOutcome: "release_confirmed",
+      cessationOutcome: "ceased",
+      latchCleared: true,
+    };
+  };
+  const s = await socket(t, h),
+    eventId = row(h.scope).eventId;
+  const denied = await socket(t, h, () => false);
+  assert.equal((await denied.rpc({ id: 1, cmd: "recordings.clip_prepare", cameraId: h.cameraId, eventId })).ok, false);
+  const response = await s.rpc({ id: 2, cmd: "recordings.clip_prepare", cameraId: h.cameraId, eventId });
+  assert.equal(response.ok, true);
+  assert.deepEqual(response.clip, response.recordings.clip);
+  await until(() => h.manager.clipStatus({ cameraId: h.cameraId, eventId }).clip.state === "ready");
+  const status = await s.rpc({ id: 3, cmd: "recordings.clip_status", cameraId: h.cameraId, eventId });
+  assert.equal(status.clip.state, "ready");
+  const cancelled = await s.rpc({ id: 4, cmd: "recordings.clip_cancel", cameraId: h.cameraId, eventId });
+  assert.equal(cancelled.clip.state, "cancelled");
+  assert.equal((await request(h, `/recordings/v1/clips/${h.cameraId}/${eventId}.mp4`)).status, 404);
+  assert.equal(
+    (await s.rpc({ id: 5, cmd: "recordings.clip_prepare", cameraId: h.cameraId, eventId, path: "forged" })).code,
+    "recordings_invalid",
+  );
+});
+
+test("clip HTTP route is cache-only, uses the cover policy boundary, and serves byte ranges offline", async (t) => {
+  const h = await harness(t),
+    eventId = row(h.scope).eventId;
+  const file = path.join(h.root, "synthetic.mp4");
+  await fs.writeFile(file, Buffer.from("0123456789"));
+  const clipPath = `/recordings/v1/clips/${h.cameraId}/${eventId}.mp4`;
+  assert.equal((await request(h, clipPath)).status, 404);
+  const handler = createHttpHandler(h.ctx);
+  h.ctx.recordings.cachedClip = (c, e) => {
+    assert.equal(c, h.cameraId);
+    assert.equal(e, eventId);
+    return { path: file, bytes: 10, release() {} };
+  };
+  h.ctx.state.flags.ready = false;
+  const server = http.createServer((req, res) => handler(req, res));
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise((r) => server.close(r)));
+  const response = await fetch(`http://127.0.0.1:${server.address().port}${clipPath}`, {
+    headers: { Range: "bytes=2-5" },
+  });
+  assert.equal(response.status, 206);
+  assert.equal(await response.text(), "2345");
+  assert.equal(response.headers.get("content-type"), "video/mp4");
+  assert.equal(h.calls.cover.length + h.calls.catalog.length, 0);
+});
 test("WS pacing follows recordings command filtering, validates strictly and passes SDK values atomically", async (t) => {
   const h = await harness(t);
   const passed = [];
@@ -93,6 +159,7 @@ test("hello advertises additive browse-only capability without changing schema",
   assert.deepEqual(s.replies[0].recordings, {
     version: 1,
     browseOnly: true,
+    playback: false,
     enabled: true,
     scopeId: h.scope.scopeId,
     timezone: "America/Chicago",
@@ -190,7 +257,7 @@ test("WS cameras/catalog use recordings envelope even when Eufy session is offli
   assert.equal(cameras.recordings.cameras.length, 5);
   const page = await s.rpc({ id: 2, cmd: "recordings.catalog", cameraId: h.cameraId, refresh: "cache_only" });
   assert.equal(page.recordings.events.length, 1);
-  assert.equal(page.recordings.events[0].playable, false);
+  assert.equal(page.recordings.events[0].playable, true);
   assert.equal(page.recordings.truncated, false);
   assert.equal("cursor" in page.recordings, false);
   assert.equal("nextCursor" in page.recordings, false);
@@ -321,7 +388,7 @@ test("cover completion event is small, coalesced and leaves latest image store u
     mode: "request_if_admitted",
   });
   await until(() => h.store.snapshot.rows[0].cover !== null);
-  await tick();
+  await until(() => h.manager.diagnostics().coverCache.pending === 0);
   h.clocks.advance(1000);
   assert.equal(h.events.length, 1);
   assert.deepEqual(

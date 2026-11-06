@@ -31,7 +31,7 @@ export async function temporary(t) {
   t.after(async () => {
     if (path.dirname(root) !== base || !path.basename(root).startsWith(".recordings-test-"))
       throw new Error("Invalid test root");
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   return root;
 }
@@ -85,6 +85,25 @@ export function row(scope, index = 0, extra = {}) {
     selector.thumbPath,
     selector.observedAtMs,
   );
+  const playbackSelector = {
+    sourceKey,
+    cameraSn: inventory[1].sn,
+    stationBinding: inventory[0].sn,
+    record: index + 1,
+    begin: Date.parse("2026-11-05T18:00:00Z") / 1000 + index * 60,
+    expectedMs: 10000,
+  };
+  playbackSelector.selectorMac = recordingMac(
+    scope.sdkScope.identityKey,
+    "recordings.playback.v1",
+    scope.accountNamespace,
+    sourceKey,
+    playbackSelector.cameraSn,
+    playbackSelector.stationBinding,
+    playbackSelector.record,
+    playbackSelector.begin,
+    playbackSelector.expectedMs,
+  );
   const startedAtMs = Date.parse("2026-11-05T18:00:00Z") + index * 60_000;
   const sourceStartLocal = new Date(startedAtMs - 6 * 3_600_000).toISOString().slice(0, 19).replace("T", " ");
   return {
@@ -105,6 +124,7 @@ export function row(scope, index = 0, extra = {}) {
     eventType: { code: 3, label: "vendor canary" },
     detectType: { code: 2, label: "vendor canary" },
     coverSelector: selector,
+    playbackSelector,
     ...extra,
   };
 }
@@ -145,7 +165,7 @@ export async function harness(t, options = {}) {
     broadcast: (e) => events.push(e),
   };
   ctx.state.flags.ready = true;
-  const manager = createRecordings(ctx, { store, clocks });
+  const manager = createRecordings(ctx, { store, clocks, clipOptions: options.clipOptions });
   ctx.recordings = manager;
   await manager.load();
   if (!options.early) await manager.syncInventory(inventory);

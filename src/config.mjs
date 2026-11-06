@@ -99,6 +99,7 @@ export function loadConfig(env = process.env) {
     storageTelemetry: env.BRIDGE_S1_STORAGE_TELEMETRY === "1",
     recordings: {
       enabled: env.RECORDINGS_ENABLED == null ? true : truthy(env.RECORDINGS_ENABLED),
+      playback: env.RECORDINGS_PLAYBACK == null ? true : truthy(env.RECORDINGS_PLAYBACK),
       background: env.RECORDINGS_BACKGROUND == null ? true : truthy(env.RECORDINGS_BACKGROUND),
       root: env.RECORDINGS_ROOT || "/data/recordings",
     },

@@ -47,7 +47,7 @@ the existing host HTTP/command policy hooks also apply to these routes.
 ```ts
 // Additional hello member:
 recordings: {
-  version: 1; browseOnly: true; enabled: boolean; scopeId: string | null;
+  version: 1; browseOnly: boolean; playback: boolean; enabled: boolean; scopeId: string | null;
   timezone: "America/Chicago"; stationWindow: 20; pageSize: 100; coverBudget: 4;
 }
 
@@ -129,7 +129,7 @@ type RecordingEvent = {
   stationPresence: "seen_in_latest_window" | "not_in_latest_window";
   coverState: "not_requested" | "pending" | "cached" | "unavailable" | "evicted";
   coverRevision: string | null;
-  playable: false;
+  playable: boolean;
 };
 type Cover = {
   version: 1;
@@ -575,11 +575,11 @@ Complete a pending Solix 2FA (only when `state == "2fa"`). The code is never log
 
 ### Recordings capability changes
 
-`hello.recordings` remains the initial optional v1 browse-only advertisement.
+`hello.recordings` remains the initial optional v1 recordings advertisement.
 After enrollment, scope replacement, scope invalidation or disablement, the bridge
 broadcasts `{ "event": "recordings.capability", "recordings": { ... } }` to
 connected clients. `recordings` has exactly the same fields as `hello.recordings`:
-`version`, `browseOnly`, `enabled`, `scopeId`, `timezone`, `stationWindow`,
+`version`, `browseOnly`, `playback`, `enabled`, `scopeId`, `timezone`, `stationWindow`,
 `pageSize`, and `coverBudget`. Disabled advertisements may have a null `scopeId`.
 Clients replace their advertisement, retire old scope interests/covers, and update
 media source availability without reconnecting. Every reconnect `hello` replaces
@@ -793,3 +793,118 @@ SDK paging evidence is never forwarded to WS, HTTP or HA. HA projects this schem
 again and keeps opaque folder links under `recordings.folders` in its diagnostics.
 Event titles omit type labels; camera folder titles use only the trimmed name,
 with incomplete-history and cache status in an information child.
+
+## Save-first recording clips (3p)
+
+Playback is strictly on demand. `RECORDINGS_PLAYBACK` defaults to true and accepts
+`0`, `false`, or another non-truthy value to disable playback. The hello and
+`recordings.capability` objects add `playback: boolean`; `browseOnly` is its inverse.
+Missing SDK `pullRecordingClip` support advertises playback false. Integrations
+must use this capability to hide playback when disabled. Existing catalog rows
+without private playback authority become playable after a successful catalog
+refresh. Catalog `playable` describes exact-event authority; capability remains
+the feature-level gate. There is no clip prefetch or permanent-copy/Keep action.
+
+All three commands use the existing recordings command policy, scope guards,
+strict field validation and opaque camera/event identifiers. No serial, record
+number, station path, grant, URL, or raw selector is accepted from a client.
+
+```ts
+{ id, cmd: "recordings.clip_prepare", cameraId, eventId }
+{ id, cmd: "recordings.clip_status", cameraId, eventId }
+{ id, cmd: "recordings.clip_cancel", cameraId, eventId }
+
+// Success: clip is direct, and mirrored in the existing recordings envelope.
+{ id, ok: true, clip: Clip, recordings: { clip: Clip } }
+
+type Clip = {
+  state: "idle" | "queued" | "pulling" | "converting" | "ready" |
+         "failed" | "refused" | "cancelled";
+  reason: "none" | "live_view" | "busy" | "owner_unavailable" | "not_found" |
+          "too_long" | "storage" | "convert_failed" | "station_error" |
+          "cleanup_uncertain" | "disabled";
+  progress: { pulledMs: number; expectedMs: number };
+  durationMs: number | null;
+  bytes: number;
+  expiresAtMs: number | null;
+};
+```
+
+Malformed fields, invalid IDs and scope failures retain the existing
+`{id, ok:false, code, error:"Recordings unavailable"}` envelope. Unknown event
+preparation returns `refused/not_found`; status before any prepare is `idle/none`.
+Duration and expiry are null until known; bytes describe the ready MP4 only.
+Progress uses monotonic video-arrival elapsed time, bounded by catalog duration.
+Status polling does not extend expiry.
+
+One event has one in-memory job. Repeated prepare during queued/pulling/converting
+or ready reuses that job and never opens another stream. An explicit prepare
+following failed/refused/cancelled retries the same event job; it is not an
+automatic retry. There is one worker and at most eight waiting jobs, in FIFO
+order. Expired/evicted clips return to idle. A live start cancels queued jobs and
+an active pull, awaits mandatory same-owner release/cessation, then admits live.
+An uncertain release blocks handoff and the SDK latch continues to deny live.
+New prepares during active live acquisition/viewing return `refused/live_view`.
+Conversion can finish alongside live; it uses at most two encoding threads.
+
+Each state change uses the existing notify event, with only opaque identifiers:
+
+```ts
+{ event: "recordings.changed", version: 1, scopeId,
+  cameraId, eventId, revision, reason: "clip" }
+```
+
+The bridge spools Annex-B H.265 to a restricted, randomly named temporary file.
+The SDK authenticates a private catalog selector for the exact record, camera,
+start and expected duration, without another newest-record query. Catalog and
+cover/prefetch reads pause while the worker runs. Optional SDK state refreshes
+remain deferred for the full duration-bound capture, including cleanup.
+
+The capture budget is catalog duration plus 15 seconds; another 16 seconds is
+reserved for invocation/cleanup. Existing owner observation, current-owner,
+renewal headroom, pause/stop, five-second cessation and durable latch checks
+remain enforced. No start means no unresolved latch. A clip that cannot fit on
+the current owner is refused rather than reconnecting or extending its renewal.
+Capture ends at the station EOF or the budget; **only EOF plus confirmed release,
+clean ingress and a random-access first video frame can produce ready**. A cutoff
+without EOF returns `too_long` and deletes the partial file. This is intentionally
+stricter than publishing duration-capped material as a complete clip.
+
+FFmpeg runs with an argument array and no shell. It decodes HEVC, encodes H.264
+with libx264/veryfast, uses yuv420p, reduces width only above 1920 (or by one pixel
+for an odd width), and finalizes a faststart MP4. Audio is **not included** because
+the station audio frames do not yet identify a qualified codec/configuration.
+Frame rate and duration are inferred from monotonic video arrival cadence;
+station media timestamps and variable-frame-rate fidelity remain unqualified.
+Conversion errors and output-size cutoffs never publish a clip.
+
+`GET /recordings/v1/clips/<cameraId>/<eventId>.mp4` uses the identical host HTTP
+policy boundary as covers. It never starts a station operation and works offline
+for ready clips. It returns 404 unless ready and playback is enabled. Only GET is
+accepted (405 otherwise); malformed paths and query strings return 404. It sends
+`video/mp4`, `Accept-Ranges: bytes`, `Cache-Control: private, no-store` and
+`X-Content-Type-Options: nosniff`. Single closed, open-ended and suffix byte ranges
+return 206 with Content-Range/Content-Length; invalid, multiple or unsatisfiable
+ranges return 416 and `Content-Range: bytes */<size>`. Full requests return 200.
+The existing global four-delivery HTTP limit applies to covers and clips together.
+
+Temporary files live under `/data/recordings/clips/` (or `RECORDINGS_ROOT/clips`).
+Cancel, failure and shutdown delete temporary files. Startup removes owned orphan
+clip files; unexpected files/symlinks fail storage closed. A two-GiB aggregate cap
+includes input, conversion output and ready files, with oldest-access-first
+eviction. Conversion reserves headroom and bounds FFmpeg output size. Active
+HTTP readers pin files; cancellation defers their unlink until the last reader
+closes. Unpinned ready files expire 60 minutes after their last GET access/read
+completion; a 30-second sweep enforces expiry. No station file is ever deleted.
+The durable `/data/recordings/playback-safety.json` latch is outside disposable
+storage, survives restart and is honored even when playback/browsing is disabled.
+
+`recordings.diagnostics` adds `clips`, containing current `states` and `reasons`
+counts for every finite enum, `lastJob: {pullMs, convertMs, bytes, audioIncluded}`
+(or null before a completed job), and `audioIncluded:false`. This added object
+contains no IDs, serials, URLs or vendor error text. Existing diagnostics remain.
+
+Offline qualification uses synthetic frames and a fake conversion runner, plus
+real loopback HTTP range tests. Full-event EOF/first-last coverage, timing,
+Android and desktop decoding/seeking, live preemption, natural owner renewal and
+host CPU/storage behavior still require an authorized live acceptance test.

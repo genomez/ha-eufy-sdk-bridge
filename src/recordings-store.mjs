@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { LIMITS, validId, failure } from "./recordings-policy.mjs";
-import { opaque, safeSelector, recordingMac } from "./recordings-adapter.mjs";
+import { opaque, safeSelector, safePlaybackSelector, recordingMac } from "./recordings-adapter.mjs";
 
 export const imageDigest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const hex = (s) => typeof s === "string" && /^[a-f0-9]{64}$/.test(s);
@@ -106,7 +106,7 @@ export function publicRecording(row, coverState = "not_requested") {
     stationPresence: row.stationPresence === "seen_in_latest_window" ? "seen_in_latest_window" : "not_in_latest_window",
     coverState,
     coverRevision: hex(row.cover?.sha256) ? row.cover.sha256.slice(0, 22) : null,
-    playable: false,
+    playable: !!row.playbackSelector,
   };
 }
 const newest = (a, b) =>
@@ -306,6 +306,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
       lastObservedAtMs: clock(),
       stationPresence: "seen_in_latest_window",
       selector,
+      playbackSelector: safePlaybackSelector(row.playbackSelector, row, scope, key),
       pathKeys: [...pathKeys].slice(0, 64),
       pathHistoryFull: previous?.pathHistoryFull === true || pathKeys.size > 64,
       pathAmbiguous: previous?.pathAmbiguous === true,
@@ -414,6 +415,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
               ...publicRecording(r),
               sourceKey: r.sourceKey,
               selector: r.selector ?? null,
+              playbackSelector: r.playbackSelector ?? null,
               pathKeys: r.pathKeys,
               pathHistoryFull: r.pathHistoryFull === true,
               pathAmbiguous: r.pathAmbiguous === true,

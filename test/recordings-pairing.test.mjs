@@ -39,6 +39,9 @@ class SyntheticSession extends EventEmitter {
   rows = [rawRow()];
   reply = true;
   pages;
+  attachIngressGuard(guard) {
+    this.guard = guard;
+  }
   async connect() {
     this.isConnected = true;
     this.emit("connected");
@@ -238,7 +241,7 @@ test("packed SDK facade pairs RTC catalog and cover with public WS and cache-onl
   assert.equal(event.startedAtMs, Date.parse(event.startedAtUtc));
   assert.equal(event.durationSeconds, 12);
   assert.equal(event.timeStatus, "valid");
-  assert.equal(event.playable, false);
+  assert.equal(event.playable, true);
   assert.equal(event.cameraId, h.cameraId);
   assert.ok(page.coverEligibleEventIds.includes(event.eventId));
   assert.equal(h.session.queries(1306).length, 1);

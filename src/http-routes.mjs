@@ -9,6 +9,7 @@ import { createMediaDiagnostics } from "./t9000-media-diagnostics.mjs";
 // camera, disconnecting is what stops it, so there's no "is it streaming" flag to drift. Returns the
 // request handler; server.mjs wraps it in http.createServer.
 import fs from "node:fs";
+import { serveClip } from "./recordings-clips.mjs";
 import path from "node:path";
 import { streamClientFor, dropStreamClient } from "../streams.mjs";
 import { createLiveStillTap } from "./live-still.mjs";
@@ -106,7 +107,11 @@ export function createHttpHandler(ctx) {
 
     if (kind === "recordings") {
       // The service's host policy wrapper runs before this route. No station calls, even offline.
-      const match = /^\/recordings\/v1\/covers\/(c_[A-Za-z0-9_-]{22})\/(e_[A-Za-z0-9_-]{22})$/.exec(url.pathname);
+      const clipMatch = /^\/recordings\/v1\/clips\/(c_[A-Za-z0-9_-]{22})\/(e_[A-Za-z0-9_-]{22})\.mp4$/.exec(
+        url.pathname,
+      );
+      const match =
+        clipMatch ?? /^\/recordings\/v1\/covers\/(c_[A-Za-z0-9_-]{22})\/(e_[A-Za-z0-9_-]{22})$/.exec(url.pathname);
       if (!match || url.search) return json(res, 404, { error: "Recordings unavailable" });
       if (req.method !== "GET") {
         res.setHeader("Allow", "GET");
@@ -127,6 +132,14 @@ export function createHttpHandler(ctx) {
       res.once?.("finish", release);
       res.once?.("close", release);
       try {
+        if (clipMatch) {
+          const clip = ctx.recordings?.cachedClip(match[1], match[2]);
+          if (!clip) {
+            release();
+            return json(res, 404, { error: "Recordings unavailable" });
+          }
+          return serveClip(req, res, clip);
+        }
         const cover = await ctx.recordings?.cachedCover(match[1], match[2]);
         if (!cover) {
           release();
@@ -453,7 +466,16 @@ export function createHttpHandler(ctx) {
         cleanup();
         return;
       }
+      let releaseClipLive;
       try {
+        releaseClipLive = await ctx.recordings?.liveStart();
+        if (closed || flags.stopping || req.aborted || res.destroyed) {
+          releaseClipLive?.();
+          stopAcquisition();
+          return;
+        }
+        res.once("close", () => releaseClipLive?.());
+        res.once("finish", () => releaseClipLive?.());
         feedLease = await ctx.webrtcRelay?.acquireFeed(sn);
         if (stopAcquisition()) return;
         // T9000 media shares the main client's RTC transport; a second client is unnecessary and can
@@ -535,6 +557,7 @@ export function createHttpHandler(ctx) {
       } catch (e) {
         if (stopAcquisition()) return;
         const admissionError = WEBRTC_ERRORS.has(e?.code);
+        releaseClipLive?.();
         mediaAttempt?.fail(e, "acquire");
         const superseded =
           e?.name === "StreamClientSupersededError" ||

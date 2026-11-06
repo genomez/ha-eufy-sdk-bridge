@@ -1,7 +1,9 @@
+import path from "node:path";
+import { createClipJobs, armClipSafety } from "./recordings-clips.mjs";
 import { randomBytes } from "node:crypto";
 import { DEFAULT_PACING, pacingUpdate, createCoverMeasurements } from "./recordings-pacing.mjs";
 import { createRecordingsStore, publicRecording } from "./recordings-store.mjs";
-import { recordingsAdapter, recordingBinding, safeSelector } from "./recordings-adapter.mjs";
+import { recordingsAdapter, recordingBinding, safeSelector, safePlaybackSelector } from "./recordings-adapter.mjs";
 import {
   LIMITS,
   createRecordingsPolicy,
@@ -14,7 +16,7 @@ import {
 
 export function createRecordings(
   ctx,
-  { store = createRecordingsStore(ctx.cfg.recordings?.root ?? "/data/recordings"), clocks = {} } = {},
+  { store = createRecordingsStore(ctx.cfg.recordings?.root ?? "/data/recordings"), clocks = {}, clipOptions = {} } = {},
 ) {
   const now = clocks.now ?? Date.now,
     mono = clocks.monotonic ?? (() => performance.now());
@@ -65,6 +67,7 @@ export function createRecordings(
   const listeners = [];
   const enabled = () => ctx.cfg.recordings?.enabled !== false;
   const available = () =>
+    !clips.busy() &&
     ctx.state.flags.ready &&
     !ctx.state.flags.sessionLost &&
     !ctx.state.flags.stopping &&
@@ -86,9 +89,32 @@ export function createRecordings(
   }
   const current = (s, generation) =>
     !stopped && enabled() && scope === s && epoch === generation && adapter.account() === account;
+  let liveRequests = 0;
+  const playbackEnabled = () =>
+    enabled() && ctx.cfg.recordings?.playback !== false && typeof ctx.eufy.pullRecordingClip === "function";
+  const clips = createClipJobs({
+    ...clipOptions,
+    root: path.join(ctx.cfg.recordings?.root ?? "/data/recordings", "clips"),
+    enabled: playbackEnabled,
+    live: () => liveRequests > 0 || !!ctx.state.streaming?.size || !!ctx.state.activeStreams?.size,
+    pull: (selection, opts) => ctx.eufy.pullRecordingClip(selection.scope, selection.selector, opts),
+    changed(cameraId, eventId) {
+      if (!stopped)
+        ctx.broadcast?.({
+          event: "recordings.changed",
+          version: 1,
+          scopeId: scope?.scopeId ?? null,
+          cameraId,
+          eventId,
+          revision: String(store.snapshot.revision),
+          reason: "clip",
+        });
+    },
+  });
   const base = () => ({
     version: 1,
-    browseOnly: true,
+    browseOnly: !playbackEnabled(),
+    playback: playbackEnabled(),
     enabled:
       enabled() &&
       adapter.supported() &&
@@ -215,6 +241,7 @@ export function createRecordings(
     await store.updateHistory(policy.snapshot());
   }
   function backgroundReady() {
+    if (clips.busy()) return "playback";
     if (ctx.state.streaming?.size || ctx.state.activeStreams?.size) return "playback";
     return available() ? adapter.backgroundReady(scope?.stationSn) : "offline";
   }
@@ -700,7 +727,7 @@ export function createRecordings(
   }
   function flush() {
     expire();
-    if (stopped || flight || !queued.length || !scope || !scopeValid) return;
+    if (stopped || clips.busy() || flight || !queued.length || !scope || !scopeValid) return;
     if (!available()) {
       arm(1_000);
       return;
@@ -814,6 +841,7 @@ export function createRecordings(
       const rows = snapshot.rows.filter((r) => scope?.cameras.some((c) => c.cameraId === r.cameraId));
       const cameras = scope && adapter.account() === account ? scope.cameras : [];
       return {
+        clips: clips.diagnostics(),
         rowsKeptPerCamera: cameras.map((c) => ({
           name: c.name,
           rows: rows.filter((r) => r.cameraId === c.cameraId).length,
@@ -856,10 +884,13 @@ export function createRecordings(
       };
     },
     async load() {
-      if (!enabled() || !adapter.supported() || stopped) return;
+      if (stopped) return;
+      armClipSafety(ctx.eufy.rtc ?? {}, ctx.cfg.recordings?.root ?? "/data/recordings", playbackEnabled());
+      if (!enabled() || !adapter.supported()) return;
       try {
         await store.load();
         loaded = true;
+        clips.load();
         policy.restore(store.snapshot.history);
       } catch {
         storeFailed = true;
@@ -879,6 +910,7 @@ export function createRecordings(
         const binding = recordingBinding(store.key, capturedAccount, adapter.enrollment(records));
         const signature = (s) => JSON.stringify([s.scopeId, ...s.cameras.map((c) => c.cameraId).sort()]);
         if (!scope || signature(scope) !== signature(binding)) {
+          await clips.invalidate();
           preempt();
           interests.clear();
           negatives.clear();
@@ -895,6 +927,7 @@ export function createRecordings(
         armBackground();
       } catch {
         if (sequence !== inventoryGeneration) return;
+        await clips.invalidate();
         preempt();
         scopeValid = false;
         if (adapter.account() !== account) scope = undefined;
@@ -1024,6 +1057,59 @@ export function createRecordings(
       flush();
       return { ...result, state: "pending", retryAfterMs: Math.ceil(policy.coverWait()) || null };
     },
+    clipPrepare(args) {
+      fields(args, ["cameraId", "eventId"]);
+      camera(args.cameraId);
+      if (!validId(args.eventId, "e")) throw failure("invalid");
+      const row = store.row(args.cameraId, args.eventId);
+      const selector = row && safePlaybackSelector(row.playbackSelector, row, scope, store.key);
+      const selection =
+        scopeValid &&
+        ctx.state.flags.ready &&
+        !ctx.state.flags.sessionLost &&
+        !ctx.state.flags.stopping &&
+        !ctx.state.flags.recovering &&
+        !ctx.authPolicy?.blocked &&
+        !!selector &&
+        selector.sourceKey === row.sourceKey
+          ? { scope: scope.sdkScope, selector }
+          : null;
+      if (playbackEnabled() && selection) preempt();
+      return clips.prepare(args.cameraId, args.eventId, selection);
+    },
+    clipStatus(args) {
+      fields(args, ["cameraId", "eventId"]);
+      camera(args.cameraId);
+      if (!validId(args.eventId, "e")) throw failure("invalid");
+      return clips.status(args.cameraId, args.eventId);
+    },
+    async clipCancel(args) {
+      fields(args, ["cameraId", "eventId"]);
+      camera(args.cameraId);
+      if (!validId(args.eventId, "e")) throw failure("invalid");
+      return clips.cancel(args.cameraId, args.eventId);
+    },
+    async liveStart() {
+      liveRequests++;
+      try {
+        await clips.liveStart();
+      } catch (e) {
+        liveRequests--;
+        throw e;
+      }
+      let released = false;
+      return () => {
+        if (!released) {
+          released = true;
+          liveRequests--;
+        }
+      };
+    },
+    cachedClip(cameraId, eventId) {
+      camera(cameraId);
+      if (!validId(eventId, "e")) throw failure("invalid");
+      return clips.ready(cameraId, eventId);
+    },
     async cachedCover(cameraId, eventId) {
       camera(cameraId);
       if (!validId(eventId, "e")) throw failure("invalid");
@@ -1056,6 +1142,7 @@ export function createRecordings(
       cancel(notificationTimer);
       notifying = null;
       for (const [name, fn] of listeners) ctx.eufy.off?.(name, fn);
+      await clips.stop();
       await store.close();
     },
   };

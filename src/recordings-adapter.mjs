@@ -152,3 +152,44 @@ export function safeSelector(selector, row, scope, key) {
     selectorMac: selector.selectorMac,
   };
 }
+
+/** Authenticate and allowlist private exact-event authority at the persistence boundary. */
+export function safePlaybackSelector(value, row, scope, key) {
+  const cameraSn = row.cameraSn ?? scope.cameras.find((c) => c.cameraId === row.cameraId)?.sn;
+  if (
+    !value ||
+    value.sourceKey !== row.sourceKey ||
+    value.cameraSn !== cameraSn ||
+    value.stationBinding !== scope.stationSn ||
+    !Number.isSafeInteger(value.record) ||
+    value.record <= 0 ||
+    !Number.isSafeInteger(value.begin) ||
+    value.begin <= 0 ||
+    !Number.isSafeInteger(value.expectedMs) ||
+    value.expectedMs <= 0 ||
+    value.expectedMs > 2147400000 ||
+    !/^[a-f0-9]{64}$/.test(value.selectorMac)
+  )
+    return null;
+  const expected = recordingMac(
+    key,
+    "recordings.playback.v1",
+    scope.accountNamespace,
+    value.sourceKey,
+    value.cameraSn,
+    value.stationBinding,
+    value.record,
+    value.begin,
+    value.expectedMs,
+  );
+  if (!timingSafeEqual(Buffer.from(value.selectorMac, "hex"), Buffer.from(expected, "hex"))) return null;
+  return {
+    sourceKey: value.sourceKey,
+    cameraSn,
+    stationBinding: scope.stationSn,
+    record: value.record,
+    begin: value.begin,
+    expectedMs: value.expectedMs,
+    selectorMac: value.selectorMac,
+  };
+}
