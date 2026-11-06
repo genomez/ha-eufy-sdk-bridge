@@ -537,3 +537,5 @@ Offline synthetic validation only; installation acceptance remains false.
 - Wait up to 150 seconds for transient admission gates, retrying every three seconds across session renewal and observation. Permanent gates still refuse immediately. Each SDK attempt retains its fresh capture/cleanup deadline; job and WebSocket handling impose no shorter admission deadline.
 - Pin the rebuilt local 3p6 SDK distribution and installed runtime separately. Confirmed no-stream refusals, including state 2/code 18, report not_found while reconnect protection remains applied; uncertain refusals retain cleanup_uncertain.
 - Validated locally with synthetic fixtures; no installation or device acceptance is claimed.
+
+- Playback 3p6r, 2026-11-06: pin the local c7913bf SDK distribution and runtime with the refusal-invalidation latch fix; offline packaging only.
