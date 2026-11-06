@@ -775,6 +775,7 @@ for (const gate of [
       monotonic: () => time,
       wait: async (ms) => {
         assert.equal(state(f, "a").state, "queued");
+        assert.equal(f.jobs.busy(), false);
         assert.equal(ms, 3000);
         time += ms;
       },
@@ -816,7 +817,16 @@ test("admission waiting stops at exactly 90 seconds with named diagnostics", asy
   assert.equal(f.jobs.diagnostics().counters.admissionGates.observation_window, 30);
 });
 
-for (const gate of ["disabled", "no_marker", "unresolved", "scope_invalid", "model", "unsafe_observation"])
+for (const gate of [
+  "disabled",
+  "no_marker",
+  "unresolved",
+  "scope_invalid",
+  "model",
+  "unsafe_observation",
+  "realtime_disabled",
+  "inventory_conflict",
+])
   test(`permanent admission ${gate} refuses immediately`, async (t) => {
     let attempts = 0;
     const f = await fixture(t, {
@@ -829,7 +839,62 @@ for (const gate of ["disabled", "no_marker", "unresolved", "scope_invalid", "mod
     f.jobs.prepare("camera", "a", selection);
     await until(() => state(f, "a").state === "refused");
     assert.equal(attempts, 1);
+    assert.equal(f.jobs.diagnostics().lastJob.admissionGate, gate);
   });
+
+test("queued cover runs between clip admission retries and finishes before another dispatch", async (t) => {
+  const retry = deferred(),
+    cover = deferred(),
+    admission = deferred();
+  let attempts = 0,
+    waiting = false;
+  const h = await harness(t, {
+    cover: async () => cover.promise,
+    clipOptions: {
+      wait: async () => {
+        waiting = true;
+        await retry.promise;
+      },
+      convert: async ({ output }) => fs.writeFileSync(output, Buffer.alloc(1024)),
+    },
+  });
+  await seed(h);
+  h.eufy.pullRecordingClip = async (_, __, opts) => {
+    if (++attempts === 1) {
+      await admission.promise;
+      return { admissionGateName: "observation_window", captureOutcome: "not_admitted" };
+    }
+    assert.ok(h.store.snapshot.rows[0].cover);
+    opts.beforeDispatch();
+    opts.video(Buffer.from("a"));
+    opts.video(Buffer.from("b"));
+    return clean;
+  };
+  h.ctx.state.flags.ready = false;
+  const catalog = h.catalog("if_due"),
+    args = { cameraId: h.cameraId, eventId: catalog.events[0].eventId };
+  h.ctx.state.flags.ready = true;
+  h.manager.clipPrepare(args);
+  await until(() => attempts === 1);
+  try {
+    await h.manager.cover(h.owner, { ...args, browseId: catalog.browseId, mode: "request_if_admitted" });
+    h.clocks.advance(3000);
+    assert.equal(h.calls.cover.length, 0);
+    admission.resolve();
+    await until(() => waiting);
+    await until(() => h.calls.cover.length === 1);
+    const { jpeg } = await import("./helpers/recordings-fixtures.mjs");
+    cover.resolve({ status: "ok", jpeg });
+    await until(() => h.store.snapshot.rows[0].cover !== null);
+    retry.resolve();
+    await until(() => h.manager.clipStatus(args).clip.state === "ready");
+    assert.equal(attempts, 2);
+  } finally {
+    admission.resolve();
+    retry.resolve();
+    cover.resolve({ status: "unavailable", reason: "scope_invalid" });
+  }
+});
 
 test("waiting admission is cancelled promptly and never dispatches another attempt", async (t) => {
   const f = await fixture(t, {

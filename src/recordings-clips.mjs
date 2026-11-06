@@ -41,6 +41,8 @@ const admissionGates = [
   "reply_capacity",
   "recordings_unavailable",
   "model",
+  "realtime_disabled",
+  "inventory_conflict",
 ];
 const transientAdmission = new Set([
   "no_owner",
@@ -387,8 +389,13 @@ export function createClipJobs({
         if (receipt.startAttempted || frames || !transientAdmission.has(evidence.admissionGate)) break;
         const remaining = admissionDeadline - monotonic();
         if (remaining <= 0) break;
+        j.waitingForAdmission = true;
         state(j, "queued");
-        await wait(Math.min(3000, remaining), j.controller.signal);
+        try {
+          await wait(Math.min(3000, remaining), j.controller.signal);
+        } finally {
+          j.waitingForAdmission = false;
+        }
         if (monotonic() >= admissionDeadline) break;
       }
       pullMs = Math.round(monotonic() - start);
@@ -623,7 +630,7 @@ export function createClipJobs({
         await j.done;
       }
     },
-    busy: () => !!active,
+    busy: () => !!active && !active.waitingForAdmission,
     async invalidate() {
       for (const j of jobs.values()) abort(j, "owner_unavailable");
       await active?.done;

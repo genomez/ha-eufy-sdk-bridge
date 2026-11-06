@@ -113,6 +113,7 @@ export function createRecordings(
     live: () => liveRequests > 0 || !!ctx.state.streaming?.size || !!ctx.state.activeStreams?.size,
     pull: (selection, opts) => ctx.eufy.pullRecordingClip(selection.scope, selection.selector, opts),
     changed(cameraId, eventId) {
+      queueMicrotask(flush);
       if (!stopped)
         ctx.broadcast?.({
           event: "recordings.changed",
