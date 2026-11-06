@@ -577,6 +577,32 @@ test("clip safety arming has no filesystem dependency", () => {
   assert.doesNotThrow(() => save(true));
 });
 
+test("clip safety arming keeps an armed probe's durable marker and armed state", () => {
+  const writes = [];
+  const probeSave = (value) => writes.push(value);
+  for (const enabled of [true, false]) {
+    let marker, armed;
+    armClipSafety(
+      {
+        configurePlaybackSafety: (value, fn, on) => {
+          assert.equal(value, false);
+          marker = fn;
+          armed = on;
+        },
+      },
+      "missing-directory",
+      enabled,
+      probeSave,
+    );
+    assert.equal(marker, probeSave);
+    assert.equal(armed, true);
+  }
+  let armed;
+  armClipSafety({ configurePlaybackSafety: (_v, _fn, on) => (armed = on) }, "missing-directory", false);
+  assert.equal(armed, false);
+  assert.deepEqual(writes, []);
+});
+
 for (const [model, models, allowed] of [
   ["T8425", undefined, true],
   ["T8426", undefined, true],
@@ -584,6 +610,8 @@ for (const [model, models, allowed] of [
   [undefined, undefined, false],
   ["T8425", [], false],
   ["T8170", ["T8170"], true],
+  [" t8425 ", undefined, true],
+  ["t8426", undefined, true],
 ])
   test(`model gate list and prepare: ${model ?? "missing"}, ${JSON.stringify(models)}`, async (t) => {
     const h = await harness(t);

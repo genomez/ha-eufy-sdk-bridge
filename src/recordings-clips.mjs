@@ -31,9 +31,13 @@ export function writeAll(fd, data) {
   }
 }
 
-/** Clip safety is process-local; existing marker files are deliberately untouched and ignored. */
-export function armClipSafety(rtc, _root, enabled) {
-  rtc.configurePlaybackSafety?.(false, () => {}, enabled);
+/**
+ * Clip safety is process-local; existing clip marker files are deliberately untouched and ignored.
+ * An armed legacy probe keeps its durable marker (clip captures never call it), and stays armed.
+ */
+export function armClipSafety(rtc, _root, enabled, probeMarker) {
+  const durable = typeof probeMarker === "function" ? probeMarker : undefined;
+  rtc.configurePlaybackSafety?.(false, durable ?? (() => {}), enabled || !!durable);
 }
 
 /** Duration-bound conversion settles only after process close, including cancellation and forced termination. */

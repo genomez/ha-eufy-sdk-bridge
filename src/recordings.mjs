@@ -99,7 +99,9 @@ export function createRecordings(
     enabled() && ctx.cfg.recordings?.playback !== false && typeof ctx.eufy.pullRecordingClip === "function";
   const playbackAllowed = (cameraId) =>
     (ctx.cfg.recordings?.playbackModels ?? ["T8425", "T8426"]).includes(
-      scope?.cameras.find((c) => c.cameraId === cameraId)?.model,
+      String(scope?.cameras.find((c) => c.cameraId === cameraId)?.model ?? "")
+        .trim()
+        .toUpperCase(),
     );
   const clips = createClipJobs({
     ...clipOptions,
@@ -946,7 +948,12 @@ export function createRecordings(
     },
     async load() {
       if (stopped) return;
-      armClipSafety(ctx.eufy.rtc ?? {}, ctx.cfg.recordings?.root ?? "/data/recordings", playbackEnabled());
+      armClipSafety(
+        ctx.eufy.rtc ?? {},
+        ctx.cfg.recordings?.root ?? "/data/recordings",
+        playbackEnabled(),
+        ctx.playbackProbeMarker,
+      );
       if (!enabled() || !adapter.supported()) return;
       try {
         await store.load();

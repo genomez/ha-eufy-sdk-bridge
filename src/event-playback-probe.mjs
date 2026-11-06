@@ -1146,6 +1146,8 @@ export function attachEventPlaybackProbe(
         return dormant("blocked");
       }
       ctx.eufy.rtc.configurePlaybackSafety(unresolved, safety.save, true);
+      // Later clip arming must keep this durable probe marker in place.
+      ctx.playbackProbeMarker = safety.save;
     } catch {
       if (Object.hasOwn(grant, "maxAttempts")) invalidate();
       return dormant("unavailable");
