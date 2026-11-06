@@ -520,7 +520,7 @@ in the WebSocket protocol. Qualification is offline and synthetic only.
 
 ## Playback 3p4 local fix (2026-11-06)
 
-Use the capture receipt mediaDurationMs for conversion retiming and published clip duration; invalid or missing captured durations fail instead of using the catalog duration. Preserve explicit frame retiming. Retry unsafe_observation through the existing 3-second, 90-second admission policy because the SDK live-stop drain now clears on its own. Other permanent observation uncertainty remains bounded by the retry deadline. The dependency pin and provenance identify the matching local 3p4 package.
+Use the capture receipt mediaDurationMs for conversion retiming and published clip duration; invalid or missing captured durations fail instead of using the catalog duration. Preserve explicit frame retiming. Retry unsafe_observation through the 3-second admission policy because the SDK live-stop drain now clears on its own. The admission budget is 150 seconds as of 3p6. Other permanent observation uncertainty remains bounded by the retry deadline. The dependency pin and provenance identify the matching local 3p4 package.
 
 Offline synthetic validation only; installation acceptance remains false.
 
@@ -530,4 +530,10 @@ Offline synthetic validation only; installation acceptance remains false.
 - Include bounded count-only playback-observer poison evidence, observer age, and station status counts in clip diagnostics.
 - Report a proven terminal no-stream refusal as not_found while the SDK retains reconnect protection; retain cleanup_uncertain for uncertain starts and media.
 - Enable recording playback for T8425, T8426 and T8170 by default; explicit model overrides remain authoritative.
+- Validated locally with synthetic fixtures; no installation or device acceptance is claimed.
+
+### Playback 3p6 admission and refusal, 2026-11-06
+
+- Wait up to 150 seconds for transient admission gates, retrying every three seconds across session renewal and observation. Permanent gates still refuse immediately. Each SDK attempt retains its fresh capture/cleanup deadline; job and WebSocket handling impose no shorter admission deadline.
+- Pin the rebuilt local 3p6 SDK distribution and installed runtime separately. Confirmed no-stream refusals, including state 2/code 18, report not_found while reconnect protection remains applied; uncertain refusals retain cleanup_uncertain.
 - Validated locally with synthetic fixtures; no installation or device acceptance is claimed.

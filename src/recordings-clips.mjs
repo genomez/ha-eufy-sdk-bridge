@@ -436,7 +436,7 @@ export function createClipJobs({
         },
       };
       let receipt;
-      const admissionDeadline = monotonic() + 90_000;
+      const admissionDeadline = monotonic() + 150_000;
       for (;;) {
         if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
         if (live()) throw fault("live_view");

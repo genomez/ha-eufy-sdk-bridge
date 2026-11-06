@@ -838,6 +838,13 @@ preparation returns `refused/not_found`; status before any prepare is `idle/none
 Duration and expiry are null until known; bytes describe the ready MP4 only.
 Progress uses monotonic video-arrival elapsed time, bounded by catalog duration.
 Status polling does not extend expiry.
+Transient playback admission gates retry every three seconds for up to 150 seconds,
+including session renewal and the replacement owner's observation window. Permanent
+gates refuse immediately. This wait precedes each admitted capture's fresh SDK
+deadline; preparation returns immediately and status remains queued while waiting.
+An exactly correlated no-stream refusal before acknowledgement or ingress reports
+`failed/not_found` after confirmed quiet cessation, while retaining reconnect
+protection. Uncertain refusal or cleanup evidence reports `failed/cleanup_uncertain`.
 `disabled` means playback is disabled, the SDK lacks playback support, or the
 clip worker has stopped. A marker-storage failure before any start is dispatched
 returns `failed/storage` without retaining the SDK's in-memory live-view latch.

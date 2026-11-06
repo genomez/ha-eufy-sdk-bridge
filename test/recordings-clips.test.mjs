@@ -824,7 +824,7 @@ for (const gate of [
     assert.equal(f.jobs.diagnostics().counters.admissionGates[gate], 1);
   });
 
-test("admission waiting stops at exactly 90 seconds with named diagnostics", async (t) => {
+test("admission waiting stops at exactly 150 seconds with named diagnostics", async (t) => {
   let time = 0,
     attempts = 0;
   const f = await fixture(t, {
@@ -839,11 +839,34 @@ test("admission waiting stops at exactly 90 seconds with named diagnostics", asy
   });
   f.jobs.prepare("camera", "a", selection);
   await until(() => state(f, "a").state === "refused");
-  assert.equal(time, 90000);
-  assert.equal(attempts, 30);
+  assert.equal(time, 150000);
+  assert.equal(attempts, 50);
   assert.equal(state(f, "a").reason, "owner_unavailable");
   assert.equal(f.jobs.diagnostics().lastJob.admissionGate, "observation_window");
-  assert.equal(f.jobs.diagnostics().counters.admissionGates.observation_window, 30);
+  assert.equal(f.jobs.diagnostics().counters.admissionGates.observation_window, 50);
+});
+
+test("admission survives renewal and the new owner's observation window beyond 90 seconds", async (t) => {
+  let time = 0;
+  const f = await fixture(t, {
+    monotonic: () => time,
+    wait: async (ms) => {
+      time += ms;
+    },
+    pull: async (_, o) => {
+      if (time < 40000) return { admissionGateName: "renewal_soon", captureOutcome: "not_admitted" };
+      if (time < 100000) return { admissionGateName: "observation_window", captureOutcome: "not_admitted" };
+      o.beforeDispatch();
+      o.video(Buffer.from("a"));
+      o.video(Buffer.from("b"));
+      return clean;
+    },
+  });
+  await ready(f, "a");
+  assert.equal(time, 102000);
+  assert.equal(f.jobs.diagnostics().lastJob.pullMs, 102000);
+  assert.equal(f.jobs.diagnostics().counters.admissionGates.renewal_soon, 14);
+  assert.equal(f.jobs.diagnostics().counters.admissionGates.observation_window, 20);
 });
 
 for (const gate of [
@@ -987,28 +1010,32 @@ for (const mediaDurationMs of [undefined, 0, -1, NaN, Infinity])
     assert.equal(state(f, "a").reason, "station_error");
   });
 
-for (const confirmed of [true, false])
-  test(`station refusal cleanup certainty ${confirmed}`, async (t) => {
-    const f = await fixture(t, {
-      pull: async () => ({
-        ...clean,
-        boundedMediaObserved: false,
-        captureOutcome: "start_refused",
-        startAcknowledged: false,
-        stationRefusalConfirmed: confirmed,
-        releaseOutcome: confirmed ? "stop_unconfirmed" : "release_unknown",
-        cessationOutcome: confirmed ? "ceased" : "cessation_unknown",
-        latchCleared: false,
-        reconnectOutcome: "connected",
-        stationStatusCounts: [{ state: 0, code: 7, count: 1 }],
-      }),
+for (const [statusState, code] of [
+  [0, 7],
+  [2, 18],
+])
+  for (const confirmed of [true, false])
+    test(`station refusal ${statusState}/${code} cleanup certainty ${confirmed}`, async (t) => {
+      const f = await fixture(t, {
+        pull: async () => ({
+          ...clean,
+          boundedMediaObserved: false,
+          captureOutcome: "start_refused",
+          startAcknowledged: false,
+          stationRefusalConfirmed: confirmed,
+          releaseOutcome: confirmed ? "stop_unconfirmed" : "release_unknown",
+          cessationOutcome: confirmed ? "ceased" : "cessation_unknown",
+          latchCleared: false,
+          reconnectOutcome: "connected",
+          stationStatusCounts: [{ state: statusState, code, count: 1 }],
+        }),
+      });
+      f.jobs.prepare("camera", "a", selection);
+      await until(() => state(f, "a").state === "failed");
+      assert.equal(state(f, "a").reason, confirmed ? "not_found" : "cleanup_uncertain");
+      assert.deepEqual(f.jobs.diagnostics().lastJob.stationStatusCounts, [{ state: statusState, code, count: 1 }]);
+      assert.equal(f.jobs.diagnostics().lastJob.reconnectOutcome, "connected");
     });
-    f.jobs.prepare("camera", "a", selection);
-    await until(() => state(f, "a").state === "failed");
-    assert.equal(state(f, "a").reason, confirmed ? "not_found" : "cleanup_uncertain");
-    assert.deepEqual(f.jobs.diagnostics().lastJob.stationStatusCounts, [{ state: 0, code: 7, count: 1 }]);
-    assert.equal(f.jobs.diagnostics().lastJob.reconnectOutcome, "connected");
-  });
 
 test("clip diagnostics retain bounded count-only poison evidence", async (t) => {
   const poison = {
