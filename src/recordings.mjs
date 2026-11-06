@@ -45,6 +45,8 @@ export function createRecordings(
   // Test-only load generator for pacing ramps: re-reads already cached covers without storing them.
   // In memory only, off at start-up, and it switches itself off at its deadline.
   const testReread = { untilMono: -Infinity, untilMs: null, reads: 0, failed: 0 };
+  // Self-expiring test override of the playback model allowlist; in memory only.
+  const testModels = { untilMono: -Infinity, untilMs: null, models: [] };
   const lastTestRead = new Map();
   const testRereadActive = () => mono() < testReread.untilMono;
   const backgroundEnabled = () => enabled() && ctx.cfg.recordings?.background !== false;
@@ -97,8 +99,9 @@ export function createRecordings(
   let liveRequests = 0;
   const playbackEnabled = () =>
     enabled() && ctx.cfg.recordings?.playback !== false && typeof ctx.eufy.pullRecordingClip === "function";
+  const testModelsActive = () => mono() < testModels.untilMono;
   const playbackAllowed = (cameraId) =>
-    (ctx.cfg.recordings?.playbackModels ?? ["T8425", "T8426"]).includes(
+    (testModelsActive() ? testModels.models : (ctx.cfg.recordings?.playbackModels ?? ["T8425", "T8426"])).includes(
       String(scope?.cameras.find((c) => c.cameraId === cameraId)?.model ?? "")
         .trim()
         .toUpperCase(),
@@ -288,6 +291,10 @@ export function createRecordings(
           a.eventId.localeCompare(b.eventId),
       );
     return [...fresh, ...cached];
+  }
+  function testModelsStatus() {
+    const active = testModelsActive();
+    return { active, untilMs: active ? testModels.untilMs : null, models: active ? [...testModels.models] : [] };
   }
   function testRereadStatus() {
     const active = testRereadActive();
@@ -894,6 +901,27 @@ export function createRecordings(
       armBackground();
       return { testReread: testRereadStatus() };
     },
+    testPlaybackModels(args) {
+      fields(args, ["enabled", "models", "minutes"]);
+      guard();
+      const minutes = args.minutes ?? 30;
+      const models = args.models ?? [];
+      if (
+        typeof args.enabled !== "boolean" ||
+        typeof minutes !== "number" ||
+        !Number.isFinite(minutes) ||
+        minutes <= 0 ||
+        minutes > 240 ||
+        !Array.isArray(models) ||
+        models.length > 32 ||
+        models.some((m) => typeof m !== "string" || !/^[A-Za-z0-9]{1,16}$/.test(m.trim()))
+      )
+        throw failure("invalid");
+      testModels.untilMono = args.enabled ? mono() + minutes * 60_000 : -Infinity;
+      testModels.untilMs = args.enabled ? now() + minutes * 60_000 : null;
+      testModels.models = args.enabled ? models.map((m) => m.trim().toUpperCase()) : [];
+      return { testPlaybackModels: testModelsStatus() };
+    },
     diagnostics(args = {}) {
       fields(args, []);
       const snapshot =
@@ -925,6 +953,7 @@ export function createRecordings(
           pacingSetAtMs,
           coverReads: { maxBuckets: 16, samplesPerBucket: 512, buckets: measurements.snapshot() },
           testReread: testRereadStatus(),
+          testPlaybackModels: testModelsStatus(),
           enabled: backgroundEnabled(),
           lastCatalogAtMs: background.lastCatalogAtMs,
           nextCatalogAtMs:

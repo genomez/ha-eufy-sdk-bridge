@@ -136,6 +136,9 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           case "recordings.test_reread":
             recordings = ctx.recordings.testReread(msg);
             break;
+          case "recordings.test_playback_models":
+            recordings = ctx.recordings.testPlaybackModels(msg);
+            break;
           case "recordings.diagnostics":
             recordings = ctx.recordings.diagnostics(msg);
             break;
