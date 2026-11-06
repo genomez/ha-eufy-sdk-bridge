@@ -4,7 +4,14 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { EventEmitter } from "node:events";
-import { createClipJobs, clipRange, serveClip, armClipSafety, convertClip } from "../src/recordings-clips.mjs";
+import {
+  createClipJobs,
+  clipRange,
+  serveClip,
+  armClipSafety,
+  convertClip,
+  writeAll,
+} from "../src/recordings-clips.mjs";
 import { temporary, until, harness, seed, row, tick } from "./helpers/recordings-fixtures.mjs";
 import { loadConfig } from "../src/config.mjs";
 
@@ -509,4 +516,64 @@ test("catalog and cover prefetch pause through a fake SDK pull; exact selectors 
   const raw = await fs.promises.readFile(path.join(h.root, "catalog.json"), "utf8");
   assert.ok(JSON.parse(raw).rows[0].playbackSelector.selectorMac);
   assert.equal(JSON.stringify(h.catalog()).includes("selectorMac"), false);
+});
+
+test("spool writes loop over short writes and fail as storage on zero progress or ENOSPC", async (t) => {
+  const root = await temporary(t);
+  const file = path.join(root, "spool.bin");
+  const fd = fs.openSync(file, "w");
+  t.after(() => fs.closeSync(fd));
+  const real = fs.writeSync;
+  let calls = 0;
+  t.mock.method(fs, "writeSync", (handle, data, offset, length) => {
+    calls++;
+    return real(handle, data, offset, Math.min(3, length));
+  });
+  writeAll(fd, Buffer.from("12345678"));
+  assert.equal(calls, 3);
+  assert.equal(fs.readFileSync(file, "utf8"), "12345678");
+  fs.writeSync.mock.mockImplementation(() => 0);
+  assert.throws(() => writeAll(fd, Buffer.from("x")), { reason: "storage" });
+  fs.writeSync.mock.mockImplementation(() => {
+    throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+  });
+  assert.throws(() => writeAll(fd, Buffer.from("x")), { code: "ENOSPC" });
+});
+
+test("a disk-full pull fails as storage and removes its spool", async (t) => {
+  const f = await fixture(t);
+  const real = fs.writeSync;
+  t.mock.method(fs, "writeSync", (...args) =>
+    String(args[1]).includes("synthetic-frame")
+      ? (() => {
+          throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+        })()
+      : real(...args),
+  );
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => state(f, "a").state === "failed");
+  assert.equal(state(f, "a").reason, "storage");
+  assert.deepEqual(fs.readdirSync(f.root), []);
+});
+
+test("failed marker writes remove the unpublished temporary file at every stage", async (t) => {
+  for (const stage of ["writeFileSync", "fsyncSync", "renameSync"]) {
+    const root = await temporary(t);
+    let save;
+    armClipSafety({ configurePlaybackSafety: (_v, fn) => (save = fn) }, root, true);
+    const real = fs[stage];
+    const mock = t.mock.method(fs, stage, (...args) => {
+      if (stage === "renameSync" || typeof args[0] === "number") {
+        throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+      }
+      return real(...args);
+    });
+    assert.throws(() => save(true), { code: "ENOSPC" });
+    mock.mock.restore();
+    assert.deepEqual(
+      fs.readdirSync(root).filter((name) => name.endsWith(".tmp")),
+      [],
+      stage,
+    );
+  }
 });

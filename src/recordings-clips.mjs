@@ -21,6 +21,16 @@ export const clipReasons = [
 ];
 const fault = (reason) => Object.assign(new Error(reason), { reason });
 
+/** Write every byte or fail; a zero-progress write counts as a storage failure. */
+export function writeAll(fd, data) {
+  let offset = 0;
+  while (offset < data.length) {
+    const written = fs.writeSync(fd, data, offset, data.length - offset);
+    if (!(written > 0)) throw fault("storage");
+    offset += written;
+  }
+}
+
 /** Durable fail-closed latch outside the disposable clip directory. */
 export function armClipSafety(rtc, root, enabled) {
   const file = path.join(root, "playback-safety.json");
@@ -36,14 +46,25 @@ export function armClipSafety(rtc, root, enabled) {
   }
   const save = (value) => {
     const temp = path.join(root, `playback-safety-${randomUUID()}.tmp`);
-    const fd = fs.openSync(temp, "wx", 0o600);
+    let published = false;
     try {
-      fs.writeFileSync(fd, JSON.stringify({ unresolved: value }));
-      fs.fsyncSync(fd);
+      const fd = fs.openSync(temp, "wx", 0o600);
+      try {
+        fs.writeFileSync(fd, JSON.stringify({ unresolved: value }));
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(temp, file);
+      published = true;
     } finally {
-      fs.closeSync(fd);
+      // An unpublished temporary marker is never left outside the clip quota.
+      if (!published) {
+        try {
+          fs.rmSync(temp, { force: true });
+        } catch {}
+      }
     }
-    fs.renameSync(temp, file);
     let dir;
     try {
       dir = fs.openSync(root, "r");
@@ -226,14 +247,15 @@ export function createClipJobs({
           if (j.controller.signal.aborted) throw fault("station_error");
           try {
             room(data.length);
-            fs.writeSync(fd, data);
+            writeAll(fd, data);
             first ??= monotonic();
             latest = monotonic();
             frames++;
             j.pulledMs = Math.min(j.expectedMs, Math.round(latest - first));
           } catch (e) {
             writeFailed = true;
-            throw e;
+            // A local write failure is storage, whether or not the SDK rethrows it.
+            throw clipReasons.includes(e?.reason) ? e : fault("storage");
           }
         },
       });
