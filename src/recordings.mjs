@@ -97,6 +97,10 @@ export function createRecordings(
   let liveRequests = 0;
   const playbackEnabled = () =>
     enabled() && ctx.cfg.recordings?.playback !== false && typeof ctx.eufy.pullRecordingClip === "function";
+  const playbackAllowed = (cameraId) =>
+    (ctx.cfg.recordings?.playbackModels ?? ["T8425", "T8426"]).includes(
+      scope?.cameras.find((c) => c.cameraId === cameraId)?.model,
+    );
   const clips = createClipJobs({
     ...clipOptions,
     root: path.join(ctx.cfg.recordings?.root ?? "/data/recordings", "clips"),
@@ -1037,6 +1041,7 @@ export function createRecordings(
                   : r.coverEvicted
                     ? "evicted"
                     : "not_requested",
+            playbackAllowed(r.cameraId),
           ),
         ),
         truncated,
@@ -1121,6 +1126,7 @@ export function createRecordings(
       const row = store.row(args.cameraId, args.eventId);
       const selector = row && safePlaybackSelector(row.playbackSelector, row, scope, store.key);
       const selection =
+        playbackAllowed(args.cameraId) &&
         scopeValid &&
         ctx.state.flags.ready &&
         !ctx.state.flags.sessionLost &&

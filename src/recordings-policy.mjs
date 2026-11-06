@@ -98,7 +98,7 @@ export function recordingEnrollment(records, conflicts = []) {
   if (new Set(cameras.map((r) => r.channel)).size !== cameras.length) return null;
   return {
     stationSn: station,
-    cameras: cameras.map((r) => ({ sn: r.sn, name: r.name.trim() })),
+    cameras: cameras.map((r) => ({ sn: r.sn, name: r.name.trim(), model: r.model })),
   };
 }
 

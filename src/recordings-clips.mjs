@@ -31,51 +31,9 @@ export function writeAll(fd, data) {
   }
 }
 
-/** Durable fail-closed latch outside the disposable clip directory. */
-export function armClipSafety(rtc, root, enabled) {
-  const file = path.join(root, "playback-safety.json");
-  let unresolved = false;
-  try {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 64) throw fault("storage");
-    const value = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (typeof value.unresolved !== "boolean" || Object.keys(value).join() !== "unresolved") throw fault("storage");
-    unresolved = value.unresolved;
-  } catch (e) {
-    if (e.code !== "ENOENT") unresolved = true;
-  }
-  const save = (value) => {
-    const temp = path.join(root, `playback-safety-${randomUUID()}.tmp`);
-    let published = false;
-    try {
-      const fd = fs.openSync(temp, "wx", 0o600);
-      try {
-        fs.writeFileSync(fd, JSON.stringify({ unresolved: value }));
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-      fs.renameSync(temp, file);
-      published = true;
-    } finally {
-      // An unpublished temporary marker is never left outside the clip quota.
-      if (!published) {
-        try {
-          fs.rmSync(temp, { force: true });
-        } catch {}
-      }
-    }
-    let dir;
-    try {
-      dir = fs.openSync(root, "r");
-      fs.fsyncSync(dir);
-    } catch (e) {
-      if (!["EINVAL", "EPERM", "EISDIR", "ENOTSUP", "EACCES"].includes(e.code)) throw e;
-    } finally {
-      if (dir !== undefined) fs.closeSync(dir);
-    }
-  };
-  rtc.configurePlaybackSafety?.(unresolved, save, enabled);
+/** Clip safety is process-local; existing marker files are deliberately untouched and ignored. */
+export function armClipSafety(rtc, _root, enabled) {
+  rtc.configurePlaybackSafety?.(false, () => {}, enabled);
 }
 
 /** Duration-bound conversion settles only after process close, including cancellation and forced termination. */
@@ -159,6 +117,71 @@ export function convertClip({
   });
 }
 
+const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
+const finite = (value, allowed, fallback = "unknown") => (allowed.includes(value) ? value : fallback);
+/** Closed vocabulary and scalar counts only; receipt authority and payloads never enter diagnostics. */
+function clipEvidence(receipt = {}) {
+  const reasons = [
+    "native",
+    "header",
+    "flags",
+    "limits",
+    "metadata",
+    "conflict",
+    "expiry",
+    "zstd-header",
+    "zstd-content-size",
+    "zstd-window",
+    "zstd-structure",
+    "zstd-decoder",
+    "portal-header",
+    "extent",
+    "channel",
+    "selector",
+    "command",
+    "baseline",
+    "wrong_route",
+  ];
+  return {
+    captureOutcome: finite(receipt.captureOutcome, [
+      "not_admitted",
+      "time_refused",
+      "start_refused",
+      "storage_failed",
+      "begin_time_refused",
+      "eof",
+      "capped",
+      "capped_wrong_route",
+      "no_media",
+      "invalid_media",
+      "transport_mismatch",
+      "preempted",
+      "owner_changed",
+      "timeout",
+    ]),
+    startAcknowledged: receipt.startAcknowledged === true,
+    ingressVideoFrames: count(receipt.ingressVideoFrames),
+    ingressAudioFrames: count(receipt.ingressAudioFrames),
+    rejectedByReason: Object.fromEntries(
+      reasons.filter((r) => count(receipt.rejectedByReason?.[r])).map((r) => [r, count(receipt.rejectedByReason[r])]),
+    ),
+    cessationOutcome: finite(receipt.cessationOutcome, [
+      "not_started",
+      "ceased",
+      "media_continues",
+      "cessation_unknown",
+    ]),
+    releaseOutcome: finite(receipt.releaseOutcome, [
+      "not_started",
+      "release_confirmed",
+      "stop_unconfirmed",
+      "release_unknown",
+    ]),
+    reconnectOutcome: finite(receipt.reconnectOutcome, ["not_needed", "connected", "failed", "timed_out"]),
+    reconnectDurationMs: count(receipt.reconnectDurationMs),
+  };
+}
+
 /** One FIFO worker owns station ingress, release, conversion and temporary storage. */
 export function createClipJobs({
   root,
@@ -181,6 +204,18 @@ export function createClipJobs({
     loaded = false,
     storageFailed = false,
     last = null;
+  const counters = {
+    jobs: 0,
+    startAcknowledged: 0,
+    ingressVideoFrames: 0,
+    ingressAudioFrames: 0,
+    rejectedByReason: {},
+    captureOutcomes: {},
+    cessationOutcomes: {},
+    releaseOutcomes: {},
+    reconnectOutcomes: {},
+    reconnectDurationMs: 0,
+  };
   const key = (c, e) => `${c}/${e}`;
   const view = (j) => ({
     state: j?.state ?? "idle",
@@ -227,7 +262,8 @@ export function createClipJobs({
       convertMs = 0,
       frames = 0,
       first,
-      latest;
+      latest,
+      evidence = clipEvidence();
     const start = monotonic();
     try {
       if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
@@ -259,6 +295,7 @@ export function createClipJobs({
           }
         },
       });
+      evidence = clipEvidence(receipt);
       pullMs = Math.round(monotonic() - start);
       fs.closeSync(fd);
       fd = undefined;
@@ -333,7 +370,22 @@ export function createClipJobs({
         reason,
       );
     } finally {
-      last = { pullMs, convertMs, bytes: j.bytes, audioIncluded: false };
+      last = { pullMs, convertMs, bytes: j.bytes, audioIncluded: false, ...evidence };
+      counters.jobs++;
+      for (const name of ["startAcknowledged", "ingressVideoFrames", "ingressAudioFrames", "reconnectDurationMs"])
+        counters[name] = Math.min(Number.MAX_SAFE_INTEGER, counters[name] + Number(evidence[name]));
+      for (const [field, bucket] of [
+        ["captureOutcome", "captureOutcomes"],
+        ["cessationOutcome", "cessationOutcomes"],
+        ["releaseOutcome", "releaseOutcomes"],
+        ["reconnectOutcome", "reconnectOutcomes"],
+      ])
+        counters[bucket][evidence[field]] = (counters[bucket][evidence[field]] ?? 0) + 1;
+      for (const [reason, count] of Object.entries(evidence.rejectedByReason))
+        counters.rejectedByReason[reason] = Math.min(
+          Number.MAX_SAFE_INTEGER,
+          (counters.rejectedByReason[reason] ?? 0) + count,
+        );
       active = null;
       kick();
     }
@@ -385,6 +437,7 @@ export function createClipJobs({
       }
     },
     prepare(cameraId, eventId, selection) {
+      if (!selection) return { clip: { ...view(), state: "refused", reason: "not_found" } };
       const id = key(cameraId, eventId);
       if (loaded && !storageFailed)
         try {
@@ -463,7 +516,6 @@ export function createClipJobs({
         const j = active;
         abort(j, "live_view");
         await j.done;
-        if (j.reason === "cleanup_uncertain") throw fault("cleanup_uncertain");
       }
     },
     busy: () => !!active,
@@ -499,7 +551,8 @@ export function createClipJobs({
         reasons: Object.fromEntries(
           clipReasons.map((r) => [r, [...jobs.values()].filter((j) => j.reason === r).length]),
         ),
-        lastJob: last,
+        lastJob: last && structuredClone(last),
+        counters: structuredClone(counters),
         audioIncluded: false,
       };
     },

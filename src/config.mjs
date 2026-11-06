@@ -100,6 +100,10 @@ export function loadConfig(env = process.env) {
     recordings: {
       enabled: env.RECORDINGS_ENABLED == null ? true : truthy(env.RECORDINGS_ENABLED),
       playback: env.RECORDINGS_PLAYBACK == null ? true : truthy(env.RECORDINGS_PLAYBACK),
+      playbackModels: (env.RECORDINGS_PLAYBACK_MODELS ?? "T8425,T8426")
+        .split(",")
+        .map((v) => v.trim().toUpperCase())
+        .filter(Boolean),
       background: env.RECORDINGS_BACKGROUND == null ? true : truthy(env.RECORDINGS_BACKGROUND),
       root: env.RECORDINGS_ROOT || "/data/recordings",
     },

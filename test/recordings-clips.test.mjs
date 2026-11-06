@@ -12,7 +12,7 @@ import {
   convertClip,
   writeAll,
 } from "../src/recordings-clips.mjs";
-import { temporary, until, harness, seed, row, tick } from "./helpers/recordings-fixtures.mjs";
+import { temporary, until, harness, seed, row, tick, inventory } from "./helpers/recordings-fixtures.mjs";
 import { loadConfig } from "../src/config.mjs";
 
 const clean = {
@@ -299,7 +299,7 @@ test("live view cancels the pull and queued jobs, awaiting cleanup; new work is 
   assert.deepEqual(fs.readdirSync(f.root), []);
 });
 
-test("uncertain release prevents conversion and prevents live handoff", async (t) => {
+test("uncertain release prevents conversion and permits live handoff after recovery", async (t) => {
   const f = await fixture(t, {
     pull: async (_, o) => {
       o.video(Buffer.alloc(4));
@@ -310,7 +310,7 @@ test("uncertain release prevents conversion and prevents live handoff", async (t
   });
   f.jobs.prepare("camera", "a", selection);
   await until(() => state(f, "a").state === "pulling");
-  await assert.rejects(f.jobs.liveStart(), { reason: "cleanup_uncertain" });
+  await f.jobs.liveStart();
   assert.equal(state(f, "a").state, "failed");
   assert.equal(state(f, "a").reason, "cleanup_uncertain");
 });
@@ -429,26 +429,32 @@ test("HTTP serves exact 206 bytes and 416, releasing read pins", async (t) => {
   assert.ok(releases >= 2);
 });
 
-test("durable safety marker is fail-closed on malformed state and preserves uncertainty with playback disabled", async (t) => {
+test("stale and malformed safety markers are ignored without reads, writes or removal", async (t) => {
   const root = await temporary(t);
-  let initial, save, enabled;
-  const rtc = {
-    configurePlaybackSafety(v, fn, armed) {
-      initial = v;
-      save = fn;
-      enabled = armed;
-    },
-  };
-  armClipSafety(rtc, root, true);
-  assert.equal(initial, false);
-  assert.equal(enabled, true);
-  save(true);
-  armClipSafety(rtc, root, false);
-  assert.equal(initial, true);
-  assert.equal(enabled, false);
-  fs.writeFileSync(path.join(root, "playback-safety.json"), "malformed");
-  armClipSafety(rtc, root, true);
-  assert.equal(initial, true);
+  const file = path.join(root, "playback-safety.json");
+  for (const content of [JSON.stringify({ unresolved: true }), "malformed"]) {
+    fs.writeFileSync(file, content);
+    for (const enabled of [true, false]) {
+      let initial, save, armed;
+      armClipSafety(
+        {
+          configurePlaybackSafety(v, fn, value) {
+            initial = v;
+            save = fn;
+            armed = value;
+          },
+        },
+        root,
+        enabled,
+      );
+      assert.equal(initial, false);
+      assert.equal(armed, enabled);
+      save(true);
+      save(false);
+      assert.equal(fs.readFileSync(file, "utf8"), content);
+      assert.deepEqual(fs.readdirSync(root), ["playback-safety.json"]);
+    }
+  }
 });
 
 test("public API validates fields and opaque IDs; playback capability follows SDK availability and config", async (t) => {
@@ -556,24 +562,126 @@ test("a disk-full pull fails as storage and removes its spool", async (t) => {
   assert.deepEqual(fs.readdirSync(f.root), []);
 });
 
-test("failed marker writes remove the unpublished temporary file at every stage", async (t) => {
-  for (const stage of ["writeFileSync", "fsyncSync", "renameSync"]) {
-    const root = await temporary(t);
-    let save;
-    armClipSafety({ configurePlaybackSafety: (_v, fn) => (save = fn) }, root, true);
-    const real = fs[stage];
-    const mock = t.mock.method(fs, stage, (...args) => {
-      if (stage === "renameSync" || typeof args[0] === "number") {
-        throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
-      }
-      return real(...args);
-    });
-    assert.throws(() => save(true), { code: "ENOSPC" });
-    mock.mock.restore();
-    assert.deepEqual(
-      fs.readdirSync(root).filter((name) => name.endsWith(".tmp")),
-      [],
-      stage,
-    );
+test("clip safety arming has no filesystem dependency", () => {
+  let save;
+  armClipSafety(
+    {
+      configurePlaybackSafety: (value, fn) => {
+        assert.equal(value, false);
+        save = fn;
+      },
+    },
+    "missing-directory",
+    true,
+  );
+  assert.doesNotThrow(() => save(true));
+});
+
+for (const [model, models, allowed] of [
+  ["T8425", undefined, true],
+  ["T8426", undefined, true],
+  ["T8170", undefined, false],
+  [undefined, undefined, false],
+  ["T8425", [], false],
+  ["T8170", ["T8170"], true],
+])
+  test(`model gate list and prepare: ${model ?? "missing"}, ${JSON.stringify(models)}`, async (t) => {
+    const h = await harness(t);
+    h.ctx.cfg.recordings.playbackModels = models;
+    await h.manager.syncInventory(inventory.map((r) => (r.isCamera ? { ...r, model } : r)));
+    await seed(h);
+    let pulls = 0;
+    h.eufy.pullRecordingClip = async () => {
+      pulls++;
+      return clean;
+    };
+    const event = h.catalog().events[0];
+    assert.equal(event.playable, allowed);
+    const result = h.manager.clipPrepare({ cameraId: h.cameraId, eventId: event.eventId });
+    if (allowed) {
+      assert.equal(result.clip.state, "queued");
+      await tick();
+      assert.equal(pulls, 1);
+    } else {
+      assert.equal(result.clip.reason, "not_found");
+      await tick();
+      assert.equal(pulls, 0);
+    }
+  });
+
+test("playback model environment default, override and explicit empty list", () => {
+  assert.deepEqual(loadConfig({}).cfg.recordings.playbackModels, ["T8425", "T8426"]);
+  assert.deepEqual(loadConfig({ RECORDINGS_PLAYBACK_MODELS: " t8170, T8426 ,," }).cfg.recordings.playbackModels, [
+    "T8170",
+    "T8426",
+  ]);
+  assert.deepEqual(loadConfig({ RECORDINGS_PLAYBACK_MODELS: "" }).cfg.recordings.playbackModels, []);
+});
+
+test("failed clip exposes only finite receipt evidence and cumulative counts", async (t) => {
+  const f = await fixture(t, {
+    pull: async () => ({
+      ...clean,
+      captureOutcome: "no_media",
+      startAcknowledged: false,
+      ingressVideoFrames: 3,
+      ingressAudioFrames: 2,
+      rejectedByReason: { metadata: 2, "zstd-window": 1, unexpected: 10 },
+      cessationOutcome: "cessation_unknown",
+      releaseOutcome: "stop_unconfirmed",
+      latchCleared: false,
+      reconnectOutcome: "connected",
+      reconnectDurationMs: 123,
+    }),
+  });
+  for (const event of ["a", "b"]) {
+    f.jobs.prepare("camera", event, selection);
+    await until(() => state(f, event).state === "failed");
   }
+  const d = f.jobs.diagnostics();
+  assert.equal(state(f, "a").reason, "cleanup_uncertain");
+  assert.deepEqual(d.lastJob, {
+    pullMs: d.lastJob.pullMs,
+    convertMs: 0,
+    bytes: 0,
+    audioIncluded: false,
+    captureOutcome: "no_media",
+    startAcknowledged: false,
+    ingressVideoFrames: 3,
+    ingressAudioFrames: 2,
+    rejectedByReason: { metadata: 2, "zstd-window": 1 },
+    cessationOutcome: "cessation_unknown",
+    releaseOutcome: "stop_unconfirmed",
+    reconnectOutcome: "connected",
+    reconnectDurationMs: 123,
+  });
+  assert.equal(d.counters.jobs, 2);
+  assert.equal(d.counters.ingressVideoFrames, 6);
+  assert.equal(d.counters.ingressAudioFrames, 4);
+  assert.equal(d.counters.rejectedByReason.metadata, 4);
+  assert.equal(d.counters.captureOutcomes.no_media, 2);
+  assert.equal(d.counters.releaseOutcomes.stop_unconfirmed, 2);
+  assert.equal(d.counters.cessationOutcomes.cessation_unknown, 2);
+  assert.equal(d.counters.reconnectOutcomes.connected, 2);
+  assert.equal(d.counters.reconnectDurationMs, 246);
+  d.counters.jobs = -1;
+  assert.equal(f.jobs.diagnostics().counters.jobs, 2);
+});
+
+test("model revocation refuses prepare even when a ready job exists", async (t) => {
+  const h = await harness(t, {
+    clipOptions: { convert: async ({ output }) => fs.writeFileSync(output, Buffer.alloc(1024)) },
+  });
+  await seed(h);
+  h.eufy.pullRecordingClip = async (_, __, opts) => {
+    opts.video(Buffer.alloc(4));
+    opts.video(Buffer.alloc(4));
+    return clean;
+  };
+  const args = { cameraId: h.cameraId, eventId: h.catalog().events[0].eventId };
+  h.manager.clipPrepare(args);
+  await until(() => h.manager.clipStatus(args).clip.state === "ready");
+  h.ctx.cfg.recordings.playbackModels = [];
+  assert.equal(h.catalog().events[0].playable, false);
+  assert.equal(h.manager.clipPrepare(args).clip.reason, "not_found");
 });

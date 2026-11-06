@@ -144,7 +144,6 @@ Please open source issues in this fork, using a redacted description or syntheti
 
 This replaces the earlier review.7 candidate with review.9 input `681efd9` (implementation `d4335b9`, on review.8 `f6a59d9`). Runtime source is unchanged. Includes bounded pending acceptance for eligible correlated floodlight late replies with authoritative correction, supported S1 camera sirens, standard doorbell ring events and faster demand-only live-view admission, alongside the battery stream fix and native relay. The add-on relay option defaults to false; command keepalive remains 29000 independently. Package versions are SDK `0.2.1-s1.experimental.6` and bridge `0.3.1-s1.experimental.6`. Earlier candidate status statements above are historical. Original licenses and attribution remain. This is local packaging; publication and final device/soak qualification are pending.
 
-
 ## Historical input documentation and modification notices
 
 > Modified for genomez S1 experimental source preview, 2026-10-14.
@@ -171,3 +170,12 @@ Please open source issues in this fork, using a redacted description or syntheti
 ## Experimental.6 package refresh, 2026-10-17
 
 This replaces the earlier review.7 candidate with review.9 input `681efd9` (implementation `d4335b9`, on review.8 `f6a59d9`). Runtime source is unchanged. Includes bounded pending acceptance for eligible correlated floodlight late replies with authoritative correction, supported S1 camera sirens, standard doorbell ring events and faster demand-only live-view admission, alongside the battery stream fix and native relay. The add-on relay option defaults to false; command keepalive remains 29000 independently. Package versions are SDK `0.2.1-s1.experimental.6` and bridge `0.3.1-s1.experimental.6`. Earlier candidate status statements above are historical. Original licenses and attribution remain. This is local packaging; publication and final device/soak qualification are pending.
+
+Recordings playback is limited to camera models T8425 and T8426 by default. Set
+`RECORDINGS_PLAYBACK_MODELS` to a comma-separated model list to override this policy;
+an explicitly empty value disables playback for every model. Unsupported models
+remain browsable, report `playable: false`, and clip preparation returns `not_found`.
+Clip cleanup uncertainty triggers a bounded in-memory station reconnect. Existing
+`playback-safety.json` files are ignored and left untouched. Clip diagnostics expose
+finite capture, cessation, release and reconnect outcomes, ingress media counts,
+rejection counts by reason, and reconnect duration, with cumulative counters.

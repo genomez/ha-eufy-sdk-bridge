@@ -75,7 +75,7 @@ export function validRecordingJpeg(b) {
   return false;
 }
 
-export function publicRecording(row, coverState = "not_requested") {
+export function publicRecording(row, coverState = "not_requested", playbackAllowed = false) {
   const timeStatus = ["valid", "unknown_format", "ambiguous", "invalid"].includes(row.timeStatus)
     ? row.timeStatus
     : "invalid";
@@ -106,7 +106,7 @@ export function publicRecording(row, coverState = "not_requested") {
     stationPresence: row.stationPresence === "seen_in_latest_window" ? "seen_in_latest_window" : "not_in_latest_window",
     coverState,
     coverRevision: hex(row.cover?.sha256) ? row.cover.sha256.slice(0, 22) : null,
-    playable: !!row.playbackSelector,
+    playable: playbackAllowed && !!row.playbackSelector,
   };
 }
 const newest = (a, b) =>
