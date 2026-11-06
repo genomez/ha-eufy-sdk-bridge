@@ -794,7 +794,7 @@ again and keeps opaque folder links under `recordings.folders` in its diagnostic
 Event titles omit type labels; camera folder titles use only the trimmed name,
 with incomplete-history and cache status in an information child.
 
-`recordings.test_reread` is a test-only load generator for pacing ramps. `{ "cmd": "recordings.test_reread", "enabled": true, "minutes": 15 }` makes background prefetch re-read already cached covers (least recently re-read first, after any uncached rows) at the current pacing, without replacing or penalizing the cached files. Reads are recorded in the current `coverReads` bucket. It is process-local, off at start-up, and switches itself off after `minutes` (default 60); `enabled: false` stops it at once. Diagnostics report `recordings.background.testReread` as `{ active, untilMs, reads, failed }`.
+`recordings.test_reread` is a test-only load generator for pacing ramps. `{ "cmd": "recordings.test_reread", "enabled": true, "minutes": 15 }` makes background prefetch re-read already cached covers (least recently re-read first, after any uncached rows) at the current pacing, without replacing or penalizing the cached files. Reads are recorded in the current `coverReads` bucket. It is process-local, off at start-up, and switches itself off after `minutes` (default 60, greater than zero and at most 1440, with finite wall-clock and monotonic deadlines); `enabled: false` stops it at once. Diagnostics report `recordings.background.testReread` as `{ active, untilMs, reads, failed }`.
 
 ## Save-first recording clips (3p)
 
@@ -838,6 +838,9 @@ preparation returns `refused/not_found`; status before any prepare is `idle/none
 Duration and expiry are null until known; bytes describe the ready MP4 only.
 Progress uses monotonic video-arrival elapsed time, bounded by catalog duration.
 Status polling does not extend expiry.
+`disabled` means playback is disabled, the SDK lacks playback support, or the
+clip worker has stopped. A marker-storage failure before any start is dispatched
+returns `failed/storage` without retaining the SDK's in-memory live-view latch.
 
 One event has one in-memory job. Repeated prepare during queued/pulling/converting
 or ready reuses that job and never opens another stream. An explicit prepare
@@ -871,14 +874,26 @@ Capture ends at the station EOF or the budget; **only EOF plus confirmed release
 clean ingress and a random-access first video frame can produce ready**. A cutoff
 without EOF returns `too_long` and deletes the partial file. This is intentionally
 stricter than publishing duration-capped material as a complete clip.
+Streaming ingress admits 8 MiB and 8192 native messages per rounded-up capture
+second (minimum 16 MiB and 32768 messages, maximum 2 GiB of native bytes).
+Concurrent reassembly retains the existing eight-frame/16-MiB bounds; the
+short diagnostic probe retains its separate 4-MiB/16384-message cutoff.
 
 FFmpeg runs with an argument array and no shell. It decodes HEVC, encodes H.264
 with libx264/veryfast, uses yuv420p, reduces width only above 1920 (or by one pixel
 for an odd width), and finalizes a faststart MP4. Audio is **not included** because
 the station audio frames do not yet identify a qualified codec/configuration.
-Frame rate and duration are inferred from monotonic video arrival cadence;
-station media timestamps and variable-frame-rate fidelity remain unqualified.
-Conversion errors and output-size cutoffs never publish a clip.
+Frames are spread uniformly over the validated catalog duration, independent of
+network delivery cadence. PTCS frame IDs use a millisecond clock in the portal's
+packetizer, but the station's playback clock semantics are unqualified and the
+SDK video callback carries bytes only. Catalog timing therefore avoids treating
+burst transfer time as media duration; original variable-frame-rate fidelity
+remains unqualified. Conversion has a deadline of six times catalog duration
+with a two-minute floor (capped at the platform timer maximum). Timeout or
+cancellation sends SIGTERM, escalating to SIGKILL after five seconds. The worker
+waits for process close before cleaning files or resuming background reads;
+timeout reports `convert_failed`. Conversion errors and output-size cutoffs
+never publish a clip.
 
 `GET /recordings/v1/clips/<cameraId>/<eventId>.mp4` uses the identical host HTTP
 policy boundary as covers. It never starts a station operation and works offline

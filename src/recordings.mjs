@@ -871,10 +871,19 @@ export function createRecordings(
       fields(args, ["enabled", "minutes"]);
       guard();
       const minutes = args.minutes ?? 60;
-      if (typeof args.enabled !== "boolean" || typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0)
+      if (
+        typeof args.enabled !== "boolean" ||
+        typeof minutes !== "number" ||
+        !Number.isFinite(minutes) ||
+        minutes <= 0 ||
+        minutes > 1440
+      )
         throw failure("invalid");
-      testReread.untilMono = args.enabled ? mono() + minutes * 60_000 : -Infinity;
-      testReread.untilMs = args.enabled ? now() + minutes * 60_000 : null;
+      const untilMono = mono() + minutes * 60_000;
+      const untilMs = now() + minutes * 60_000;
+      if (!Number.isFinite(untilMono) || !Number.isFinite(untilMs)) throw failure("invalid");
+      testReread.untilMono = args.enabled ? untilMono : -Infinity;
+      testReread.untilMs = args.enabled ? untilMs : null;
       if (args.enabled) lastTestRead.clear();
       armBackground();
       return { testReread: testRereadStatus() };

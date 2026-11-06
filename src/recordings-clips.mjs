@@ -57,11 +57,24 @@ export function armClipSafety(rtc, root, enabled) {
   rtc.configurePlaybackSafety?.(unresolved, save, enabled);
 }
 
-/** Argument-vector invocation; inputs are bridge-owned random temporary names. Audio is unqualified. */
-export function convertClip({ input, output, frames, durationMs, maxBytes, signal, ffmpeg = "/usr/bin/ffmpeg" }) {
+/** Duration-bound conversion settles only after process close, including cancellation and forced termination. */
+export function convertClip({
+  input,
+  output,
+  frames,
+  durationMs,
+  maxBytes,
+  signal,
+  ffmpeg = "/usr/bin/ffmpeg",
+  spawnProcess = spawn,
+}) {
   return new Promise((resolve, reject) => {
-    let failed = false;
-    const child = spawn(
+    if (signal?.aborted || !Number.isFinite(durationMs) || durationMs <= 0) return reject(fault("convert_failed"));
+    let failed = false,
+      terminating = false,
+      closed = false,
+      escalation;
+    const child = spawnProcess(
       ffmpeg,
       [
         "-nostdin",
@@ -97,12 +110,31 @@ export function convertClip({ input, output, frames, durationMs, maxBytes, signa
         "mp4",
         output,
       ],
-      { shell: false, windowsHide: true, stdio: "ignore", signal },
+      { shell: false, windowsHide: true, stdio: "ignore" },
     );
+    const terminate = () => {
+      if (closed || terminating) return;
+      terminating = true;
+      failed = true;
+      child.kill("SIGTERM");
+      escalation = setTimeout(() => {
+        if (!closed) child.kill("SIGKILL");
+      }, 5000);
+    };
+    const watchdog = setTimeout(terminate, Math.min(2_147_483_647, Math.max(120_000, durationMs * 6)));
+    signal?.addEventListener("abort", terminate, { once: true });
+    if (signal?.aborted) terminate();
     child.once("error", () => {
       failed = true;
     });
-    child.once("close", (code) => (code === 0 && !failed ? resolve() : reject(fault("convert_failed"))));
+    child.once("close", (code) => {
+      closed = true;
+      clearTimeout(watchdog);
+      clearTimeout(escalation);
+      signal?.removeEventListener("abort", terminate);
+      if (code === 0 && !failed) resolve();
+      else reject(fault("convert_failed"));
+    });
   });
 }
 
@@ -217,6 +249,7 @@ export function createClipJobs({
         throw fault("cleanup_uncertain");
       if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
       if (writeFailed) throw fault("storage");
+      if (!receipt.startAttempted && receipt.latchPersistenceFailed) throw fault("storage");
       if (receipt.admissionGate)
         throw fault(receipt.admissionGate === 25 || receipt.admissionGate === 26 ? "too_long" : "owner_unavailable");
       if (
@@ -228,7 +261,8 @@ export function createClipJobs({
         throw fault("station_error");
       // A budget cutoff without EOF cannot establish that the full clip arrived.
       if (receipt.captureOutcome !== "eof") throw fault("too_long");
-      j.durationMs = Math.max(1, Math.round(((latest - first) * frames) / (frames - 1)));
+      if (!Number.isSafeInteger(j.expectedMs) || j.expectedMs <= 0) throw fault("station_error");
+      j.durationMs = j.expectedMs;
       const reserve = Math.min(cap, Math.max(16 * 1024 ** 2, fs.statSync(j.input).size * 2));
       const maxBytes = room(reserve) - 8 * 1024 ** 2;
       if (maxBytes <= 0) throw fault("storage");

@@ -10,6 +10,17 @@ import {
 import { classifyPlaybackHealth } from "../src/event-playback-health.mjs";
 
 const pins = { sdkSha256: "a".repeat(64), bridgeSha256: "b".repeat(64) };
+test("receipt preserves the finite pre-dispatch storage failure reason", () => {
+  const receipt = sanitizePlaybackReceipt({
+    captureOutcome: "storage_failed",
+    startAttempted: false,
+    latchPersistenceFailed: true,
+  });
+  assert.equal(receipt.captureOutcome, "storage_failed");
+  assert.equal(receipt.startAttempted, false);
+  assert.equal(receipt.latchPersistenceFailed, true);
+  assert.equal(receipt.latchRetained, false);
+});
 const grant = (now) => ({
   schema: 1,
   purpose: "event-playback-test3",

@@ -176,6 +176,11 @@ test("test re-read loads cached covers without replacing them and switches itsel
   assert.equal(h.calls.cover.length, 2, "nothing to read once cached");
   assert.throws(() => h.manager.testReread({ enabled: "yes" }), { code: "recordings_invalid" });
   assert.throws(() => h.manager.testReread({ enabled: true, minutes: 0 }), { code: "recordings_invalid" });
+  for (const minutes of [1441, 1e308, Infinity, NaN])
+    assert.throws(() => h.manager.testReread({ enabled: true, minutes }), { code: "recordings_invalid" });
+  const max = h.manager.testReread({ enabled: true, minutes: 1440 }).testReread;
+  assert.equal(max.untilMs, h.clocks.now() + 1440 * 60_000);
+  assert.equal(Number.isFinite(max.untilMs), true);
   assert.equal(h.manager.testReread({ enabled: true, minutes: 1 }).testReread.active, true);
   for (let n = 0; n < 40; n++) await step(1);
   const status = h.manager.diagnostics().background.testReread;
@@ -188,4 +193,11 @@ test("test re-read loads cached covers without replacing them and switches itsel
   assert.equal(h.manager.diagnostics().background.testReread.active, false);
   for (let n = 0; n < 20; n++) await step(1_000);
   assert.equal(h.calls.cover.length, calls, "auto-off stops re-reads");
+});
+
+test("test re-read rejects a non-finite computed deadline without enabling reads", async (t) => {
+  const h = await harness(t);
+  h.clocks.wallJump(Infinity);
+  assert.throws(() => h.manager.testReread({ enabled: true, minutes: 1 }), { code: "recordings_invalid" });
+  assert.equal(h.manager.diagnostics().background.testReread.active, false);
 });

@@ -10,6 +10,7 @@ const outcomes = [
   "not_admitted",
   "time_refused",
   "start_refused",
+  "storage_failed",
   "begin_time_refused",
   "eof",
   "capped",

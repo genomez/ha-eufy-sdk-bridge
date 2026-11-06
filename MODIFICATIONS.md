@@ -507,3 +507,14 @@ Attempt rows add `lastByteAtMs` (latest chunk stamp, null before bytes), `maxGap
 (bounded count of gaps at least the threshold, including one trailing gap at finish).
 Gaps are measured at the bridge output; a reader that stops reading can also create one.
 Only diagnostics and focused tests change; stream lifecycle and existing outcomes are unchanged.
+
+## Save-first playback review fixes, 2026-11-06
+
+Conversion uses a clip-duration watchdog with a two-minute floor, SIGTERM and
+five-second SIGKILL escalation, retaining files and the worker until process
+close. Validated catalog duration supplies constant-rate video timing because
+the SDK byte callback has no qualified media clock. Pre-dispatch marker storage
+failures report storage without implying uncertain station cleanup. Test re-read
+minutes are capped at 1440 and both computed deadlines must be finite. Public
+playback capability and playable-row shapes are unchanged; disabled is documented
+in the WebSocket protocol. Qualification is offline and synthetic only.

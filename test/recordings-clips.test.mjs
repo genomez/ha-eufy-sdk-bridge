@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
-import { createClipJobs, clipRange, serveClip, armClipSafety } from "../src/recordings-clips.mjs";
+import { EventEmitter } from "node:events";
+import { createClipJobs, clipRange, serveClip, armClipSafety, convertClip } from "../src/recordings-clips.mjs";
 import { temporary, until, harness, seed, row, tick } from "./helpers/recordings-fixtures.mjs";
 import { loadConfig } from "../src/config.mjs";
 
@@ -71,6 +72,144 @@ async function ready(f, e) {
   f.jobs.prepare("camera", e, selection);
   await until(() => state(f, e).state === "ready");
 }
+
+for (const durationMs of [10000, 60000])
+  test(`conversion watchdog scales with duration ${durationMs} and awaits close after escalation`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const child = new EventEmitter(),
+      kills = [];
+    child.kill = (signal) => kills.push(signal);
+    let settled = false;
+    const conversion = convertClip({
+      input: "synthetic.hevc",
+      output: "synthetic.mp4",
+      frames: 100,
+      durationMs,
+      maxBytes: 1024,
+      spawnProcess: () => child,
+    });
+    conversion.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    const rejected = assert.rejects(conversion, { reason: "convert_failed" });
+    t.mock.timers.tick(Math.max(120000, durationMs * 6) - 1);
+    assert.deepEqual(kills, []);
+    t.mock.timers.tick(1);
+    assert.deepEqual(kills, ["SIGTERM"]);
+    t.mock.timers.tick(4999);
+    assert.deepEqual(kills, ["SIGTERM"]);
+    t.mock.timers.tick(1);
+    assert.deepEqual(kills, ["SIGTERM", "SIGKILL"]);
+    await Promise.resolve();
+    assert.equal(settled, false);
+    child.emit("close", 0);
+    await rejected;
+  });
+
+test("conversion cancellation escalates and waits for close; successful exit disarms the watchdog", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const cancel of [false, true]) {
+    const child = new EventEmitter(),
+      kills = [],
+      controller = new AbortController();
+    child.kill = (signal) => kills.push(signal);
+    const conversion = convertClip({
+      input: "synthetic.hevc",
+      output: "synthetic.mp4",
+      frames: 100,
+      durationMs: 10000,
+      maxBytes: 1024,
+      signal: controller.signal,
+      spawnProcess: () => child,
+    });
+    const result = cancel ? assert.rejects(conversion, { reason: "convert_failed" }) : conversion;
+    if (cancel) {
+      controller.abort();
+      assert.deepEqual(kills, ["SIGTERM"]);
+      t.mock.timers.tick(5000);
+      assert.deepEqual(kills, ["SIGTERM", "SIGKILL"]);
+    }
+    child.emit("close", 0);
+    await result;
+    t.mock.timers.tick(360000);
+    assert.equal(kills.length, cancel ? 2 : 0);
+  }
+});
+
+test("timed-out conversion pins temporary files and the worker until process exit", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const child = new EventEmitter(),
+    kills = [];
+  child.kill = (signal) => kills.push(signal);
+  const f = await fixture(t, {
+    convert: (opts) => {
+      fs.writeFileSync(opts.output, "partial");
+      return convertClip({ ...opts, spawnProcess: () => child });
+    },
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => state(f, "a").state === "converting");
+  f.jobs.prepare("camera", "b", selection);
+  t.mock.timers.tick(120000);
+  t.mock.timers.tick(5000);
+  assert.deepEqual(kills, ["SIGTERM", "SIGKILL"]);
+  assert.equal(fs.readdirSync(f.root).length, 2);
+  assert.equal(f.jobs.busy(), true);
+  assert.equal(state(f, "b").state, "queued");
+  await f.jobs.cancel("camera", "b");
+  child.emit("close", null);
+  await until(() => state(f, "a").state === "failed");
+  assert.equal(state(f, "a").reason, "convert_failed");
+  assert.equal(f.jobs.busy(), false);
+  assert.deepEqual(fs.readdirSync(f.root), []);
+});
+
+test("burst delivery spreads video over catalog duration instead of arrival time", async (t) => {
+  let time = 0,
+    conversion;
+  const f = await fixture(t, {
+    monotonic: () => time,
+    pull: async (_, o) => {
+      for (let n = 0; n < 120; n++) {
+        time = (n * 5000) / 119;
+        o.video(Buffer.alloc(2));
+      }
+      return clean;
+    },
+    convert: async (opts) => {
+      conversion = opts;
+      fs.writeFileSync(opts.output, "mp4");
+    },
+  });
+  f.jobs.prepare("camera", "a", { selector: { expectedMs: 60000 } });
+  await until(() => state(f, "a").state === "ready");
+  assert.equal(conversion.durationMs, 60000);
+  assert.equal(conversion.frames, 120);
+  assert.equal(state(f, "a").durationMs, 60000);
+});
+
+test("pre-dispatch marker persistence failure reports storage without cleanup uncertainty", async (t) => {
+  const f = await fixture(t, {
+    pull: async () => ({
+      ...clean,
+      startAttempted: false,
+      latchPersistenceFailed: true,
+      captureOutcome: "storage_failed",
+      releaseOutcome: "not_started",
+      cessationOutcome: "not_started",
+    }),
+    convert: () => assert.fail("conversion after storage failure"),
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => state(f, "a").state === "failed");
+  assert.equal(state(f, "a").reason, "storage");
+  assert.deepEqual(fs.readdirSync(f.root), []);
+});
 
 test("one FIFO worker, event idempotency and finite public projections", async (t) => {
   const release = deferred(),
