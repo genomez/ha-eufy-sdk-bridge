@@ -3,15 +3,15 @@
   "version": "0.3.1-s1.experimental.12",
   "status": "local-build-unpublished",
   "published": false,
-  "exactInputCommit": "f16ce4730f0ad6aa8b096c5bd48937374bdc1397",
+  "exactInputCommit": "18e5a86bdbe827c465556d11c71b44641c04e288",
   "relayDefault": false,
   "keepaliveMs": 29000,
   "lightCorrectionDefault": false,
   "registryManifestDigest": null,
   "runtimeSourceRelease": null,
   "installationAcceptance": false,
-  "sdkSourceCommit": "a41836d52aecdb396bb64cc8b88cb9f820fc053f",
-  "sdkArtifactSha256": "4995b003b7062c8f6d3329fbb75cbda729e552ce968fe7d3dd782ae17040540f",
-  "sdkArtifactIntegrity": "sha512-5A1g3Pbiqgtt482JbOYhVaAOuuMOyyDMKWykcz9Y7822wpNeoWxyN4k0uaaXozjbxDuerl2r8T2iO+gUMjixog==",
-  "sdkRuntimeSha256": "46e5284c21e32123fb28ca977068ce1a3a8bc9c4d9b1aa237d2010fa723039cb"
+  "sdkSourceCommit": "853fa26ea9d6da017ba7668bb550bb3685795878",
+  "sdkArtifactSha256": "839338f1d569286dfa9a0b3a39544708f55fa6bbf8e4ab47b7c93097e04c221d",
+  "sdkArtifactIntegrity": "sha512-ZEm9yuHSh7juzof/Wd6U6+crDkrtvdlLT+DtM22JZvgWkkYFpF+NNkoeSeksWP+ShV3UH3FWaIa2uvAiHroOsQ==",
+  "sdkRuntimeSha256": "9a9cadcae7772f0c373d21d60c58a649c6acc0afb69074bd14646b1068e77410"
 }
