@@ -109,3 +109,41 @@ test("background ramp updates existing timers immediately and records API latenc
   const fresh = await harness(t);
   assert.deepEqual(fresh.manager.diagnostics().background.pacing, DEFAULT_PACING);
 });
+
+test("zero pacing backs off while not ready and after zero retry hints instead of spinning", async (t) => {
+  let hint = true;
+  const h = await harness(t, {
+    background: true,
+    cover: () => (hint ? { status: "deferred", reason: "busy", retryAfterMs: 0 } : { status: "ok", jpeg }),
+  });
+  await h.store.mergeCatalog(h.scope, [row(h.scope, 0), row(h.scope, 1)]);
+  h.manager.setPacing({ prefetchGap: 0, coverGap: 0, coverRate: 0, coverQuiet: 0 });
+  h.ctx.state.streaming.add("synthetic-camera");
+  const settle = async () => {
+    for (let n = 0; n < 4; n++) {
+      await tick();
+      await h.store.readCover("", "").catch(() => {});
+    }
+  };
+  for (let ms = 0; ms < 50; ms++) {
+    h.clocks.advance(1);
+    await settle();
+  }
+  assert.ok(h.manager.diagnostics().background.coverPrefetch.skippedPlayback <= 1);
+  assert.equal(h.calls.cover.length, 0);
+  h.ctx.state.streaming.clear();
+  h.clocks.advance(1_000);
+  await until(() => h.calls.cover.length === 1);
+  for (let ms = 0; ms < 50; ms++) {
+    h.clocks.advance(1);
+    await settle();
+  }
+  assert.equal(h.calls.cover.length, 1);
+  hint = false;
+  h.clocks.advance(1_000);
+  await until(() => h.manager.diagnostics().background.coverPrefetch.fetched === 1);
+  await settle();
+  // A successful zero-gap read schedules the next one on the next timer tick.
+  h.clocks.advance(1);
+  await until(() => h.manager.diagnostics().background.coverPrefetch.fetched === 2);
+});

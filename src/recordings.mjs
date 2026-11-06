@@ -261,17 +261,22 @@ export function createRecordings(
       nextCatalog = mono() + LIMITS.backgroundCatalogInterval;
       if (ready === "ready") requestCatalog("background");
     }
-    if (ready === "ready") prefetch();
+    const idle = !flight && !queued.length && !pendingPage,
+      due = idle && nextPrefetch <= mono() && !policy.coverWait();
+    const started = ready === "ready" && prefetch();
+    // A due prefetch that could not start waits at least 1 s (or the configured
+    // gap) instead of re-arming immediately, so zero-gap pacing never spins.
+    if (due && !started) nextPrefetch = mono() + Math.max(1_000, pacing.prefetchGap);
     armBackground();
   }
   function prefetch() {
-    if (flight || queued.length || pendingPage || nextPrefetch > mono() || policy.coverWait()) return;
+    if (flight || queued.length || pendingPage || nextPrefetch > mono() || policy.coverWait()) return false;
     const row = prefetchRows().find((r) => !negativeWait(r));
     if (
       !row ||
       !safeSelector(row.selector, { sourceKey: row.sourceKey, cameraSn: row.selector.cameraSn }, scope, store.key)
     )
-      return;
+      return false;
     const s = scope,
       generation = epoch,
       controller = new AbortController();
@@ -298,7 +303,7 @@ export function createRecordings(
         );
         if (!current(s, generation)) return;
         if (result.status === "deferred") {
-          nextPrefetch = mono() + Math.max(pacing.prefetchGap, result.retryAfterMs ?? 1_000);
+          nextPrefetch = mono() + Math.max(1_000, pacing.prefetchGap, result.retryAfterMs ?? 0);
         } else if (result.status === "ok") {
           await store.putCover(s, row.cameraId, row.eventId, result.jpeg, () => current(s, generation));
           background.coverPrefetch.fetched++;
@@ -322,6 +327,7 @@ export function createRecordings(
         }
       }
     })();
+    return true;
   }
   function retryWanted(cycle) {
     // Catalog intent may outlive cover interest only long enough to cross an SDK gate.
