@@ -101,7 +101,10 @@ export function createRecordings(
     enabled() && ctx.cfg.recordings?.playback !== false && typeof ctx.eufy.pullRecordingClip === "function";
   const testModelsActive = () => mono() < testModels.untilMono;
   const playbackAllowed = (cameraId) =>
-    (testModelsActive() ? testModels.models : (ctx.cfg.recordings?.playbackModels ?? ["T8425", "T8426"])).includes(
+    (testModelsActive()
+      ? testModels.models
+      : (ctx.cfg.recordings?.playbackModels ?? ["T8425", "T8426", "T8170"])
+    ).includes(
       String(scope?.cameras.find((c) => c.cameraId === cameraId)?.model ?? "")
         .trim()
         .toUpperCase(),

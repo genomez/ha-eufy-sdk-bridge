@@ -635,7 +635,7 @@ test("clip safety arming keeps an armed probe's durable marker and armed state",
 for (const [model, models, allowed] of [
   ["T8425", undefined, true],
   ["T8426", undefined, true],
-  ["T8170", undefined, false],
+  ["T8170", undefined, true],
   [undefined, undefined, false],
   ["T8425", [], false],
   ["T8170", ["T8170"], true],
@@ -668,6 +668,7 @@ for (const [model, models, allowed] of [
 
 test("test playback model override is validated, applies, and switches off", async (t) => {
   const h = await harness(t);
+  h.ctx.cfg.recordings.playbackModels = ["T8425", "T8426"];
   await h.manager.syncInventory(inventory.map((r) => (r.isCamera ? { ...r, model: "T8170" } : r)));
   await seed(h);
   assert.equal(h.catalog().events[0].playable, false);
@@ -691,7 +692,7 @@ test("test playback model override is validated, applies, and switches off", asy
 });
 
 test("playback model environment default, override and explicit empty list", () => {
-  assert.deepEqual(loadConfig({}).cfg.recordings.playbackModels, ["T8425", "T8426"]);
+  assert.deepEqual(loadConfig({}).cfg.recordings.playbackModels, ["T8425", "T8426", "T8170"]);
   assert.deepEqual(loadConfig({ RECORDINGS_PLAYBACK_MODELS: " t8170, T8426 ,," }).cfg.recordings.playbackModels, [
     "T8170",
     "T8426",
@@ -728,6 +729,8 @@ test("failed clip exposes only finite receipt evidence and cumulative counts", a
     bytes: 0,
     audioIncluded: false,
     captureOutcome: "no_media",
+    stationStatusCounts: [],
+    stationStatusOverflow: 0,
     startAcknowledged: false,
     ingressVideoFrames: 3,
     ingressAudioFrames: 2,
@@ -983,3 +986,69 @@ for (const mediaDurationMs of [undefined, 0, -1, NaN, Infinity])
     await until(() => state(f, "a").state === "failed");
     assert.equal(state(f, "a").reason, "station_error");
   });
+
+for (const confirmed of [true, false])
+  test(`station refusal cleanup certainty ${confirmed}`, async (t) => {
+    const f = await fixture(t, {
+      pull: async () => ({
+        ...clean,
+        boundedMediaObserved: false,
+        captureOutcome: "start_refused",
+        startAcknowledged: false,
+        stationRefusalConfirmed: confirmed,
+        releaseOutcome: confirmed ? "release_confirmed" : "release_unknown",
+        cessationOutcome: confirmed ? "ceased" : "cessation_unknown",
+        latchCleared: confirmed,
+        reconnectOutcome: confirmed ? "not_needed" : "connected",
+        stationStatusCounts: [{ state: 0, code: 7, count: 1 }],
+      }),
+    });
+    f.jobs.prepare("camera", "a", selection);
+    await until(() => state(f, "a").state === "failed");
+    assert.equal(state(f, "a").reason, confirmed ? "not_found" : "cleanup_uncertain");
+    assert.deepEqual(f.jobs.diagnostics().lastJob.stationStatusCounts, [{ state: 0, code: 7, count: 1 }]);
+  });
+
+test("clip diagnostics retain bounded count-only poison evidence", async (t) => {
+  const poison = {
+    cause: "channel",
+    link: 5,
+    cmd: 1300,
+    channel: 102,
+    selector: "1",
+    liveTargetAmbiguous: true,
+    sinceLiveStart: "lt60s",
+    sinceLiveStop: "lt10s",
+    count: 3,
+  };
+  const f = await fixture(t, {
+    pull: async () => ({
+      admissionGateName: "model",
+      stationStatusCounts: [
+        { state: 0, code: 7, count: 2, extra: "discard" },
+        { state: "bad", code: 1, count: 1 },
+      ],
+      stationStatusOverflow: 4,
+      playbackObservation: {
+        observerAgeMs: 60001,
+        poisonOverflow: 8,
+        poisonCounts: [
+          { ...poison, extra: "discard" },
+          { ...poison, cause: "discard" },
+          { ...poison, count: -1 },
+          ...Array.from({ length: 40 }, () => poison),
+        ],
+      },
+    }),
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => state(f, "a").state === "refused");
+  const diagnostics = f.jobs.diagnostics().lastJob;
+  assert.deepEqual(diagnostics.stationStatusCounts, [{ state: 0, code: 7, count: 2 }]);
+  assert.equal(diagnostics.stationStatusOverflow, 4);
+  assert.equal(diagnostics.playbackObservation.observerAgeMs, 60001);
+  assert.equal(diagnostics.playbackObservation.poisonOverflow, 8);
+  assert.ok(diagnostics.playbackObservation.poisonCounts.length <= 32);
+  assert.deepEqual(diagnostics.playbackObservation.poisonCounts[0], poison);
+  assert.ok(!JSON.stringify(diagnostics).includes("discard"));
+});

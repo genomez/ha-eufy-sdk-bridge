@@ -321,7 +321,6 @@ This replaces the earlier review.7 candidate with review.9 input `681efd9` (impl
 
 Automatic floodlight correction is OFF-only and cannot re-send ON. A shared command-health gate pauses automatic writes for ten minutes after two fast correlated refusals, while explicit commands remain eligible. Includes review.14 upstream beta.73/beta.80 adaptations, RTC renewal cooldowns and passive diagnostics. Source input: `6deea127459f368edb24d7d3df59dcaf60d5b508`.
 
-
 ## Historical input documentation and modification notices
 
 # Source modification index
@@ -519,9 +518,16 @@ minutes are capped at 1440 and both computed deadlines must be finite. Public
 playback capability and playable-row shapes are unchanged; disabled is documented
 in the WebSocket protocol. Qualification is offline and synthetic only.
 
-
 ## Playback 3p4 local fix (2026-11-06)
 
 Use the capture receipt mediaDurationMs for conversion retiming and published clip duration; invalid or missing captured durations fail instead of using the catalog duration. Preserve explicit frame retiming. Retry unsafe_observation through the existing 3-second, 90-second admission policy because the SDK live-stop drain now clears on its own. Other permanent observation uncertainty remains bounded by the retry deadline. The dependency pin and provenance identify the matching local 3p4 package.
 
 Offline synthetic validation only; installation acceptance remains false.
+
+### Offline playback safety update, 2026-11-06
+
+- Pin the local 3p5 SDK distribution and installed runtime separately.
+- Include bounded count-only playback-observer poison evidence, observer age, and station status counts in clip diagnostics.
+- Report a proven terminal no-stream refusal as not_found after confirmed clean release; retain cleanup_uncertain for uncertain starts and media.
+- Enable recording playback for T8425, T8426 and T8170 by default; explicit model overrides remain authoritative.
+- Validated locally with synthetic fixtures; no installation or device acceptance is claimed.

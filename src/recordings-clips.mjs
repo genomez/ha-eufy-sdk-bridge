@@ -218,6 +218,7 @@ function clipEvidence(receipt = {}) {
     "wrong_route",
   ];
   return {
+    ...boundedPlaybackDiagnostics(receipt),
     admissionGate: finite(receipt.admissionGateName ?? admissionGates[receipt.admissionGate], admissionGates),
     captureOutcome: finite(receipt.captureOutcome, [
       "not_admitted",
@@ -256,6 +257,65 @@ function clipEvidence(receipt = {}) {
     ]),
     reconnectOutcome: finite(receipt.reconnectOutcome, ["not_needed", "connected", "failed", "timed_out"]),
     reconnectDurationMs: count(receipt.reconnectDurationMs),
+  };
+}
+
+/** Retain bounded count-only station and observer evidence; arbitrary strings and objects are discarded. */
+function boundedPlaybackDiagnostics(receipt) {
+  const bounded = (n, max = 65535) => Number.isSafeInteger(n) && n >= 0 && n <= max;
+  const statusNumber = (n) => Number.isSafeInteger(n) && Math.abs(n) <= 2147483647;
+  const statuses = Array.isArray(receipt.stationStatusCounts) ? receipt.stationStatusCounts : [];
+  const observation = receipt.playbackObservation;
+  const causes = [
+    "playback_link",
+    "bare",
+    "link",
+    "channel",
+    "selector",
+    "extent",
+    "native",
+    "header",
+    "flags",
+    "limits",
+    "metadata",
+    "conflict",
+    "expiry",
+    "baseline",
+    "portal-header",
+    "command",
+    "zstd-header",
+    "zstd-content-size",
+    "zstd-window",
+    "zstd-structure",
+    "zstd-decoder",
+  ];
+  const bucket = (v) => finite(v, ["unknown", "lt1s", "lt10s", "lt60s", "ge60s"]);
+  return {
+    stationStatusCounts: statuses
+      .slice(0, 32)
+      .filter((r) => statusNumber(r?.state) && statusNumber(r?.code) && bounded(r?.count))
+      .map(({ state, code, count }) => ({ state, code, count })),
+    stationStatusOverflow: bounded(receipt.stationStatusOverflow) ? receipt.stationStatusOverflow : 0,
+    ...(observation && {
+      playbackObservation: {
+        observerAgeMs: count(observation.observerAgeMs),
+        poisonOverflow: bounded(observation.poisonOverflow) ? observation.poisonOverflow : 0,
+        poisonCounts: (Array.isArray(observation.poisonCounts) ? observation.poisonCounts : [])
+          .slice(0, 32)
+          .filter((r) => r && causes.includes(r.cause) && bounded(r.count))
+          .map((r) => ({
+            cause: r.cause,
+            link: bounded(r.link) ? r.link : null,
+            cmd: bounded(r.cmd) ? r.cmd : null,
+            channel: bounded(r.channel) ? r.channel : null,
+            selector: finite(r.selector, ["1", "playback", "other", "unknown"]),
+            liveTargetAmbiguous: r.liveTargetAmbiguous === true,
+            sinceLiveStart: bucket(r.sinceLiveStart),
+            sinceLiveStop: bucket(r.sinceLiveStop),
+            count: r.count,
+          })),
+      },
+    }),
   };
 }
 
@@ -420,6 +480,16 @@ export function createClipJobs({
           receipt.cessationOutcome !== "ceased")
       )
         throw fault("cleanup_uncertain");
+      if (
+        receipt.captureOutcome === "start_refused" &&
+        receipt.stationRefusalConfirmed === true &&
+        !receipt.startAcknowledged &&
+        !frames &&
+        receipt.latchCleared &&
+        receipt.releaseOutcome === "release_confirmed" &&
+        receipt.cessationOutcome === "ceased"
+      )
+        throw fault("not_found");
       if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
       if (writeFailed) throw fault("storage");
       if (!receipt.startAttempted && receipt.latchPersistenceFailed) throw fault("storage");
