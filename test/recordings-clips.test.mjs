@@ -996,10 +996,10 @@ for (const confirmed of [true, false])
         captureOutcome: "start_refused",
         startAcknowledged: false,
         stationRefusalConfirmed: confirmed,
-        releaseOutcome: confirmed ? "release_confirmed" : "release_unknown",
+        releaseOutcome: confirmed ? "stop_unconfirmed" : "release_unknown",
         cessationOutcome: confirmed ? "ceased" : "cessation_unknown",
-        latchCleared: confirmed,
-        reconnectOutcome: confirmed ? "not_needed" : "connected",
+        latchCleared: false,
+        reconnectOutcome: "connected",
         stationStatusCounts: [{ state: 0, code: 7, count: 1 }],
       }),
     });
@@ -1007,6 +1007,7 @@ for (const confirmed of [true, false])
     await until(() => state(f, "a").state === "failed");
     assert.equal(state(f, "a").reason, confirmed ? "not_found" : "cleanup_uncertain");
     assert.deepEqual(f.jobs.diagnostics().lastJob.stationStatusCounts, [{ state: 0, code: 7, count: 1 }]);
+    assert.equal(f.jobs.diagnostics().lastJob.reconnectOutcome, "connected");
   });
 
 test("clip diagnostics retain bounded count-only poison evidence", async (t) => {

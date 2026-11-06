@@ -528,6 +528,6 @@ Offline synthetic validation only; installation acceptance remains false.
 
 - Pin the local 3p5 SDK distribution and installed runtime separately.
 - Include bounded count-only playback-observer poison evidence, observer age, and station status counts in clip diagnostics.
-- Report a proven terminal no-stream refusal as not_found after confirmed clean release; retain cleanup_uncertain for uncertain starts and media.
+- Report a proven terminal no-stream refusal as not_found while the SDK retains reconnect protection; retain cleanup_uncertain for uncertain starts and media.
 - Enable recording playback for T8425, T8426 and T8170 by default; explicit model overrides remain authoritative.
 - Validated locally with synthetic fixtures; no installation or device acceptance is claimed.

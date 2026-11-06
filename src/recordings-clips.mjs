@@ -473,6 +473,13 @@ export function createClipJobs({
         receipt.randomAccess &&
         frames >= 2;
       if (
+        receipt.captureOutcome === "start_refused" &&
+        receipt.stationRefusalConfirmed === true &&
+        !receipt.startAcknowledged &&
+        !frames
+      )
+        throw fault("not_found");
+      if (
         !complete &&
         receipt.startAttempted &&
         (receipt.releaseOutcome !== "release_confirmed" ||
@@ -480,16 +487,6 @@ export function createClipJobs({
           receipt.cessationOutcome !== "ceased")
       )
         throw fault("cleanup_uncertain");
-      if (
-        receipt.captureOutcome === "start_refused" &&
-        receipt.stationRefusalConfirmed === true &&
-        !receipt.startAcknowledged &&
-        !frames &&
-        receipt.latchCleared &&
-        receipt.releaseOutcome === "release_confirmed" &&
-        receipt.cessationOutcome === "ceased"
-      )
-        throw fault("not_found");
       if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
       if (writeFailed) throw fault("storage");
       if (!receipt.startAttempted && receipt.latchPersistenceFailed) throw fault("storage");
