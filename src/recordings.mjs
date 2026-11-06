@@ -42,6 +42,11 @@ export function createRecordings(
   let nextCatalog = Infinity,
     nextPrefetch = 0;
   let lastPrefetch = -Infinity;
+  // Test-only load generator for pacing ramps: re-reads already cached covers without storing them.
+  // In memory only, off at start-up, and it switches itself off at its deadline.
+  const testReread = { untilMono: -Infinity, untilMs: null, reads: 0, failed: 0 };
+  const lastTestRead = new Map();
+  const testRereadActive = () => mono() < testReread.untilMono;
   const backgroundEnabled = () => enabled() && ctx.cfg.recordings?.background !== false;
   const background = {
     lastCatalogAtMs: null,
@@ -247,7 +252,7 @@ export function createRecordings(
   }
   function prefetchRows() {
     if (!loaded || !scope || !scopeValid || adapter.account() !== account || storeFailed) return [];
-    return store.snapshot.rows
+    const fresh = store.snapshot.rows
       .filter(
         (r) =>
           scope.cameras.some((c) => c.cameraId === r.cameraId) &&
@@ -260,6 +265,27 @@ export function createRecordings(
           (r.coverFailures ?? 0) < LIMITS.coverFailures,
       )
       .sort((a, b) => b.startedAtMs - a.startedAtMs || a.eventId.localeCompare(b.eventId));
+    if (!testRereadActive()) return fresh;
+    // Uncached rows still come first; cached rows follow, least recently re-read first.
+    const cached = store.snapshot.rows
+      .filter(
+        (r) =>
+          scope.cameras.some((c) => c.cameraId === r.cameraId) &&
+          r.selector &&
+          r.cover &&
+          (r.coverFailures ?? 0) < LIMITS.coverFailures,
+      )
+      .sort(
+        (a, b) =>
+          (lastTestRead.get(a.eventId) ?? -Infinity) - (lastTestRead.get(b.eventId) ?? -Infinity) ||
+          b.startedAtMs - a.startedAtMs ||
+          a.eventId.localeCompare(b.eventId),
+      );
+    return [...fresh, ...cached];
+  }
+  function testRereadStatus() {
+    const active = testRereadActive();
+    return { active, untilMs: active ? testReread.untilMs : null, reads: testReread.reads, failed: testReread.failed };
   }
   function armBackground() {
     cancel(backgroundTimer);
@@ -306,7 +332,8 @@ export function createRecordings(
       return false;
     const s = scope,
       generation = epoch,
-      controller = new AbortController();
+      controller = new AbortController(),
+      reread = Boolean(row.cover) && testRereadActive();
     lastPrefetch = mono();
     nextPrefetch = lastPrefetch + pacing.prefetchGap;
     background.coverPrefetch.lastAtMs = now();
@@ -331,6 +358,11 @@ export function createRecordings(
         if (!current(s, generation)) return;
         if (result.status === "deferred") {
           nextPrefetch = mono() + Math.max(1_000, pacing.prefetchGap, result.retryAfterMs ?? 0);
+        } else if (reread) {
+          // Test re-read: measure only; never replace or penalize the cached cover.
+          lastTestRead.set(row.eventId, mono());
+          if (result.status === "ok") testReread.reads++;
+          else testReread.failed++;
         } else if (result.status === "ok") {
           await store.putCover(s, row.cameraId, row.eventId, result.jpeg, () => current(s, generation));
           background.coverPrefetch.fetched++;
@@ -340,7 +372,10 @@ export function createRecordings(
           background.coverPrefetch.failed++;
         }
       } catch {
-        if (current(s, generation)) {
+        if (reread) {
+          lastTestRead.set(row.eventId, mono());
+          testReread.failed++;
+        } else if (current(s, generation)) {
           await store.negative(row.cameraId, row.eventId).catch(() => {});
           background.coverPrefetch.failed++;
         }
@@ -832,6 +867,18 @@ export function createRecordings(
       armBackground();
       return { pacing: { ...pacing }, setAtMs: pacingSetAtMs };
     },
+    testReread(args) {
+      fields(args, ["enabled", "minutes"]);
+      guard();
+      const minutes = args.minutes ?? 60;
+      if (typeof args.enabled !== "boolean" || typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0)
+        throw failure("invalid");
+      testReread.untilMono = args.enabled ? mono() + minutes * 60_000 : -Infinity;
+      testReread.untilMs = args.enabled ? now() + minutes * 60_000 : null;
+      if (args.enabled) lastTestRead.clear();
+      armBackground();
+      return { testReread: testRereadStatus() };
+    },
     diagnostics(args = {}) {
       fields(args, []);
       const snapshot =
@@ -862,6 +909,7 @@ export function createRecordings(
           pacing: { ...pacing },
           pacingSetAtMs,
           coverReads: { maxBuckets: 16, samplesPerBucket: 512, buckets: measurements.snapshot() },
+          testReread: testRereadStatus(),
           enabled: backgroundEnabled(),
           lastCatalogAtMs: background.lastCatalogAtMs,
           nextCatalogAtMs:

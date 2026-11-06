@@ -794,6 +794,8 @@ again and keeps opaque folder links under `recordings.folders` in its diagnostic
 Event titles omit type labels; camera folder titles use only the trimmed name,
 with incomplete-history and cache status in an information child.
 
+`recordings.test_reread` is a test-only load generator for pacing ramps. `{ "cmd": "recordings.test_reread", "enabled": true, "minutes": 15 }` makes background prefetch re-read already cached covers (least recently re-read first, after any uncached rows) at the current pacing, without replacing or penalizing the cached files. Reads are recorded in the current `coverReads` bucket. It is process-local, off at start-up, and switches itself off after `minutes` (default 60); `enabled: false` stops it at once. Diagnostics report `recordings.background.testReread` as `{ active, untilMs, reads, failed }`.
+
 ## Save-first recording clips (3p)
 
 Playback is strictly on demand. `RECORDINGS_PLAYBACK` defaults to true and accepts

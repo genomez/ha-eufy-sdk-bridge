@@ -147,3 +147,45 @@ test("zero pacing backs off while not ready and after zero retry hints instead o
   h.clocks.advance(1);
   await until(() => h.manager.diagnostics().background.coverPrefetch.fetched === 2);
 });
+
+test("test re-read loads cached covers without replacing them and switches itself off", async (t) => {
+  let h;
+  h = await harness(t, {
+    background: true,
+    cover: () => {
+      h.clocks.advance(300);
+      return { status: "ok", jpeg };
+    },
+  });
+  await h.store.mergeCatalog(h.scope, [row(h.scope, 0), row(h.scope, 1)]);
+  h.manager.setPacing({ prefetchGap: 0, coverGap: 0, coverRate: 0, coverQuiet: 0 });
+  const settle = async () => {
+    for (let n = 0; n < 4; n++) {
+      await tick();
+      await h.store.readCover("", "").catch(() => {});
+    }
+  };
+  const step = async (ms) => {
+    h.clocks.advance(ms);
+    await settle();
+  };
+  for (let n = 0; n < 20 && h.manager.diagnostics().background.coverPrefetch.fetched < 2; n++) await step(1);
+  assert.equal(h.manager.diagnostics().background.coverPrefetch.fetched, 2);
+  const before = await h.store.readCover(h.store.snapshot.rows[0].cameraId, h.store.snapshot.rows[0].eventId);
+  for (let n = 0; n < 20; n++) await step(1);
+  assert.equal(h.calls.cover.length, 2, "nothing to read once cached");
+  assert.throws(() => h.manager.testReread({ enabled: "yes" }), { code: "recordings_invalid" });
+  assert.throws(() => h.manager.testReread({ enabled: true, minutes: 0 }), { code: "recordings_invalid" });
+  assert.equal(h.manager.testReread({ enabled: true, minutes: 1 }).testReread.active, true);
+  for (let n = 0; n < 40; n++) await step(1);
+  const status = h.manager.diagnostics().background.testReread;
+  assert.ok(status.reads >= 4, `re-reads ${status.reads}`);
+  assert.equal(h.manager.diagnostics().background.coverPrefetch.fetched, 2);
+  const after = await h.store.readCover(h.store.snapshot.rows[0].cameraId, h.store.snapshot.rows[0].eventId);
+  assert.equal(after.coverRevision, before.coverRevision);
+  await step(60_000);
+  const calls = h.calls.cover.length;
+  assert.equal(h.manager.diagnostics().background.testReread.active, false);
+  for (let n = 0; n < 20; n++) await step(1_000);
+  assert.equal(h.calls.cover.length, calls, "auto-off stops re-reads");
+});

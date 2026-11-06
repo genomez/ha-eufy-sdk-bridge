@@ -569,6 +569,7 @@ test("background diagnostics are detached aggregate values with no row data", as
         },
       ],
     },
+    testReread: { active: false, untilMs: null, reads: 0, failed: 0 },
     enabled: true,
     lastCatalogAtMs: null,
     nextCatalogAtMs: h.clocks.now() + 300_000,
