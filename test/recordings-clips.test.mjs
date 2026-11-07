@@ -2088,3 +2088,18 @@ test("short progressive capture starts its encoder from the EOF flush and comple
   assert.ok(finished);
   assert.equal(state(f, "short-progressive").state, "ready");
 });
+
+test("ambiguous slow-prefix clocks cannot be uniformly stretched into standalone video", async () => {
+  await assert.rejects(
+    convertClip({
+      input: "unused.hevc",
+      output: "unused.mp4",
+      frames: 106,
+      durationMs: 22000,
+      nativeTiming: { native: false, ambiguousClock: true },
+      maxBytes: 1024 ** 2,
+      spawnProcess: () => assert.fail("ambiguous cadence must fail before encoding"),
+    }),
+    { reason: "convert_failed" },
+  );
+});

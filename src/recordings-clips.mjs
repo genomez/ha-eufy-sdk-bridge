@@ -147,6 +147,8 @@ export function convertClip({
       (nativeTiming.frames !== frames || !validNativeDuration(nativeTiming, durationMs, durationMs))
     )
       return reject(fault("convert_failed"));
+    if (nativeTiming?.ambiguousClock && Math.abs((frames * 1000) / 15 - durationMs) > 200)
+      return reject(fault("convert_failed"));
     // Station HEVC carries its own VUI frame rate, which overrides -framerate on raw input.
     // Only the metadata-free fallback retimes frames uniformly to the retained duration.
     const fps = nativeTiming?.native ? "15" : String((frames * 1000) / durationMs);

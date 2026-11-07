@@ -10,6 +10,8 @@ for (const profile of variableCadenceProfiles) {
     const mux = createRecordingTiming(profile);
     const stamps = variableCadenceStamps(profile);
     const bytes = stamps.map((nativeTimestamp) => mux.frame(frame, { nativeTimestamp }));
+    assert.ok(stamps.slice(1, 6).every((stamp, i) => stamp - stamps[i] > 250));
+    assert.ok(bytes.slice(0, 6).every((bytes) => bytes.length === 0));
     assert.ok(mux.timing.native);
     assert.deepEqual(presentation(Buffer.concat(bytes)), stamps);
     assert.equal(Math.max(...stamps.slice(1).map((stamp, i) => stamp - stamps[i])), profile.gapMs);
@@ -157,7 +159,7 @@ test("large access units retain payload exactly across TS packet boundaries and 
   assert.deepEqual(Buffer.concat(payload), original);
 });
 
-test("native qualification buffers at most four frames and leaves input buffers untouched", () => {
+test("steady native qualification selects at four frames and leaves input buffers untouched", () => {
   const mux = createRecordingTiming({ expectedMs: 8000 });
   const data = Buffer.from(frame);
   for (const nativeTimestamp of [0, 67, 133]) {
@@ -182,6 +184,7 @@ for (const stamps of [
   test(`unqualified clock uses raw input: ${stamps}`, () => {
     const mux = createRecordingTiming({ expectedMs: 8000 });
     const bytes = stamps.map((nativeTimestamp) => mux.frame(frame, { nativeTimestamp }));
+    bytes.push(mux.flush());
     assert.equal(mux.timing.native, false);
     assert.deepEqual(Buffer.concat(bytes), Buffer.concat(stamps.map(() => frame)));
   });
@@ -226,4 +229,32 @@ test("native duration allows whole-second catalog rounding but still rejects rea
   const below = createRecordingTiming({ expectedMs: 12000 });
   for (let i = 0; i < 166; i++) below.frame(frame, { nativeTimestamp: Math.round((i * 1000) / 15) });
   assert.ok(validNativeDuration(below.timing, 12000, below.timing.durationMs), "11.07 s rounds up to 12 s");
+});
+
+test("a complete 900-frame 90 kHz clock keeps every byte in the raw fallback", () => {
+  const mux = createRecordingTiming({ expectedMs: 60000 });
+  const bytes = Array.from({ length: 900 }, (_, i) => mux.frame(frame, { nativeTimestamp: i * 6000 }));
+  bytes.push(mux.flush());
+  assert.equal(mux.timing.native, false);
+  assert.equal(mux.timing.frames, 900);
+  assert.deepEqual(Buffer.concat(bytes), Buffer.concat(Array(900).fill(frame)));
+});
+
+test("a slow prefix beyond 16 frames permanently falls back without retiming video", () => {
+  const mux = createRecordingTiming({ expectedMs: 22000 });
+  const stamps = Array.from({ length: 106 }, (_, i) => (i < 20 ? i * 400 : 7600 + (i - 19) * 67));
+  const bytes = stamps.map((nativeTimestamp) => mux.frame(frame, { nativeTimestamp }));
+  assert.ok(bytes.slice(0, 15).every((bytes) => bytes.length === 0));
+  assert.equal(bytes[15].length, frame.length * 16);
+  assert.equal(mux.timing.ambiguousClock, true);
+  assert.equal(mux.timing.native, false);
+  assert.deepEqual(Buffer.concat(bytes), Buffer.concat(stamps.map(() => frame)));
+});
+
+test("slow-prefix qualification respects the 1 MiB retention limit before frame 16", () => {
+  const mux = createRecordingTiming({ expectedMs: 22000 });
+  const large = Buffer.alloc(300000, 7);
+  const bytes = [0, 400, 1000, 2500, 2567].map((nativeTimestamp) => mux.frame(large, { nativeTimestamp }));
+  assert.equal(mux.timing.native, false);
+  assert.deepEqual(Buffer.concat(bytes), Buffer.concat(Array(5).fill(large)));
 });

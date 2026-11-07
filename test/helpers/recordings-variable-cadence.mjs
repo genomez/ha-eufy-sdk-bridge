@@ -6,10 +6,10 @@ export const variableCadenceProfiles = [
 
 export function variableCadenceStamps({ frames, spanMs, gapMs }) {
   return Array.from({ length: frames }, (_, i) =>
-    i < 4
-      ? [0, 400, 1000, 2500][i]
-      : 2500 +
-        Math.round(((i - 3 - (i >= 80 ? 1 : 0)) * (spanMs - gapMs - 2500)) / (frames - 5)) +
+    i < 6
+      ? [0, 400, 1000, 2500, 2900, 3500][i]
+      : 3500 +
+        Math.round(((i - 5 - (i >= 80 ? 1 : 0)) * (spanMs - gapMs - 3500)) / (frames - 7)) +
         (i >= 80 ? gapMs : 0),
   );
 }

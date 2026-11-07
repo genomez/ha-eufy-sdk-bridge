@@ -17,6 +17,9 @@ export async function checkNativeRecordingMedia({
   timestampCase = "native",
   timestamps,
   catalogMs,
+  expectedNative = timestampCase !== "zero",
+  expectedFailure = false,
+  sourceFps = 30,
 }) {
   const root = path.resolve(".offline/native-media", randomUUID());
   fs.mkdirSync(root, { recursive: true });
@@ -36,9 +39,11 @@ export async function checkNativeRecordingMedia({
     "-f",
     "lavfi",
     "-i",
-    `testsrc2=size=160x96:rate=30:duration=${frameCount / 30}`,
+    `testsrc2=size=160x96:rate=${sourceFps}:duration=${frameCount / sourceFps}`,
     "-frames:v",
     String(frameCount),
+    "-vf",
+    `drawbox=x=0:y=0:w=48:h=48:color=white:t=fill:enable='eq(n,${frameCount - 1})'`,
     "-c:v",
     "libx265",
     "-preset",
@@ -133,6 +138,36 @@ export async function checkNativeRecordingMedia({
     }
     assert.equal(rejectionIndex, null, "a corrupt clock must fail before conversion completes");
     assert.ok(early, "segments must be playable before source EOF");
+    const tail = mux.flush();
+    if (tail.length) {
+      fs.appendFileSync(input, tail);
+      active.commit(tail.length);
+    }
+    assert.equal(mux.timing.native, expectedNative);
+    if (expectedFailure) {
+      await assert.rejects(active.finish({ frames: frameCount, durationMs: expectedMs }), { reason: "convert_failed" });
+      await assert.rejects(
+        convertClip({
+          input,
+          output: path.join(root, "refused.mp4"),
+          frames: frameCount,
+          durationMs: expectedMs,
+          nativeTiming: mux.timing,
+          ffmpeg,
+          maxBytes: 16 * 1024 ** 2,
+        }),
+        { reason: "convert_failed" },
+      );
+      await active.abort("convert_failed", { endReason: "conversion_validation_failed", exitCode: null, signal: null });
+      assert.equal(active.snapshot().delivery, "unavailable");
+      assert.equal(active.snapshot().endReason, "conversion_validation_failed");
+      return save({
+        inputFrames: frameCount,
+        native: mux.timing.native,
+        rejected: true,
+        endReason: active.snapshot().endReason,
+      });
+    }
     await active.finish({ frames: frameCount, durationMs: expectedMs });
     const progressiveOutput = path.join(root, "progressive.mp4"),
       mp4Output = path.join(root, "standalone.mp4");
@@ -192,7 +227,7 @@ export async function checkNativeRecordingMedia({
       assert.equal(pts.length, frameCount);
       assert.ok(Math.abs((times.at(-1) - times[0]) * 1000 - mux.timing.spanMs) < 1);
       if (gapMs) assert.ok(Math.abs((times[gapIndex] - times[gapIndex - 1]) * 1000 - gapMs) < 1);
-    } else assert.equal(timestampCase, "zero");
+    } else assert.equal(expectedNative, false);
     const hashes = (file, filter) =>
       run(ffmpeg, ["-v", "error", "-copyts", "-i", file, ...(filter ? ["-vf", filter] : []), "-f", "framemd5", "-"])
         .split("\n")
@@ -210,6 +245,19 @@ export async function checkNativeRecordingMedia({
         "the preceding frame must be held throughout the native gap",
       );
       assert.equal(timedHashes[end], sourceHashes[gapIndex]);
+    }
+    for (const file of [progressiveOutput, mp4Output]) {
+      const pixels = execFileSync(
+        ffmpeg,
+        ["-v", "error", "-sseof", "-1", "-i", file, "-vf", "crop=32:32:8:8,format=gray", "-f", "rawvideo", "-"],
+        { timeout: 30000, maxBuffer: 1024 ** 2 },
+      );
+      const last = pixels.subarray(-1024);
+      assert.equal(last.length, 1024);
+      assert.ok(
+        last.reduce((sum, value) => sum + value, 0) / last.length > 240,
+        "final source marker must survive HLS and MP4 encoding",
+      );
     }
     const receipt = {
       inputFrames: frameCount,

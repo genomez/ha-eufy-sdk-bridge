@@ -23,8 +23,9 @@ function pts(value) {
 
 /**
  * Single-stream HEVC transport spool. Native header words are interpreted as milliseconds;
- * arrival time and transfer speed never enter this clock. Qualify four frames before
- * selecting TS, allowing slow starts within the catalog bound; otherwise retain raw fixed-rate
+ * arrival time and transfer speed never enter this clock. Qualify at least four frames, with
+ * a 10..250 ms step as explicit unit evidence. Slow prefixes retain at most 16 frames and 1 MiB
+ * within the catalog bound before falling back to raw fixed-rate
  * input. Missing later words advance one 15fps period. Only duplicate/regression jitter up to
  * 10ms is clamped to 1ms.
  */
@@ -32,7 +33,7 @@ function pts(value) {
 export const catalogSlackMs = 1000;
 
 export function createRecordingTiming({ expectedMs }) {
-  const timing = { native: false, frames: 0, spanMs: 0, durationMs: 0 };
+  const timing = { native: false, ambiguousClock: false, frames: 0, spanMs: 0, durationMs: 0 };
   const maxSpanMs = Number.isSafeInteger(expectedMs) && expectedMs > 0 ? expectedMs + catalogSlackMs : 0;
   const validWord = (word) => Number.isInteger(word) && word >= 0 && word <= 0xffffffff;
   let pending = [],
@@ -115,6 +116,7 @@ export function createRecordingTiming({ expectedMs }) {
   const select = (native) => {
     selected = true;
     timing.native = native;
+    timing.ambiguousClock = !native && pending.slice(1).some((entry, i) => ((entry.word - pending[i].word) | 0) > 250);
     const buffered = pending;
     pending = [];
     pendingBytes = 0;
@@ -126,19 +128,21 @@ export function createRecordingTiming({ expectedMs }) {
       if (rejected) throw rejected;
       const word = metadata?.nativeTimestamp;
       if (selected) return encode(data, word);
-      // Bound retained memory as well as the four-frame qualification delay.
+      // Bound retained memory as well as the 16-frame qualification delay.
       if (pendingBytes + data.length > 1024 ** 2) return Buffer.concat([select(false), encode(data, word)]);
       pending.push({ data: Buffer.from(data), word });
       pendingBytes += data.length;
       if (!validWord(word)) return select(false);
       if (pending.length < 4) return Buffer.alloc(0);
       const deltas = pending.slice(1).map((entry, i) => (entry.word - pending[i].word) | 0);
-      return select(
-        deltas.every((delta) => delta >= -10) &&
-          deltas.filter((delta) => delta > 0).length >= 2 &&
-          deltas.some((delta) => delta >= 10 && delta <= maxSpanMs) &&
-          deltas.reduce((span, delta) => span + Math.max(1, delta), 0) <= maxSpanMs,
-      );
+      if (
+        !deltas.every((delta) => delta >= -10) ||
+        deltas.reduce((span, delta) => span + Math.max(1, delta), 0) > maxSpanMs
+      )
+        return select(false);
+      if (deltas.filter((delta) => delta > 0).length >= 2 && deltas.some((delta) => delta >= 10 && delta <= 250))
+        return select(true);
+      return pending.length < 16 && deltas.some((delta) => delta > 250) ? Buffer.alloc(0) : select(false);
     },
     flush() {
       if (rejected) throw rejected;
@@ -148,8 +152,13 @@ export function createRecordingTiming({ expectedMs }) {
   };
 }
 
-/** Quantize native PTS to 15fps, holding across gaps and retaining the last decoded frame at EOF. */
-export const nativeVideoFilter = "fps=fps=15:round=near:eof_action=pass,scale=w='trunc(min(1920,iw)/2)*2':h=-2";
+/**
+ * Hold the final decoded frame for one output period before CFR quantization.
+ * Scaling PTS around tpad makes its one-frame pad exactly 1/15 s regardless of inferred source rate;
+ * the inverse restores native positions before gap holding and EOF rounding.
+ */
+export const nativeVideoFilter =
+  "setpts=PTS*15/FRAME_RATE,tpad=stop_mode=clone:stop=1,setpts=PTS*FRAME_RATE/15,fps=fps=15:round=near:eof_action=pass,scale=w='trunc(min(1920,iw)/2)*2':h=-2";
 
 /**
  * Native span against the whole-second catalog duration (catalog precision), then output against
