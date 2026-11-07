@@ -1,5 +1,4 @@
-/** Runtime pin from the authorized playback 3t offline build, 2026-11-07. */
-export const storageProbeSdkSha256 = "7f945350b662d45de85bef5fdb3a93e454c787007a999ebfb7e52dc0624da1b4";
+export const storageProbeSdkSha256 = "412d4ae60352376b68eff04db96b7cbf0b01253de37ef48e9c2088ac3d198db7";
 export const storageProbeFiles = [
   "bin/pilot-process.mjs",
   "bin/start.sh",

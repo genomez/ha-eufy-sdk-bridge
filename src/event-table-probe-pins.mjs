@@ -1,5 +1,5 @@
-/** Test 1 runtime pin from the authorized playback 3t offline build, 2026-11-07. */
-export const eventTableProbeSdkSha256 = "7f945350b662d45de85bef5fdb3a93e454c787007a999ebfb7e52dc0624da1b4";
+/** Test 1 runtime pin from the authorized offline build, 2026-11-03. */
+export const eventTableProbeSdkSha256 = "2261c9dc3bab09f22252915571e441247472ba74a124d4bb464badfd05cca682";
 export const eventTableProbeFiles = [
   "bin/event-table-probe-control.mjs",
   "bin/pilot-process.mjs",

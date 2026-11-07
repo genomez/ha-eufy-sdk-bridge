@@ -1,5 +1,5 @@
-/** Test 2c runtime pin from the authorized playback 3t offline build, 2026-11-07. */
-export const eventThumbProbeSdkSha256 = "7f945350b662d45de85bef5fdb3a93e454c787007a999ebfb7e52dc0624da1b4";
+/** Test 2c runtime pin from the authorized offline build, 2026-11-03. */
+export const eventThumbProbeSdkSha256 = "d9adc3a3033d19955da7947aff4f987a93e5866621c7ff7db7a8c729c9a425a7";
 export const eventThumbProbeFiles = [
   "bin/event-table-probe-control.mjs",
   "bin/event-thumb-probe-control.mjs",
