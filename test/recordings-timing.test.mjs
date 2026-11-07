@@ -198,6 +198,11 @@ test("short native prefix flushes as raw and qualification memory is bounded", (
   const bytes = Buffer.alloc(1024 ** 2 + 1);
   assert.deepEqual(large.frame(bytes, { nativeTimestamp: 0 }), bytes);
   assert.equal(large.timing.native, false);
+  // Cadence is unproven when memory forces fallback, so conversion must verify a steady duration.
+  assert.equal(large.timing.ambiguousClock, true);
+  const qualified = createRecordingTiming({ expectedMs: 8000 });
+  for (const nativeTimestamp of [0, 67, 133, 200]) qualified.frame(frame, { nativeTimestamp });
+  assert.equal(qualified.timing.ambiguousClock, false);
 });
 
 test("clip bound includes exactly 1000ms of margin and errors remain terminal", () => {

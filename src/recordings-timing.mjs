@@ -113,10 +113,11 @@ export function createRecordingTiming({ expectedMs }) {
     const pes = Buffer.concat([Buffer.from([0, 0, 1, 0xe0, 0, 0, 0x80, 0x80, 5]), pts(clock), data]);
     return Buffer.concat([...packetize(0, pat), ...packetize(0x1000, pmt), ...packetize(0x100, pes, clock)]);
   };
-  const select = (native) => {
+  const select = (native, unknownCadence = false) => {
     selected = true;
     timing.native = native;
-    timing.ambiguousClock = !native && pending.slice(1).some((entry, i) => ((entry.word - pending[i].word) | 0) > 250);
+    timing.ambiguousClock =
+      !native && (unknownCadence || pending.slice(1).some((entry, i) => ((entry.word - pending[i].word) | 0) > 250));
     const buffered = pending;
     pending = [];
     pendingBytes = 0;
@@ -128,8 +129,9 @@ export function createRecordingTiming({ expectedMs }) {
       if (rejected) throw rejected;
       const word = metadata?.nativeTimestamp;
       if (selected) return encode(data, word);
-      // Bound retained memory as well as the 16-frame qualification delay.
-      if (pendingBytes + data.length > 1024 ** 2) return Buffer.concat([select(false), encode(data, word)]);
+      // Bound retained memory as well as the 16-frame qualification delay. Cadence is unproven here,
+      // so conversion must confirm a steady 15fps duration before uniform retiming.
+      if (pendingBytes + data.length > 1024 ** 2) return Buffer.concat([select(false, true), encode(data, word)]);
       pending.push({ data: Buffer.from(data), word });
       pendingBytes += data.length;
       if (!validWord(word)) return select(false);
