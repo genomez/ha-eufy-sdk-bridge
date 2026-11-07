@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.12",
   "status": "local-build-unpublished",
-  "exactInputCommit": "ebac62435e237fbcbec9713113ea276b206e9c07",
+  "exactInputCommit": "d15db8e8bf731cce05246eaa7b8a1c69421e1a27",
   "files": {
     ".env.example": {
       "bytes": 3966,
@@ -22,7 +22,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 749,
-      "sha256": "4bcd12fa2660866ce3d4258679d9c77614707ba02c23d84b07d0a2f7d1dd7bf5"
+      "sha256": "44a037f5050be5fb2bf9cc714acc6c57e583cc5011353056478a61f81a2129bf"
     },
     "CONTRIBUTING.md": {
       "bytes": 983,
@@ -45,8 +45,8 @@
       "sha256": "d5e1b0efd577184a24bc09296c9a8bf293c1f795fa5f3f07a53a35a7e757de17"
     },
     "README.md": {
-      "bytes": 16554,
-      "sha256": "7e112f8039e95b9a59b5b19254b0a4c8bbd168ee17dcacc60a9ab38800e4e2d0"
+      "bytes": 18235,
+      "sha256": "e6a6ef5fe97279de2ff1f8483233166b2e3949c61be8a632fe2c2e04502074df"
     },
     "bin/event-playback-probe-control.mjs": {
       "bytes": 10110,
@@ -97,8 +97,8 @@
       "sha256": "ea9b845e1ab5392f3d2d97603127e3281f82ca30f0ce9fb97dfe5fc327707231"
     },
     "docs/ws-protocol.md": {
-      "bytes": 52246,
-      "sha256": "8d60ab265be90bdaad160eef3282e9bb3731a6695996944090de786f17227cf9"
+      "bytes": 53841,
+      "sha256": "99149dd5d4ccc0f4fb873131209b1a7059dfa7955d68daf580a9345436ce481f"
     },
     "go2rtc-config.mjs": {
       "bytes": 3498,
@@ -106,11 +106,11 @@
     },
     "package-lock.json": {
       "bytes": 26812,
-      "sha256": "1c09be5264f09f598670ab0764de5daef3756c0a1e5cd2a38e59d020e92f7a5c"
+      "sha256": "5a78b4d41585cf33e266da91c137d6f29fa456cfc5141dfb938952dcb4b23209"
     },
     "package.json": {
       "bytes": 1413,
-      "sha256": "28138216a5d8245468a6abc9337752cfcfce9e346045ffbdb420f3704472c192"
+      "sha256": "e6fbada7e1e253e5cb9b87d85b0727cbd7331e60afbbd466a8be33e3497cd428"
     },
     "scripts/devices.mjs": {
       "bytes": 1721,
@@ -165,8 +165,8 @@
       "sha256": "824b7a0599d42cc8de70308ff5f4bf655c3e3e76655afda743b1f766c4eb2d62"
     },
     "src/config.mjs": {
-      "bytes": 12692,
-      "sha256": "3663be842cc5a0035312e279a6a25b52f9e16e58fe0d3dfc2cce53193d7edbe3"
+      "bytes": 12934,
+      "sha256": "27cf13609c7aa98629108ad6b13579c9cef9aaf6dee0a92ff77ce19d7001b358"
     },
     "src/device-events.mjs": {
       "bytes": 4179,
@@ -198,7 +198,7 @@
     },
     "src/event-playback-probe-pins.mjs": {
       "bytes": 2214,
-      "sha256": "3157e7ea869090b69579f6f49df6aa7520b1d32f5f57497d18a95f1ab5ff8c9f"
+      "sha256": "4fabee3699b8c65dbfc8de571f70e58483e2d170d29b9531c59f4b3eefbffed1"
     },
     "src/event-playback-probe.mjs": {
       "bytes": 44158,
@@ -257,8 +257,8 @@
       "sha256": "1eaae1890c71b2dd77cce77adc0f274c068bccf059ba047c65f435ab8c227bec"
     },
     "src/recordings-clips.mjs": {
-      "bytes": 60438,
-      "sha256": "f8a107e7be60d889228da38b50b00d876fabd2e777d8a2b0afebb152ce333264"
+      "bytes": 60575,
+      "sha256": "f243178a9f9ab6f19181a969f44ad5749cdadf6969f27375085870374c00e6c0"
     },
     "src/recordings-download.mjs": {
       "bytes": 8435,
@@ -281,8 +281,8 @@
       "sha256": "f07f1a1647df421e97aea582965acd47e4c05aa651b7e17edcc10b85ab809175"
     },
     "src/recordings.mjs": {
-      "bytes": 55559,
-      "sha256": "73d39aef316336597bfbbe3aee854bfd4b73d4af7ad06e4d3e6faba2d22e5994"
+      "bytes": 56033,
+      "sha256": "843c0529b66c6784d6f5ff4760ea48d93a83da6c0652e9f083efebe698f6e98d"
     },
     "src/redact.mjs": {
       "bytes": 457,
@@ -349,8 +349,8 @@
       "sha256": "73be29349ea0d7a7f9666e37b88b10ad154b795e19ff98fc3298bcb1c58a726a"
     },
     "src/ws-server.mjs": {
-      "bytes": 24068,
-      "sha256": "0b932d6442d4ed2a67555b0fbfef8d099c85373a8dd2905319499be1cac0b1be"
+      "bytes": 24217,
+      "sha256": "58c4c7ddb38163837a725ccd7d71100cb3198621b13dd654734dad2443099cf0"
     },
     "streams.mjs": {
       "bytes": 5648,
@@ -525,8 +525,8 @@
       "sha256": "9293092f86a93a0d592881c2f942828e41af4087e7f339e1c1c036fd278a5992"
     },
     "test/recordings-api.test.mjs": {
-      "bytes": 26488,
-      "sha256": "687c6858c3d91b29138f82e1cf7aa5a2a801b86ae0c09d9c77cefabfb727f594"
+      "bytes": 28213,
+      "sha256": "ed4e8f015725f9fcc1ff00706c7ede54452a65169328b5a094bfcbd00e9ba87f"
     },
     "test/recordings-availability.test.mjs": {
       "bytes": 3304,
@@ -541,8 +541,8 @@
       "sha256": "96958cf7d990539fe5a3ec6545576814de84213c73d9c3763108eeba17b605e6"
     },
     "test/recordings-clips.test.mjs": {
-      "bytes": 74142,
-      "sha256": "d99001d43f83b63ec6b78d5a7b5ea411ee9b2bb1a0851af4e812d6dca09cfe3b"
+      "bytes": 76083,
+      "sha256": "28bf05715def7da7195e241318bee2114d4732b1fc9380fa7073721be67dc682"
     },
     "test/recordings-download.test.mjs": {
       "bytes": 8239,
@@ -649,8 +649,8 @@
       "sha256": "e15125a11eea4e203a95d222e26d4b1078a37d8d07d3507acaab1eccb7cd40c1"
     },
     "docs/recordings-progressive.md": {
-      "bytes": 17565,
-      "sha256": "0c0b1fc678ccf22b0de20cab88b3211ae6d7b43ce0987bd213095024abe29502"
+      "bytes": 17785,
+      "sha256": "3ca3beb11d1d5ba7deff80055d7839166e7657e46c83463dee4a9f314b20b8d2"
     },
     "src/recordings-playback-sessions.mjs": {
       "bytes": 3273,
@@ -673,8 +673,8 @@
       "sha256": "2f47c7c941e3f44a3f5e22bb739fefb938d923fbb755296584000a762e5efcad"
     },
     "test/recordings-progressive.test.mjs": {
-      "bytes": 40546,
-      "sha256": "d7d50241af4dbf2ece3dab5148944216df28ddadd84c074183e3034a666bbcaf"
+      "bytes": 42636,
+      "sha256": "a6bd49b683fa741d7acb7988fc322dc414650c9a3451100b884ca1b9aa49c598"
     },
     "tools/check-progressive-media.mjs": {
       "bytes": 5168,
@@ -689,20 +689,20 @@
       "sha256": "16d152b6bc9a885635ea20844ef54f0f7bc5491391039dcefc484ec44c823471"
     },
     "src/recordings-timing.mjs": {
-      "bytes": 6437,
-      "sha256": "5c49834a79e224806ca92d54d800843d5072d9c955016220ddbd84f219c7ab35"
+      "bytes": 7518,
+      "sha256": "294696c220e6a88e9017eba36bf5a9bf374dc3234e2322d3933cd377fb786a61"
     },
     "test/recordings-native-media.test.mjs": {
-      "bytes": 994,
-      "sha256": "15b3fff2070b1aa63ff87b4b66ff5b016b4af92238ff6af899b02060aba9bdf4"
+      "bytes": 3592,
+      "sha256": "bae1f0a3b8bad5674e4bd2957b78d6d8021cd91d4c53c56bd2051702e346fcfe"
     },
     "test/recordings-timing.test.mjs": {
-      "bytes": 9572,
-      "sha256": "cc009cb44cdfbb129cf56064ad11730fcc0202b47436284ebb1221467577a074"
+      "bytes": 13658,
+      "sha256": "e999f25e711ac5e9d94964facdd9c51e7b7b31484c739cbdd133a47b7b24da38"
     },
     "tools/check-native-recording-media.mjs": {
-      "bytes": 8333,
-      "sha256": "29579cbb56342fefe47fc1062a1cdd8807935e7e820ff0cf6f364aceeacd3909"
+      "bytes": 10503,
+      "sha256": "eeb3da4cef1083ae9f29bccbd9d200916c40282f11f10b26fb150b484c585acc"
     },
     "docs/runtime-logging.md": {
       "bytes": 2653,
@@ -731,6 +731,18 @@
     "test/recordings-background-paging.test.mjs": {
       "bytes": 11165,
       "sha256": "665060c467fb3b1d8647c529240ae23b5f2928861ab053b33982e5bc7501900e"
+    },
+    "src/recordings-playback-models.mjs": {
+      "bytes": 3213,
+      "sha256": "e3af0ee220106b2e0fcc29db8dd6f252134ed185eb55d32669eb2b4e3e760210"
+    },
+    "test/helpers/recordings-variable-cadence.mjs": {
+      "bytes": 584,
+      "sha256": "115bac0063c6204e9fcc35b0be2fd99e3529c697f7152c18fcea232ff1122802"
+    },
+    "test/recordings-playback-models.test.mjs": {
+      "bytes": 8916,
+      "sha256": "06a668993764a6b3fe42788d3386c8f1f4eafbf6a982113c4653f69582980467"
     }
   }
 }
