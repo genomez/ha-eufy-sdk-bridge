@@ -35,14 +35,19 @@ export function validateExperiments(value) {
   };
 }
 
+const noFollow = (fs.constants.O_NONBLOCK ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
+const regular = (s) => s.isFile() && s.nlink === 1 && s.size <= 4096;
+const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+
 /** Bounded regular-file reads; invalid, missing or linked files are always inert. */
 function read(file) {
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  const before = fs.lstatSync(file);
+  if (!regular(before)) throw new Error("invalid");
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | noFollow);
   try {
     const s = fs.fstatSync(fd),
       l = fs.lstatSync(file);
-    if (!s.isFile() || l.isSymbolicLink() || s.nlink !== 1 || s.size > 4096 || s.ino !== l.ino)
-      throw new Error("invalid");
+    if (!regular(s) || !regular(l) || !sameFile(before, s) || !sameFile(s, l)) throw new Error("invalid");
     const bytes = Buffer.alloc(4097);
     const n = fs.readSync(fd, bytes, 0, bytes.length, 0);
     if (n > 4096) throw new Error("invalid");
@@ -59,6 +64,7 @@ function read(file) {
 export function createPlaybackExperiments(root) {
   const file = path.join(root, "experiments.json"),
     ledger = path.join(root, "experiments-state.json");
+  let failedKey;
   function armed() {
     try {
       const r = read(file),
@@ -82,32 +88,49 @@ export function createPlaybackExperiments(root) {
       } catch (e) {
         if (e.code !== "ENOENT") return null;
       }
-      return used < overrides.maxClips ? { key, used, overrides } : null;
+      return key !== failedKey && used < overrides.maxClips ? { key, used, overrides } : null;
     } catch {
       return null;
     }
   }
+  function persist(a, used) {
+    try {
+      let before;
+      try {
+        before = fs.lstatSync(ledger);
+        if (!regular(before)) throw new Error("invalid");
+      } catch (e) {
+        if (e.code !== "ENOENT") throw e;
+      }
+      const flags = fs.constants.O_WRONLY | noFollow | (before ? 0 : fs.constants.O_CREAT | fs.constants.O_EXCL);
+      const fd = fs.openSync(ledger, flags, 0o600);
+      try {
+        const s = fs.fstatSync(fd),
+          l = fs.lstatSync(ledger);
+        if (!regular(s) || !regular(l) || !sameFile(s, l) || (before && !sameFile(before, s)))
+          throw new Error("invalid");
+        fs.ftruncateSync(fd, 0);
+        fs.writeFileSync(fd, JSON.stringify({ key: a.key, used }));
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      return { ...a.overrides };
+    } catch {
+      // Session creation and dispatch stay disarmed until the owner changes the arming file.
+      failedKey = a.key;
+      return undefined;
+    }
+  }
   return {
-    peek: () => armed()?.overrides,
+    peek() {
+      const a = armed();
+      // Persist the unchanged budget to prove writability without consuming a dispatch.
+      return a ? persist(a, a.used) : undefined;
+    },
     take() {
       const a = armed();
-      if (!a) return undefined;
-      try {
-        const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | (fs.constants.O_NOFOLLOW ?? 0);
-        const fd = fs.openSync(ledger, flags, 0o600);
-        try {
-          const s = fs.fstatSync(fd);
-          if (!s.isFile() || s.nlink !== 1 || fs.lstatSync(ledger).isSymbolicLink()) return undefined;
-          fs.ftruncateSync(fd, 0);
-          fs.writeFileSync(fd, JSON.stringify({ key: a.key, used: a.used + 1 }));
-          fs.fsyncSync(fd);
-        } finally {
-          fs.closeSync(fd);
-        }
-        return { ...a.overrides };
-      } catch {
-        return undefined;
-      }
+      return a ? persist(a, a.used + 1) : undefined;
     },
   };
 }

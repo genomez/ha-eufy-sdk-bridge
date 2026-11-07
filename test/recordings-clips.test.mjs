@@ -14,6 +14,7 @@ import {
 } from "../src/recordings-clips.mjs";
 import { temporary, until, harness, seed, row, tick, inventory } from "./helpers/recordings-fixtures.mjs";
 import { loadConfig } from "../src/config.mjs";
+import { playbackExperiments, playbackSessionIcePolicy } from "../src/recordings-experiments.mjs";
 
 const clean = {
   admissionGate: 0,
@@ -819,6 +820,98 @@ test("a disk-full pull fails as storage and removes its spool", async (t) => {
   assert.equal(state(f, "a").reason, "storage");
   assert.deepEqual(fs.readdirSync(f.root), []);
 });
+
+test("unarmed read-only capture storage fails before playback dispatch", async (t) => {
+  const f = await fixture(t);
+  const open = fs.openSync;
+  let creations = 0;
+  t.mock.method(fs, "openSync", (file, flags, mode) => {
+    if (String(file).endsWith(".hevc")) {
+      creations++;
+      assert.equal(flags, "wx");
+      assert.equal(mode, 0o600);
+      throw Object.assign(new Error("read-only capture storage"), { code: "EROFS" });
+    }
+    return open(file, flags, mode);
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => !f.jobs.busy());
+  assert.equal(creations, 1);
+  assert.equal(f.calls.length, 0);
+  assert.equal(state(f, "a").state, "failed");
+  assert.equal(state(f, "a").reason, "storage");
+});
+
+test("ordinary playback owns its exclusive private capture file before pull", async (t) => {
+  let pulls = 0;
+  const f = await fixture(t, {
+    pull: async (_, opts) => {
+      pulls++;
+      const files = fs.readdirSync(f.root);
+      assert.equal(files.length, 1);
+      assert.match(files[0], /\.hevc$/);
+      const file = path.join(f.root, files[0]);
+      assert.equal(fs.statSync(file).size, 0);
+      if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+      assert.throws(() => fs.openSync(file, "wx", 0o600), { code: "EEXIST" });
+      opts.video(Buffer.from("a"));
+      opts.video(Buffer.from("b"));
+      return clean;
+    },
+  });
+  await ready(f, "a");
+  assert.equal(pulls, 1);
+});
+
+test("read-only download spool storage fails before dispatch without creating a playback file", async (t) => {
+  const f = await fixture(t, { experiments: { take: () => ({ mode: "download" }) } });
+  const open = fs.openSync;
+  let spools = 0;
+  t.mock.method(fs, "openSync", (file, ...args) => {
+    assert.equal(String(file).endsWith(".hevc"), false);
+    if (String(file).endsWith(".bin")) {
+      spools++;
+      throw Object.assign(new Error("read-only spool storage"), { code: "EROFS" });
+    }
+    return open(file, ...args);
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => !f.jobs.busy());
+  assert.equal(spools, 1);
+  assert.equal(f.calls.length, 0);
+  assert.equal(state(f, "a").reason, "storage");
+});
+
+for (const code of ["EROFS", "EACCES"])
+  for (const sessionFirst of [false, true])
+    test(`${code} ledger prevents dispatch overrides with session first=${sessionFirst}`, async (t) => {
+      let pulls = 0;
+      const f = await fixture(t, {
+        experiments: { take: () => playbackExperiments(path.dirname(f.root)).take() },
+        pull: async (_, opts) => {
+          pulls++;
+          assert.equal(opts.experiment, undefined);
+          opts.video(Buffer.from("a"));
+          opts.video(Buffer.from("b"));
+          return clean;
+        },
+      });
+      const root = path.dirname(f.root),
+        ice = playbackSessionIcePolicy(root),
+        ledger = path.join(root, "experiments-state.json");
+      fs.writeFileSync(path.join(root, "experiments.json"), '{"icePolicy":"all","playSpeed":4,"maxClips":5}');
+      assert.equal(playbackExperiments(root).take().playSpeed, 4);
+      const open = fs.openSync;
+      t.mock.method(fs, "openSync", (file, flags, ...args) => {
+        if (file === ledger && flags & fs.constants.O_WRONLY) throw Object.assign(new Error(code), { code });
+        return open(file, flags, ...args);
+      });
+      if (sessionFirst) assert.equal(ice(), undefined);
+      await ready(f, "a");
+      assert.equal(pulls, 1);
+      assert.equal(f.jobs.diagnostics().lastJob.experiment, undefined);
+      assert.equal(ice(), undefined);
+    });
 
 test("clip safety arming has no filesystem dependency", () => {
   let save;

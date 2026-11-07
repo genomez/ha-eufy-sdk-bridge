@@ -571,11 +571,6 @@ export function createClipJobs({
           if (j.controller.signal.aborted) throw fault("station_error");
           if (j.state !== "pulling") state(j, "pulling");
           try {
-            if (fd === undefined) {
-              j.input = path.join(root, `${name}.hevc`);
-              j.output = path.join(root, `${name}.mp4`);
-              fd = fs.openSync(j.input, "wx", 0o600);
-            }
             room(data.length);
             writeAll(fd, data);
             first ??= monotonic();
@@ -624,6 +619,14 @@ export function createClipJobs({
                   throw fault("storage");
                 }
               };
+            } else if (fd === undefined) {
+              try {
+                j.input = path.join(root, `${name}.hevc`);
+                j.output = path.join(root, `${name}.mp4`);
+                fd = fs.openSync(j.input, "wx", 0o600);
+              } catch {
+                throw fault("storage");
+              }
             }
             return pull(j.selection, pullOptions);
           });
