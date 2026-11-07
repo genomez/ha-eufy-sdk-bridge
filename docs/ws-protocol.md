@@ -143,8 +143,9 @@ type Cover = {
 };
 ```
 
-Catalogs contain at most 100 newest entries, or the single requested focus event;
-there is no cursor or station paging. Known times precede unknown times.
+Catalog responses contain at most 100 newest entries, or the single requested focus event;
+there is no public cursor. Bounded internal station continuation is described below.
+Known times precede unknown times.
 `if_due` returns cached data promptly, records a camera/socket interest for 60 s,
 and requests at most one station-wide refresh per 120 s, including failed exchanges.
 Transient SDK deferrals (`observing`, `busy`, `quiet_period`, `renewal_due`,
@@ -167,6 +168,31 @@ The background schedule starts five minutes after enrollment and requests the
 latest station window every five minutes, subject to the shared catalog interval
 and all SDK gates. It skips unhealthy sessions and pauses during live view,
 playback or an unresolved playback safety hold. It never acquires a session.
+Background continuation requires a possible overflow: a consistent full page of
+20 distinct normalized rows, all with valid start times and all absent from the
+preceding successful latest-window checkpoint. The checkpoint is process-local,
+updates only after a successful latest merge (browse or background), and resets
+on restart or scope/enrollment change. Startup without a checkpoint never grants
+background continuation; ordinary browse-driven paging remains available.
+The overflow cycle stops after merging a page containing an already-cataloged
+row with authenticated playback authority, or at the existing short-page,
+cursor, retention, four-extra-page or 60-second SDK-window boundary. Existing
+intra-cycle overlap, invalid-time and unsupported-latch guards still apply.
+Retained rows without playback authority do not count as covered overlap.
+Exactly 20 new events may cause one unnecessary page; the heuristic and bounds
+cannot guarantee completeness or cross-day history recovery.
+
+`RECORDINGS_BACKGROUND_PAGING` defaults to `true`; `false` is a hard disable for
+background overflow continuation, leaving latest refreshes and browse paging
+unchanged. Environment changes require restart. With the environment enabled,
+`background-paging.json` in the recordings root provides a live switch:
+`{"version":1,"enabled":false}` disables it and `{"version":1,"enabled":true}`
+enables it. The file is re-read at every page admission, without restart; an
+already dispatched read may finish. Missing files use the enabled default;
+malformed, oversized, linked or unreadable files disable paging. Replace the
+small regular file atomically when changing it. Re-enabling permits future
+overflow cycles, without resuming a stopped cycle or clearing the unsupported latch.
+
 After latest or deeper merges, uncached covers with a validated selector and a
 known start within the last 24 hours are eligible for background prefetch, newest
 first. Future and unknown starts are excluded. Background reads are serialized
@@ -690,10 +716,11 @@ Integration `f7b7f4e` also accepts a five-camera roster from a 3o-style bridge,
 so install it before or together with the new bridge.
 
 A catalog cycle starts with the same latest-20 station-wide query, no more often
-than two minutes. While a camera folder has a live 60-second interest, it may
+than two minutes. With live 60-second folder interest or the background overflow
+eligibility described above, it may
 perform four additional reads (100 station rows total). The private SDK cursor
-uses the existing `start_id`, `end_id`, `count` payload shape; its semantics remain
-unverified on hardware. Each read uses independent station arbitration, renewal
+uses the existing `start_id`, `end_id`, `count` payload shape; coverage remains
+firmware-dependent. Each read uses independent station arbitration, renewal
 reserve, abort/preemption and a five-second gap. Covers retain priority over an
 unsent deeper read. No browse read connects to or wakes a child camera.
 
@@ -712,7 +739,7 @@ state-refresh preemption does not disable later cycles. Three consecutive deeper
 exchange failures with `timeout` or `invalid_reply` stop paging for the process;
 a valid deeper page resets that count. Aborts/preemption and deferred attempts
 never increment it. Latest-window reads do not reset it. Retry opportunities still
-require interest, the two-minute catalog interval, a five-second completion gap,
+require browse interest or background eligibility, the two-minute catalog interval, a five-second completion gap,
 one feature read in flight and at most four extra pages per cycle.
 
 `recordings.set_pacing` updates process-local recording cover pacing through the
@@ -782,6 +809,15 @@ lastAtMs}, retries}`. Times are epoch milliseconds or null. `catalogRuns` and
   from either source. `queued` counts eligible uncached prefetch rows, including
   negative waits. All counters are process-local; background diagnostics contain
   no identifiers, paths or row data;
+- `background.paging`: `{enabled, runs, pages, stopReasons, lastTrigger}`.
+  `runs` counts admitted overflow cycles; `pages` counts deeper adapter calls,
+  including SDK deferrals, not confirmed wire sends. `stopReasons` is a detached
+  map of counts keyed by fixed enums: `known_row`, `short_page`, `cursor_end`,
+  `retention`, `retention_cap`, `page_limit`, `window_expired`, `disabled`,
+  `unsupported_stopped`, `preempted`, `superseded`, `store_unavailable`,
+  `invalid_latest`, or the finite internal SDK reasons above. `lastTrigger` is
+  `none`, `no_checkpoint`, `not_overflow`, `overflow`, `disabled` or
+  `unsupported_stopped`. These are process-local aggregates with no row data;
 - `coverCache`: `{files, bytes, pending}`;
 - `unknownStartTimeShapes`: at most 32 `{shape, count}` entries. At most 32 code
   points from each raw start token are masked: numbers become `9`, letters become

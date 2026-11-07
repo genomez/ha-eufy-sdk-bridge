@@ -1,6 +1,7 @@
 import path from "node:path";
 import { playbackExperiments } from "./recordings-experiments.mjs";
 import { readProgressiveSettings } from "./recordings-progressive-settings.mjs";
+import { backgroundPagingEnabled } from "./recordings-background-paging.mjs";
 import { playableThreshold } from "./recordings-job-evidence.mjs";
 import { createClipJobs, armClipSafety } from "./recordings-clips.mjs";
 import { randomBytes } from "node:crypto";
@@ -53,6 +54,15 @@ export function createRecordings(
   const lastTestRead = new Map();
   const testRereadActive = () => mono() < testReread.untilMono;
   const backgroundEnabled = () => enabled() && ctx.cfg.recordings?.background !== false;
+  const pagingEnabled = () =>
+    backgroundEnabled() &&
+    backgroundPagingEnabled(
+      ctx.cfg.recordings?.root ?? "/data/recordings",
+      ctx.cfg.recordings?.backgroundPaging !== false,
+    );
+  let latestCheckpoint = null,
+    backgroundPageCycle = null;
+  const backgroundPaging = { runs: 0, pages: 0, stopReasons: {}, lastTrigger: "none" };
   const background = {
     lastCatalogAtMs: null,
     catalogRuns: 0,
@@ -225,6 +235,7 @@ export function createRecordings(
     notificationTimer?.unref?.();
   }
   function preempt() {
+    finishBackgroundPaging(backgroundPageCycle, "preempted");
     epoch++;
     cancel(pageTimer);
     pageTimer = null;
@@ -249,8 +260,12 @@ export function createRecordings(
       cancel(timer);
       timer = null;
     }
-    if ((flight?.job && !interests.has(flight.job.browseId)) || (flight?.kind === "page" && !interests.size)) preempt();
-    if (!interests.size) {
+    if (
+      (flight?.job && !interests.has(flight.job.browseId)) ||
+      (flight?.kind === "page" && !flight.background && !interests.size)
+    )
+      preempt();
+    if (!interests.size && !pendingPage?.backgroundPaging) {
       cancel(pageTimer);
       pageTimer = null;
       pendingPage = null;
@@ -530,7 +545,14 @@ export function createRecordings(
     }
   }
   const activeCameras = () => new Set([...interests.values()].filter((i) => i.until > mono()).map((i) => i.cameraId));
-  function stopPaging() {
+  function finishBackgroundPaging(cycle, reason) {
+    if (!cycle?.backgroundPaging || cycle.backgroundPaging.done) return;
+    cycle.backgroundPaging.done = true;
+    backgroundPaging.stopReasons[reason] = (backgroundPaging.stopReasons[reason] ?? 0) + 1;
+    if (backgroundPageCycle?.backgroundPaging === cycle.backgroundPaging) backgroundPageCycle = null;
+  }
+  function stopPaging(cycle) {
+    finishBackgroundPaging(cycle, "unsupported_stopped");
     pagingStatus = "unsupported_stopped";
     pendingPage = null;
     cancel(pageTimer);
@@ -553,19 +575,20 @@ export function createRecordings(
     );
   }
   function deeper(cycle, result) {
-    if (pagingStatus === "unsupported_stopped" || !result.page || result.page.count === 0) return;
+    const stop = (reason) => finishBackgroundPaging(cycle, reason);
+    if (pagingStatus === "unsupported_stopped") return stop("unsupported_stopped");
+    if (cycle.backgroundPaging && !pagingEnabled()) return stop("disabled");
     // The latest window may contain unknown times; only consistent evidence can seed a cursor.
-    if (!pageValid(result.page)) return;
-    if (
-      result.page.count < 20 ||
-      result.page.nextBefore <= 1 ||
-      cycle.extra >= 4 ||
-      result.page.oldestAtMs < now() - LIMITS.ttl
-    )
-      return;
-    const active = activeCameras();
+    if (!pageValid(result.page)) return stop("invalid_latest");
+    if (cycle.backgroundPaging && result.rows.some((r) => cycle.known.has(r.eventId))) return stop("known_row");
+    if (result.page.count < 20) return stop("short_page");
+    if (result.page.nextBefore <= 1) return stop("cursor_end");
+    if (cycle.extra >= 4) return stop("page_limit");
+    if (result.page.oldestAtMs < now() - LIMITS.ttl) return stop("retention");
+    const active = cycle.backgroundPaging ? new Set(cycle.s.cameras.map((c) => c.cameraId)) : activeCameras();
     const retained = store.snapshot.rows;
-    if (![...active].some((id) => retained.filter((r) => r.cameraId === id).length < LIMITS.cameraRows)) return;
+    if (![...active].some((id) => retained.filter((r) => r.cameraId === id).length < LIMITS.cameraRows))
+      return stop("retention_cap");
     pendingPage = { ...cycle, previous: result.page };
     pageTimer = schedule(readOlder, LIMITS.coverGap);
     pageTimer?.unref?.();
@@ -577,9 +600,20 @@ export function createRecordings(
       !cycle ||
       !current(cycle.s, cycle.generation) ||
       !scopeValid ||
-      !activeCameras().size ||
+      (!cycle.backgroundPaging && !activeCameras().size) ||
       mono() - cycle.startedAt >= LIMITS.interest
     ) {
+      finishBackgroundPaging(cycle, "window_expired");
+      pendingPage = null;
+      return;
+    }
+    if (cycle.backgroundPaging && (!pagingEnabled() || pagingStatus === "unsupported_stopped")) {
+      finishBackgroundPaging(cycle, pagingStatus === "unsupported_stopped" ? "unsupported_stopped" : "disabled");
+      pendingPage = null;
+      return;
+    }
+    if (cycle.backgroundPaging && backgroundReady() !== "ready") {
+      finishBackgroundPaging(cycle, "offline");
       pendingPage = null;
       return;
     }
@@ -591,12 +625,16 @@ export function createRecordings(
     pendingPage = null;
     refresh = { state: "scheduled", reason: "none", retryAfterMs: null };
     const controller = new AbortController();
-    flight = { controller, kind: "page", startedAt: mono() };
+    flight = { controller, kind: "page", background: !!cycle.backgroundPaging, startedAt: mono() };
     void (async () => {
       try {
         const result = await bounded(
           "page",
-          (opts) => adapter.catalog(cycle.s.sdkScope, { ...opts, beforeRecordId: cycle.previous.nextBefore }),
+          (opts) => {
+            if (cycle.backgroundPaging && !pagingEnabled()) return { status: "deferred", reason: "disabled" };
+            if (cycle.backgroundPaging) backgroundPaging.pages++;
+            return adapter.catalog(cycle.s.sdkScope, { ...opts, beforeRecordId: cycle.previous.nextBefore });
+          },
           cycle.s,
           cycle.generation,
         );
@@ -605,8 +643,9 @@ export function createRecordings(
           // Admission failures and refresh/foreground aborts abandon only this cycle.
           // Count only failed exchanges, never preemption, toward the process limit.
           if (result.status !== "deferred" && ["timeout", "invalid_reply"].includes(result.reason)) {
-            if (++deeperFailures >= 3) stopPaging();
+            if (++deeperFailures >= 3) stopPaging(cycle);
           }
+          finishBackgroundPaging(cycle, reasonOf(result.reason));
           return;
         }
         lastPageCount = result.page?.count ?? 0;
@@ -619,7 +658,7 @@ export function createRecordings(
           result.page.newestAtMs > cycle.previous.oldestAtMs ||
           result.rows.some((row) => cycle.seen.has(row.eventId))
         ) {
-          stopPaging();
+          stopPaging(cycle);
           return;
         }
         deeperFailures = 0;
@@ -637,6 +676,7 @@ export function createRecordings(
         deeper({ ...cycle, extra: cycle.extra + 1 }, result);
       } catch {
         // Local persistence failures provide no evidence that station paging is unsupported.
+        finishBackgroundPaging(cycle, "store_unavailable");
       } finally {
         policy.completeCover();
         await persistBudget().catch(() => {});
@@ -689,6 +729,7 @@ export function createRecordings(
     refresh = { state: "scheduled", reason: "none", retryAfterMs: null };
     const s = scope,
       generation = epoch;
+    finishBackgroundPaging(backgroundPageCycle, "superseded");
     cancel(pageTimer);
     pageTimer = null;
     pendingPage = null;
@@ -719,7 +760,16 @@ export function createRecordings(
       try {
         await persistBudget();
         if (!current(s, generation) || controller.signal.aborted) return;
-        const result = await bounded("catalog", (opts) => adapter.catalog(s.sdkScope, opts), s, generation);
+        let sdkStartedAt;
+        const result = await bounded(
+          "catalog",
+          (opts) => {
+            sdkStartedAt = mono();
+            return adapter.catalog(s.sdkScope, opts);
+          },
+          s,
+          generation,
+        );
         if (!current(s, generation)) return;
         if (result.status !== "ok") {
           attempt.outcome = ["deferred", "unavailable"].includes(result.status) ? result.status : "failed";
@@ -746,22 +796,66 @@ export function createRecordings(
         }
         lastPageCount = result.page?.count ?? result.rows.length;
         collectDiagnostics(result);
+        const validLatest = result.rows.filter((r) => r.timeStatus === "valid" && Number.isSafeInteger(r.startedAtMs));
+        const overflow =
+          latestCheckpoint !== null &&
+          pageValid(result.page) &&
+          result.page.count === 20 &&
+          validLatest.length === 20 &&
+          new Set(validLatest.map((r) => r.eventId)).size === 20 &&
+          validLatest.every((r) => !latestCheckpoint.has(r.eventId));
+        const backgroundEligible =
+          source === "background" && overflow && pagingEnabled() && pagingStatus !== "unsupported_stopped";
+        const known = backgroundEligible
+          ? new Set(
+              store.snapshot.rows
+                .filter(
+                  (r) =>
+                    r.timeStatus === "valid" &&
+                    Number.isSafeInteger(r.startedAtMs) &&
+                    r.startedAtMs >= now() - LIMITS.ttl &&
+                    safePlaybackSelector(r.playbackSelector, r, s, store.key),
+                )
+                .map((r) => r.eventId),
+            )
+          : null;
         await store.mergeCatalog(
           s,
           result.rows.filter((r) => r.startedAtMs === null || r.startedAtMs >= now() - LIMITS.ttl),
           () => current(s, generation),
         );
         if (!current(s, generation)) return;
+        if (source === "background")
+          backgroundPaging.lastTrigger = !pagingEnabled()
+            ? "disabled"
+            : pagingStatus === "unsupported_stopped"
+              ? "unsupported_stopped"
+              : latestCheckpoint === null
+                ? "no_checkpoint"
+                : overflow
+                  ? "overflow"
+                  : "not_overflow";
+        latestCheckpoint = new Set(validLatest.map((r) => r.eventId));
         dirty = false;
         attempt.outcome = "ok";
         attempt.reason = "none";
         refresh = { state: "idle", reason: "none", retryAfterMs: null };
         notify("catalog");
         armBackground();
-        deeper(
-          { s, generation, startedAt: mono(), extra: 0, seen: new Set(result.rows.map((r) => r.eventId)) },
-          result,
-        );
+        const pageCycle = {
+          s,
+          generation,
+          startedAt: sdkStartedAt,
+          extra: 0,
+          seen: new Set(result.rows.map((r) => r.eventId)),
+          known,
+        };
+        if (backgroundEligible) {
+          backgroundPaging.runs++;
+          pageCycle.backgroundPaging = { done: false };
+          backgroundPageCycle = pageCycle;
+        }
+        deeper(pageCycle, result);
       } catch (error) {
         attempt.outcome = "failed";
         attempt.reason = error?.code === "recordings_invalid" ? "invalid_reply" : "store_unavailable";
@@ -975,6 +1069,7 @@ export function createRecordings(
         lastCatalogTime: snapshot.lastSuccessfulQueryAtMs,
         lastCatalogAttempt: lastCatalogAttempt ? { ...lastCatalogAttempt } : null,
         background: {
+          paging: { enabled: pagingEnabled(), ...backgroundPaging, stopReasons: { ...backgroundPaging.stopReasons } },
           pacing: { ...pacing },
           pacingSetAtMs,
           coverReads: { maxBuckets: 16, samplesPerBucket: 512, buckets: measurements.snapshot() },
@@ -1035,6 +1130,7 @@ export function createRecordings(
         const binding = recordingBinding(store.key, capturedAccount, adapter.enrollment(records));
         const signature = (s) => JSON.stringify([s.scopeId, ...s.cameras.map((c) => c.cameraId).sort()]);
         if (!scope || signature(scope) !== signature(binding)) {
+          latestCheckpoint = null;
           await clips.invalidate();
           preempt();
           interests.clear();
@@ -1055,6 +1151,7 @@ export function createRecordings(
         await clips.invalidate();
         preempt();
         scopeValid = false;
+        latestCheckpoint = null;
         if (adapter.account() !== account) scope = undefined;
         interests.clear();
       }

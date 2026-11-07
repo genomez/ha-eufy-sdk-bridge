@@ -122,6 +122,7 @@ export function loadConfig(env = process.env) {
         .map((v) => v.trim().toUpperCase())
         .filter(Boolean),
       background: env.RECORDINGS_BACKGROUND == null ? true : truthy(env.RECORDINGS_BACKGROUND),
+      backgroundPaging: env.RECORDINGS_BACKGROUND_PAGING == null ? true : truthy(env.RECORDINGS_BACKGROUND_PAGING),
       root: env.RECORDINGS_ROOT || "/data/recordings",
     },
     selfHost: env.BRIDGE_SELF_HOST || "127.0.0.1",

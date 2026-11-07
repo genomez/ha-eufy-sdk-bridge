@@ -550,6 +550,7 @@ test("background diagnostics are detached aggregate values with no row data", as
   const h = await harness(t, { background: true });
   const value = h.manager.diagnostics().background;
   assert.deepEqual(value, {
+    paging: { enabled: true, runs: 0, pages: 0, stopReasons: {}, lastTrigger: "none" },
     pacing: { prefetchGap: 3_000, coverGap: 500, coverRate: 20, coverQuiet: 500 },
     pacingSetAtMs: h.clocks.now(),
     coverReads: {
