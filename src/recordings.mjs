@@ -1,5 +1,6 @@
 import path from "node:path";
 import { playbackExperiments } from "./recordings-experiments.mjs";
+import { readProgressiveSettings } from "./recordings-progressive-settings.mjs";
 import { playableThreshold } from "./recordings-job-evidence.mjs";
 import { createClipJobs, armClipSafety } from "./recordings-clips.mjs";
 import { randomBytes } from "node:crypto";
@@ -111,13 +112,14 @@ export function createRecordings(
         .trim()
         .toUpperCase(),
     );
-  const progressivePlayableMs = playableThreshold(
-    ctx.cfg.recordings?.progressivePlayableMs ?? clipOptions.progressivePlayableMs,
-  );
+  const progressivePolicy = () =>
+    readProgressiveSettings(ctx.cfg.recordings?.root ?? "/data/recordings", {
+      fps: ctx.cfg.recordings?.progressiveFps,
+      playableMs: playableThreshold(ctx.cfg.recordings?.progressivePlayableMs ?? clipOptions.progressivePlayableMs),
+    });
   const clips = createClipJobs({
     ...clipOptions,
-    progressiveFps: ctx.cfg.recordings?.progressiveFps ?? clipOptions.progressiveFps,
-    progressivePlayableMs,
+    progressivePolicy,
     root: path.join(ctx.cfg.recordings?.root ?? "/data/recordings", "clips"),
     enabled: playbackEnabled,
     experiments: playbackExperiments(ctx.cfg.recordings?.root),
@@ -137,27 +139,37 @@ export function createRecordings(
         });
     },
   });
-  const base = () => ({
-    version: 1,
-    browseOnly: !playbackEnabled(),
-    playback: playbackEnabled(),
-    ...(playbackEnabled() &&
-      ctx.cfg.recordings?.progressiveFps === 15 && { progressivePlayback: true, progressivePlayableMs }),
-    enabled:
-      enabled() &&
-      adapter.supported() &&
-      !!scope &&
-      scopeValid &&
-      adapter.account() === account &&
-      !storeFailed &&
-      !stopped,
-    scopeId: adapter.account() === account ? (scope?.scopeId ?? null) : null,
-    timezone: "America/Chicago",
-    stationWindow: 20,
-    pageSize: 100,
-    coverBudget: LIMITS.folderBudget,
-  });
+  const base = () => {
+    const effective = progressivePolicy();
+    return {
+      version: 1,
+      browseOnly: !playbackEnabled(),
+      playback: playbackEnabled(),
+      progressivePolicy: { ...effective },
+      ...(playbackEnabled() &&
+        effective.fps === 15 && { progressivePlayback: true, progressivePlayableMs: effective.playableMs }),
+      enabled:
+        enabled() &&
+        adapter.supported() &&
+        !!scope &&
+        scopeValid &&
+        adapter.account() === account &&
+        !storeFailed &&
+        !stopped,
+      scopeId: adapter.account() === account ? (scope?.scopeId ?? null) : null,
+      timezone: "America/Chicago",
+      stationWindow: 20,
+      pageSize: 100,
+      coverBudget: LIMITS.folderBudget,
+    };
+  };
   let lastCapability = JSON.stringify(base());
+  let progressivePolicyTimer;
+  function armProgressivePolicy() {
+    if (stopped || progressivePolicyTimer) return;
+    progressivePolicyTimer = setInterval(publishCapability, 1000);
+    progressivePolicyTimer?.unref?.();
+  }
   function publishCapability() {
     const recordings = base();
     const signature = JSON.stringify(recordings);
@@ -1003,6 +1015,7 @@ export function createRecordings(
         await store.load();
         loaded = true;
         clips.load();
+        armProgressivePolicy();
         policy.restore(store.snapshot.history);
       } catch {
         storeFailed = true;
@@ -1204,16 +1217,13 @@ export function createRecordings(
     },
     playbackOpen(owner, args, source) {
       fields(args, ["cameraId", "eventId", "requestKey"]);
-      if (
-        !base().progressivePlayback ||
-        typeof args.requestKey !== "string" ||
-        !/^[A-Za-z0-9_-]{16,64}$/.test(args.requestKey)
-      )
+      if (!playbackEnabled() || typeof args.requestKey !== "string" || !/^[A-Za-z0-9_-]{16,64}$/.test(args.requestKey))
         throw failure("invalid");
       camera(args.cameraId);
       if (!validId(args.eventId, "e")) throw failure("invalid");
       const previous = clips.playbackExisting(owner, args.requestKey, args.cameraId, args.eventId);
       if (previous) return previous;
+      if (!clips.progressiveAllowed(args.cameraId, args.eventId)) throw failure("invalid");
       if (!clips.playbackCapacity()) throw failure("store_unavailable");
       const prepared = api.clipPrepare(
         { cameraId: args.cameraId, eventId: args.eventId },
@@ -1306,6 +1316,7 @@ export function createRecordings(
     },
     async stop() {
       stopped = true;
+      clearInterval(progressivePolicyTimer);
       preempt();
       cancel(backgroundTimer);
       publishCapability();

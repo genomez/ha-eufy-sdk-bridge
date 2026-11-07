@@ -156,7 +156,12 @@ test("ws: auth.status, unknown cmd, and the auth gate", async () => {
   const listed = await wsCall(ctx, { id: 4, cmd: "devices.list" });
   assert.equal(listed[0].ok, true);
   assert.equal(listed[0].devices.length, 3);
-  assert.deepEqual((await wsCall(ctx, { id: 5, cmd: "config.get" }))[0], { id: 5, ok: true, pollMs: 600000 });
+  assert.deepEqual((await wsCall(ctx, { id: 5, cmd: "config.get" }))[0], {
+    id: 5,
+    ok: true,
+    pollMs: 600000,
+    logging: ctx.logging.snapshot(),
+  });
   httpServer.close();
 });
 

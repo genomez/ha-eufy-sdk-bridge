@@ -7,7 +7,7 @@ const subscriptions = new WeakMap();
 export function wireDeviceEvents(ctx) {
   const existing = subscriptions.get(ctx);
   if (existing) return existing;
-  const { eufy, DEBUG, dbg, DETECTION_EVENTS, FORWARDED_EVENTS } = ctx;
+  const { eufy, dbg, DETECTION_EVENTS, FORWARDED_EVENTS } = ctx;
   const listeners = [];
   const on = (event, listener) => {
     eufy.on(event, listener);
@@ -74,11 +74,10 @@ export function wireDeviceEvents(ctx) {
       }
     }
   });
-  if (DEBUG) {
-    on("p2pConnect", (sn) => dbg(`p2pConnect station=${sn}`));
-    on("p2pClose", (sn) => dbg(`p2pClose station=${sn}`));
-    on("commandAck", (info) => dbg(`commandAck ${JSON.stringify(info)}`));
-  }
+  // Stable callbacks follow runtime verbosity without rewiring the existing SDK client.
+  on("p2pConnect", () => dbg("p2pConnect"));
+  on("p2pClose", () => dbg("p2pClose"));
+  on("commandAck", () => dbg("commandAck"));
   for (const event of FORWARDED_EVENTS)
     on(event, (payload) => {
       ctx.bumpActivity();

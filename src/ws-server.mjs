@@ -32,7 +32,7 @@ const AUTHED_COMMANDS = new Set([
 ]);
 
 export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } = {}) {
-  const { cfg, eufy, SCHEMA_VERSION, DEBUG, dbg } = ctx;
+  const { cfg, eufy, SCHEMA_VERSION, dbg } = ctx;
   const { flags, clients } = ctx.state;
   const requests = createRequestEvidence(requestClocks);
   const bounded = createBoundedStateWrites({
@@ -311,13 +311,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
       }
     }
     if (allowCommand && !allowCommand(msg)) return send(ws, { id, ok: false, error: "command denied" });
-    if (DEBUG) {
-      const bits = [`cmd=${cmd}`];
-      if (msg.sn != null) bits.push(`sn=${msg.sn}`);
-      if (msg.name != null) bits.push(`name=${msg.name}`);
-      if (msg.value !== undefined) bits.push(`value=${JSON.stringify(msg.value)}`);
-      dbg("ws recv", bits.join(" ")); // NB: 2FA code / captcha (msg.code/msg.captcha) never logged
-    }
+    if (ctx.logging?.effective("debug") ?? ctx.DEBUG) dbg("ws recv");
     const reply = (extra) => send(ws, { id, ok: true, ...extra });
     const fail = (error, code) =>
       send(ws, {
@@ -484,8 +478,25 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
         }
         case "config.get":
           // Current effective cloud poll interval (ms). 0 means polling is disabled.
-          return reply({ pollMs: eufy.pollIntervalMs });
+          return reply({ pollMs: eufy.pollIntervalMs, ...(ctx.logging && { logging: ctx.logging.snapshot() }) });
         case "config.set": {
+          const loggingFields = ["debug", "event_log", "expires_ms"];
+          const hasLogging = loggingFields.some((key) => Object.hasOwn(msg, key));
+          if (hasLogging) {
+            if (!ctx.logging || Object.keys(msg).some((key) => !["id", "cmd", ...loggingFields].includes(key))) {
+              ctx.logging?.reject();
+              return fail("invalid logging request");
+            }
+            try {
+              return reply({
+                logging: ctx.logging.set(
+                  Object.fromEntries(Object.entries(msg).filter(([key]) => loggingFields.includes(key))),
+                ),
+              });
+            } catch {
+              return fail("invalid logging request");
+            }
+          }
           // Change the cloud poll interval live. Expect a non-negative integer (ms); 0 disables.
           const ms = Number(msg.pollMs);
           if (!Number.isFinite(ms) || ms < 0) return fail("pollMs must be a non-negative number (ms)");

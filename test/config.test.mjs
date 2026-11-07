@@ -32,7 +32,7 @@ test("event pre-warm is OFF by default", () => {
   assert.equal(loadConfig(base).cfg.prewarm, false); // → client passes prewarmEvents: []
 });
 
-test("BRIDGE_PREWARM=1 turns pre-warm on (SDK default events)", () => {
+test("BRIDGE_PREWARM=1 preserves the inert request flag (SDK defaults to no events)", () => {
   assert.equal(loadConfig({ ...base, BRIDGE_PREWARM: "1" }).cfg.prewarm, true);
   assert.equal(loadConfig({ ...base, BRIDGE_PREWARM: "true" }).cfg.prewarm, true);
   assert.equal(loadConfig({ ...base, BRIDGE_PREWARM: "0" }).cfg.prewarm, false);

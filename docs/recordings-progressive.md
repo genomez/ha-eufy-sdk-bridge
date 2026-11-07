@@ -203,3 +203,63 @@ replacement candidate is opened through the runtime's candidate-creation seam: a
 current relay's synchronous error listener drops it before the session records
 `grant_timeout`, whereas a candidate retains that close origin. No SDK source or
 package is changed, and no native/network connection is opened.
+
+## Per-clip runtime policy
+
+Use `<RECORDINGS_ROOT>/progressive.json` (normally `/data/recordings/progressive.json`).
+It is independent of `experiments.json` and never consumes or rearms an experiment
+budget. The closed version-1 JSON object requires `version: 1` and accepts only:
+
+- `fps`: optional; exactly `15`, `null`, or `"off"`. An omitted field inherits
+  `RECORDINGS_PROGRESSIVE_FPS`; explicit null/off disables progressive even when ENV enables it.
+- `playableMs`: optional integer from 1000 through 6000 inclusive. An omitted
+  field inherits `RECORDINGS_PROGRESSIVE_PLAYABLE_MS` (default 6000).
+
+```json
+{ "version": 1, "fps": 15, "playableMs": 1000 }
+```
+
+Write a complete UTF-8 file to a unique temporary name in the same recordings
+root, flush it, then atomically rename/replace it as `progressive.json`. For example,
+inside the existing container, with that root already present:
+
+```sh
+node --input-type=module -e 'import fs from "node:fs"; import {randomUUID} from "node:crypto"; const target="/data/recordings/progressive.json", temp=target+"."+randomUUID()+".tmp"; const fd=fs.openSync(temp,"wx",0o600); try { fs.writeFileSync(fd,JSON.stringify({version:1,fps:15,playableMs:1000})); fs.fsyncSync(fd); } finally { fs.closeSync(fd); } fs.renameSync(temp,target);'
+```
+
+The reader accepts only a singly linked regular file of at most 4096 bytes. It
+checks identity, size and modification metadata before/after a bounded read and
+never follows a settings-file symlink. Unknown keys, unsupported versions, wrong
+types, partial JSON, unreadable files and detected replacement/write races reject
+the entire file. Only an initially missing file uses ENV defaults. A rejected file
+forces FPS off for new work, even if ENV enables 15 FPS; ordinary completed-file
+MP4 preparation/playback remains available. The inherited threshold is retained
+as diagnostic context when the file is rejected. Fix the file atomically; no
+restart is required. Archive it elsewhere if you want to restore missing-file
+semantics while preserving recovery material.
+
+Every new job, including MP4 jobs, samples the file once at admission and freezes
+`progressivePolicy`: version, source (`default`/`file`), SHA-256 revision,
+rejection category, effective `fps` and `playableMs`. The revision covers accepted
+file bytes and resolved defaults; invalid input is represented only by a fixed
+rejection category. Retries, queued captures, encoder startup and shared viewers
+retain that snapshot. A fresh generation after cleanup samples again. Existing
+jobs never restart or split when settings change. An active experiment still
+excludes progressive encoding; the independent policy does not override it.
+
+Capabilities expose current `progressivePolicy`; `progressivePlayback` and
+`progressivePlayableMs` are advertised when current playback policy enables 15 FPS.
+A local one-second poll publishes `recordings.capability` changes to connected
+clients, and direct capability/diagnostic reads sample current policy. These reads
+never alter job snapshots or contact the SDK. Existing viewer status remains
+available when current policy turns off, and another viewer sharing an admitted
+progressive job retains that job's policy.
+
+Clip status, playback status, diagnostic jobs and history include the actual job
+policy. `clips.progressive.policy` and `playableThresholdMs` describe new work.
+Existing top-level totals and latency samples span all policies
+(`policyScope: "all_policies"`); `byPolicy` groups job/session/failure counts,
+capture counters and the latest 20 latency samples by revision. It retains at most
+20 policy buckets, with `policiesEvicted` counting evictions; a returning evicted
+revision starts a new bucket. These counters reset at process restart. History
+continues to retain the last 20 terminal jobs with their own policy attribution.

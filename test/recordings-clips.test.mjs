@@ -829,7 +829,23 @@ test("one FIFO worker, event idempotency and finite public projections", async (
   await until(() => state(f, "b").state === "ready");
   assert.deepEqual(order, [10000, 20000]);
   assert.equal(f.jobs.prepare("camera", "a", selection).clip.state, "ready");
-  assert.deepEqual(Object.keys(state(f, "a")), ["state", "reason", "progress", "durationMs", "bytes", "expiresAtMs"]);
+  assert.deepEqual(Object.keys(state(f, "a")), [
+    "state",
+    "reason",
+    "progress",
+    "durationMs",
+    "bytes",
+    "expiresAtMs",
+    "progressivePolicy",
+  ]);
+  assert.deepEqual(Object.keys(state(f, "a").progressivePolicy), [
+    "version",
+    "source",
+    "revision",
+    "rejection",
+    "fps",
+    "playableMs",
+  ]);
   assert.equal(f.jobs.diagnostics().audioIncluded, false);
   assert.deepEqual(f.jobs.diagnostics().history[0].camera, { name: null, model: null });
   assert.equal(JSON.stringify(f.jobs.diagnostics()).includes("cameraId"), false);

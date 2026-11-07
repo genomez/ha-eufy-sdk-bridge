@@ -1,4 +1,5 @@
 import { validateExperiments } from "./recordings-experiments.mjs";
+import { readProgressiveSettings } from "./recordings-progressive-settings.mjs";
 import { createDownloadSpool, downloadEvidence } from "./recordings-download.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -487,6 +488,8 @@ export function createClipJobs({
   convert = convertClip,
   progressiveFps = null,
   progressivePlayableMs = 6000,
+  progressiveSettingsRoot,
+  progressivePolicy,
   progressiveEncoder = createProgressiveEncoder,
   log = (record) => process.stdout.write(JSON.stringify(record) + "\n"),
   now = Date.now,
@@ -515,16 +518,62 @@ export function createClipJobs({
     object[field] = Math.min(Number.MAX_SAFE_INTEGER, object[field] + 1);
   };
   progressivePlayableMs = playableThreshold(progressivePlayableMs);
+  const currentProgressivePolicy =
+    progressivePolicy ??
+    (() =>
+      readProgressiveSettings(progressiveSettingsRoot ?? path.dirname(root), {
+        fps: progressiveFps,
+        playableMs: progressivePlayableMs,
+      }));
+  const policyStats = new Map();
+  let policiesEvicted = 0;
+  function statsFor(j) {
+    const policy = j.progressivePolicy;
+    if (!policyStats.has(policy.revision)) {
+      if (policyStats.size >= 20) {
+        policyStats.delete(policyStats.keys().next().value);
+        policiesEvicted++;
+      }
+      policyStats.set(policy.revision, {
+        policy,
+        jobs: 0,
+        sessionsOpened: 0,
+        reachedPlayable: 0,
+        completed: 0,
+        releasedEarly: 0,
+        expired: 0,
+        evicted: 0,
+        failuresByReason: Object.fromEntries(Object.keys(progressive.failuresByReason).map((key) => [key, 0])),
+        playableTimes: [],
+        counters: newCounters(),
+      });
+    }
+    return policyStats.get(policy.revision);
+  }
+  function sessionCount(j, field) {
+    increment(progressive, field);
+    increment(statsFor(j), field);
+  }
+  const timeStats = (values) => {
+    const sorted = [...values].sort((a, b) => a - b),
+      n = sorted.length;
+    return {
+      count: n,
+      min: n ? sorted[0] : null,
+      median: n ? (sorted[Math.floor((n - 1) / 2)] + sorted[Math.floor(n / 2)]) / 2 : null,
+      max: n ? sorted[n - 1] : null,
+    };
+  };
   const sessions = createPlaybackSessions({
     now,
     observe(event, s, reason) {
-      if (event === "opened") increment(progressive, "sessionsOpened");
-      if (event === "playable") increment(progressive, "reachedPlayable");
-      if (event === "completed") increment(progressive, "completed");
+      if (event === "opened") sessionCount(s.job, "sessionsOpened");
+      if (event === "playable") sessionCount(s.job, "reachedPlayable");
+      if (event === "completed") sessionCount(s.job, "completed");
       if (event === "retired") {
-        if (reason === "viewer_released" && !s.job.hlsComplete) increment(progressive, "releasedEarly");
-        if (reason === "viewer_expired") increment(progressive, "expired");
-        if (reason === "session_evicted") increment(progressive, "evicted");
+        if (reason === "viewer_released" && !s.job.hlsComplete) sessionCount(s.job, "releasedEarly");
+        if (reason === "viewer_expired") sessionCount(s.job, "expired");
+        if (reason === "session_evicted") sessionCount(s.job, "evicted");
       }
     },
     empty(j, reason) {
@@ -543,19 +592,22 @@ export function createClipJobs({
     last = null,
     lastCapture = null,
     jobOrdinal = 0;
-  const counters = {
-    jobs: 0,
-    startAcknowledged: 0,
-    ingressVideoFrames: 0,
-    ingressAudioFrames: 0,
-    rejectedByReason: {},
-    captureOutcomes: {},
-    cessationOutcomes: {},
-    releaseOutcomes: {},
-    reconnectOutcomes: {},
-    reconnectDurationMs: 0,
-    admissionGates: {},
-  };
+  function newCounters() {
+    return {
+      jobs: 0,
+      startAcknowledged: 0,
+      ingressVideoFrames: 0,
+      ingressAudioFrames: 0,
+      rejectedByReason: {},
+      captureOutcomes: {},
+      cessationOutcomes: {},
+      releaseOutcomes: {},
+      reconnectOutcomes: {},
+      reconnectDurationMs: 0,
+      admissionGates: {},
+    };
+  }
+  const counters = newCounters();
   const key = (c, e) => `${c}/${e}`;
   const view = (j) => ({
     state: j?.state ?? "idle",
@@ -564,6 +616,7 @@ export function createClipJobs({
     durationMs: j?.durationMs ?? null,
     bytes: j?.bytes ?? 0,
     expiresAtMs: j?.expiresAtMs ?? null,
+    ...(j && { progressivePolicy: { ...j.progressivePolicy } }),
   });
   function trace(j, event) {
     log({
@@ -615,6 +668,9 @@ export function createClipJobs({
       j.playableDurationMs = j.finalDurationMs;
       playableTimes.push(j.playableAtMs);
       if (playableTimes.length > 20) playableTimes.shift();
+      const times = statsFor(j).playableTimes;
+      times.push(j.playableAtMs);
+      if (times.length > 20) times.shift();
     }
     sessions.delivery(j, snapshot.delivery);
   }
@@ -635,11 +691,14 @@ export function createClipJobs({
               : j.state === "refused"
                 ? "refused"
                 : "capture_failure";
-    if (j.progressiveRequested && !isViewerEnd(endReason) && endReason !== "normal_completion")
+    if (j.progressiveRequested && !isViewerEnd(endReason) && endReason !== "normal_completion") {
       increment(progressive.failuresByReason, endReason);
+      increment(statsFor(j).failuresByReason, endReason);
+    }
     const row = {
       jobOrdinal: j.jobOrdinal,
       kind: j.progressiveRequested ? "progressive" : "mp4",
+      progressivePolicy: { ...j.progressivePolicy },
       camera: { name: cameraLabel(j.selection?.camera?.name), model: cameraLabel(j.selection?.camera?.model) },
       expectedMs: count(j.expectedMs),
       state: j.state,
@@ -754,7 +813,7 @@ export function createClipJobs({
         if (
           bytes.length &&
           j.progressiveRequested &&
-          progressiveFps === 15 &&
+          j.progressivePolicy.fps === 15 &&
           !experiment &&
           j.expectedMs <= 3_600_000
         ) {
@@ -763,8 +822,8 @@ export function createClipJobs({
             j.encoder = progressiveEncoder({
               directory: j.directory,
               input: j.input,
-              fps: progressiveFps,
-              playableMs: progressivePlayableMs,
+              fps: j.progressivePolicy.fps,
+              playableMs: j.progressivePolicy.playableMs,
               expectedMs: j.expectedMs,
               nativeTiming: recordingTiming.timing,
               signal: j.controller.signal,
@@ -884,7 +943,11 @@ export function createClipJobs({
         j.transferSpeed = evidence.transferSpeed ?? j.transferSpeed;
         captureAttempted ||= receipt.startAttempted === true || frames > 0;
         if (evidence.admissionGate !== "none" && evidence.admissionGate !== "unknown")
-          counters.admissionGates[evidence.admissionGate] = (counters.admissionGates[evidence.admissionGate] ?? 0) + 1;
+          for (const counts of [counters, statsFor(j).counters])
+            counts.admissionGates[evidence.admissionGate] = Math.min(
+              Number.MAX_SAFE_INTEGER,
+              (counts.admissionGates[evidence.admissionGate] ?? 0) + 1,
+            );
         pullMs = Math.round(monotonic() - start);
         last = {
           startedAtMs: j.startedAtMs,
@@ -1189,21 +1252,26 @@ export function createClipJobs({
       };
       if (captureAttempted) lastCapture = last;
       recordHistory(j, timing(), { pullMs, convertMs, frames });
-      counters.jobs++;
-      for (const name of ["startAcknowledged", "ingressVideoFrames", "ingressAudioFrames", "reconnectDurationMs"])
-        counters[name] = Math.min(Number.MAX_SAFE_INTEGER, counters[name] + Number(evidence[name]));
-      for (const [field, bucket] of [
-        ["captureOutcome", "captureOutcomes"],
-        ["cessationOutcome", "cessationOutcomes"],
-        ["releaseOutcome", "releaseOutcomes"],
-        ["reconnectOutcome", "reconnectOutcomes"],
-      ])
-        counters[bucket][evidence[field]] = (counters[bucket][evidence[field]] ?? 0) + 1;
-      for (const [reason, count] of Object.entries(evidence.rejectedByReason))
-        counters.rejectedByReason[reason] = Math.min(
-          Number.MAX_SAFE_INTEGER,
-          (counters.rejectedByReason[reason] ?? 0) + count,
-        );
+      for (const counts of [counters, statsFor(j).counters]) {
+        increment(counts, "jobs");
+        for (const name of ["startAcknowledged", "ingressVideoFrames", "ingressAudioFrames", "reconnectDurationMs"])
+          counts[name] = Math.min(Number.MAX_SAFE_INTEGER, counts[name] + Number(evidence[name]));
+        for (const [field, bucket] of [
+          ["captureOutcome", "captureOutcomes"],
+          ["cessationOutcome", "cessationOutcomes"],
+          ["releaseOutcome", "releaseOutcomes"],
+          ["reconnectOutcome", "reconnectOutcomes"],
+        ])
+          counts[bucket][evidence[field]] = Math.min(
+            Number.MAX_SAFE_INTEGER,
+            (counts[bucket][evidence[field]] ?? 0) + 1,
+          );
+        for (const [reason, count] of Object.entries(evidence.rejectedByReason))
+          counts.rejectedByReason[reason] = Math.min(
+            Number.MAX_SAFE_INTEGER,
+            (counts.rejectedByReason[reason] ?? 0) + count,
+          );
+      }
       active = null;
       if (j.deletePending && !j.readers && !sessions.count(j)) remove(j);
       kick();
@@ -1305,6 +1373,7 @@ export function createClipJobs({
         {},
         {
           generation: randomUUID(),
+          progressivePolicy: currentProgressivePolicy(),
           progressiveRequested: source.progressive === true,
           admittedMono: monotonic(),
           playableAtMs: null,
@@ -1349,8 +1418,9 @@ export function createClipJobs({
         },
       );
       jobs.set(id, j);
+      increment(statsFor(j), "jobs");
       const reason =
-        !enabled() || stopped
+        !enabled() || stopped || (source.progressive && j.progressivePolicy.fps !== 15)
           ? "disabled"
           : live()
             ? "live_view"
@@ -1378,6 +1448,13 @@ export function createClipJobs({
           storageFailed = true;
         }
       return { clip: view(jobs.get(key(c, e))) };
+    },
+    progressiveAllowed(c, e) {
+      const j = jobs.get(key(c, e));
+      // Sharing an admitted generation uses its snapshot, even after the file changes.
+      if (j && (j === active || j.readers || !["idle", "failed", "refused", "cancelled"].includes(j.state)))
+        return j.progressivePolicy.fps === 15;
+      return true;
     },
     playbackOpen(owner, requestKey, c, e) {
       sessions.expire();
@@ -1478,25 +1555,29 @@ export function createClipJobs({
       };
     },
     diagnostics() {
+      const policy = currentProgressivePolicy();
       return {
         states: Object.fromEntries(clipStates.map((s) => [s, [...jobs.values()].filter((j) => j.state === s).length])),
         reasons: Object.fromEntries(
           clipReasons.map((r) => [r, [...jobs.values()].filter((j) => j.reason === r).length]),
         ),
         history: structuredClone(history),
+        jobs: [...jobs.values()].map((j) => ({
+          jobOrdinal: j.jobOrdinal,
+          state: j.state,
+          progressivePolicy: { ...j.progressivePolicy },
+        })),
         progressive: {
           ...structuredClone(progressive),
-          playableThresholdMs: progressivePlayableMs,
-          timeToPlayable: (() => {
-            const sorted = [...playableTimes].sort((a, b) => a - b),
-              n = sorted.length;
-            return {
-              count: n,
-              min: n ? sorted[0] : null,
-              median: n ? (sorted[Math.floor((n - 1) / 2)] + sorted[Math.floor(n / 2)]) / 2 : null,
-              max: n ? sorted[n - 1] : null,
-            };
-          })(),
+          policy: { ...policy },
+          playableThresholdMs: policy.playableMs,
+          policyScope: "all_policies",
+          timeToPlayable: timeStats(playableTimes),
+          policiesEvicted,
+          byPolicy: [...policyStats.values()].map(({ playableTimes, ...row }) => ({
+            ...structuredClone(row),
+            timeToPlayable: timeStats(playableTimes),
+          })),
         },
         lastJob: last && structuredClone(last),
         lastCaptureJob: lastCapture && structuredClone(lastCapture),
@@ -1524,6 +1605,7 @@ export function createClipJobs({
       playback: {
         sessionId: s.sessionId,
         generation: j.generation,
+        progressivePolicy: { ...j.progressivePolicy },
         hardExpiresAtMs: s.hardExpiresAtMs,
         cameraId: j.cameraId,
         eventId: j.eventId,

@@ -1010,6 +1010,21 @@ export function createDiagnostics(ctx, now = Date.now) {
       }
       const snapshot = {
         schemaVersion: 1,
+        logging: ctx.logging?.snapshot() ?? null,
+        inertSwitches: {
+          prewarm: {
+            supported: false,
+            requested: ctx.cfg?.prewarm === true,
+            effective: false,
+            reason: "empty_sdk_event_set",
+          },
+          debug_p2p: {
+            supported: false,
+            requested: ctx.DEBUG_P2P === true,
+            effective: false,
+            reason: "no_logger_sink",
+          },
+        },
         requests: (() => {
           try {
             return requestEvidence(ctx.getRequestEvidence?.());

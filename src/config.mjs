@@ -1,5 +1,6 @@
 /** Modified for genomez S1 experimental source preview, 2026-10-16. */
 import { pilotLog } from "./pilot-log.mjs";
+import { createLoggingControl } from "./logging-control.mjs";
 // Environment → the immutable config + constants the whole bridge reads. Side-effect free (no mkdir,
 // no process.exit) so it can be imported from tests; server.mjs owns the startup guards.
 import path from "node:path";
@@ -70,9 +71,8 @@ export const SUSPEND_RELEASE_MS = 30_000; // no /stream pull this long while sus
 export const STREAM_FAIL_BACKOFF_MAX_MS = 5 * 60_000; // cap on the exponential backoff after failed opens
 
 /**
- * Parse the environment into the config + derived constants. `dbg` is a no-op unless BRIDGE_DEBUG is on.
- * BRIDGE_DEBUG=1 logs each WS command + control timing + P2P lifecycle; BRIDGE_DEBUG_P2P=1 additionally
- * routes the SDK's raw per-frame ConsoleLogger (very noisy).
+ * Parse startup defaults. Stable bridge loggers consult process-local runtime overrides.
+ * BRIDGE_DEBUG_P2P is currently inert: the SDK has no bridge-provided logger sink.
  */
 export function loadConfig(env = process.env) {
   const cfg = {
@@ -160,10 +160,7 @@ export function loadConfig(env = process.env) {
     // keeps the SDK default. Mains cameras ignore it, and closing the last viewer still ends the session
     // at once. Positive whole ms; anything else → default.
     streamBatteryBudgetMs: positiveInt(env.STREAM_BATTERY_BUDGET_MS),
-    // Event pre-warm: the SDK can speculatively open a camera's P2P session on a high-intent event
-    // (doorbell/person/pet/package) so a following live view starts instantly. OFF by default here — it
-    // holds a battery camera's radio open for ~28s per event. Set BRIDGE_PREWARM=1 to enable the SDK's
-    // default pre-warm events.
+    // Currently inert: true passes undefined, and the packaged SDK defaults to no prewarm events.
     prewarm: truthy(env.BRIDGE_PREWARM),
     // Optional Anker Solix support — a SEPARATE Anker account (its own login + device backend), enabled
     // only when both SOLIX_EMAIL and SOLIX_PASSWORD are set. Independent of the eufy client; its own
@@ -195,21 +192,23 @@ export function loadConfig(env = process.env) {
 
   const DEBUG = truthy(env.BRIDGE_DEBUG);
   const DEBUG_P2P = truthy(env.BRIDGE_DEBUG_P2P);
+  const EVENT_LOG = env.BRIDGE_EVENT_LOG == null ? true : truthy(env.BRIDGE_EVENT_LOG);
+  const logging = createLoggingControl({ debug: DEBUG, event_log: EVENT_LOG });
   const dbg = (...a) => {
-    if (DEBUG) pilotLog("config_1");
+    if (logging.effective("debug")) pilotLog("config_1");
   };
 
   // Event log — a NARROW, always-on-by-default trace of just the realtime-event path: a push/semantic
   // event arriving, how many frontend (WS) clients it was broadcast to, and each "Last event" image
   // fetch. This is NOT the BRIDGE_DEBUG firehose — it fires only on real events, so it's quiet on an idle
   // system and is what a "why isn't Last event updating" report needs. Set BRIDGE_EVENT_LOG=0 to silence.
-  const EVENT_LOG = env.BRIDGE_EVENT_LOG == null ? true : truthy(env.BRIDGE_EVENT_LOG);
   const eventLog = (...a) => {
-    if (EVENT_LOG) pilotLog("config_2");
+    if (logging.effective("event_log")) pilotLog("config_2");
   };
 
   return {
     cfg,
+    logging,
     SCHEMA_VERSION,
     DEBUG,
     DEBUG_P2P,
