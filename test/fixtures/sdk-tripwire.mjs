@@ -11,3 +11,5 @@ export {
   forbidden as listLightEffects, forbidden as discoverSolixDevices, forbidden as solarbankSceneReadings,
 };
 export const LoginStatus = { Ok: "ok", Captcha: "captcha", TwoFactor: "two_factor" };
+
+export const CATALOG_QUERY_COUNT_MAX = Math.floor((256 * 1024 - 1) / 3);

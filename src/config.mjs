@@ -116,7 +116,7 @@ export function loadConfig(env = process.env) {
         typeof env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS === "string" &&
         /^(?:[1-5][0-9]{3}|6000)$/.test(env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS)
           ? Number(env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS)
-          : 6000,
+          : 3000,
       progressiveFps: env.RECORDINGS_PROGRESSIVE_FPS === "15" ? 15 : null,
       playbackModelsSource: env.RECORDINGS_PLAYBACK_MODELS == null ? "default" : "env",
       playbackModels: [

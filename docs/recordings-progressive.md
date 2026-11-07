@@ -54,7 +54,7 @@ The private muxer manifest never reaches a browser.
 
 Early delivery requires closed segments totaling `RECORDINGS_PROGRESSIVE_PLAYABLE_MS`
 media milliseconds. The setting accepts decimal integer strings from 1000 through
-6000; unset or invalid values use 6000. Shorter clips become playable only after
+6000; unset or invalid values use 3000. Shorter clips become playable only after
 verified finish. The effective value is also reported as
 `recordings.clips.progressive.playableThresholdMs` in `/diagnostics`. Segment inventory, individual byte counts,
 input lag, storage and subprocess lifetime are bounded. The encoder's decoded
@@ -165,7 +165,7 @@ The companion validator in `custom_components/eufy_sdk/recordings_models.py`
 accepts any `playable` inventory totaling at least 1000 ms. The bridge owns and
 enforces the configured 1000-6000 ms early-delivery threshold; HA does not apply
 the advertised threshold when validating inventory. This bridge-only change does
-not modify the companion repository. The default threshold remains 6000 ms.
+not modify the companion repository. The default threshold is 3000 ms.
 
 ## Validation boundary
 
@@ -217,7 +217,7 @@ budget. The closed version-1 JSON object requires `version: 1` and accepts only:
 - `fps`: optional; exactly `15`, `null`, or `"off"`. An omitted field inherits
   `RECORDINGS_PROGRESSIVE_FPS`; explicit null/off disables progressive even when ENV enables it.
 - `playableMs`: optional integer from 1000 through 6000 inclusive. An omitted
-  field inherits `RECORDINGS_PROGRESSIVE_PLAYABLE_MS` (default 6000).
+  field inherits `RECORDINGS_PROGRESSIVE_PLAYABLE_MS` (default 3000).
 
 ```json
 { "version": 1, "fps": 15, "playableMs": 1000 }

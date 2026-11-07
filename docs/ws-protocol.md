@@ -48,7 +48,7 @@ the existing host HTTP/command policy hooks also apply to these routes.
 // Additional hello member:
 recordings: {
   version: 1; browseOnly: boolean; playback: boolean; enabled: boolean; scopeId: string | null;
-  timezone: "America/Chicago"; stationWindow: 20; pageSize: 100; coverBudget: 4;
+  timezone: "America/Chicago"; stationWindow: number; pageSize: 100; coverBudget: 4;
 }
 
 // Requests (no cursor, grant, serial, path, selector or URL fields):
@@ -85,8 +85,8 @@ type Catalog = {
   events: RecordingEvent[];
   truncated: boolean;
   historyIncomplete: true;
-  stationWindow: 20;
-  disclosure: "latest 20 station-wide; history incomplete";
+  stationWindow: number;
+  disclosure: string;
   lastSuccessfulQueryAtMs: number | null;
   lastAttemptAtMs: number | null;
   dirty: boolean;
@@ -164,23 +164,23 @@ Ordinary foreground requests preempt feature work.
 
 `RECORDINGS_BACKGROUND` defaults to `true`; `false` disables background catalogs
 and cover prefetch without disabling browsing or its bounded catalog retries.
-The background schedule starts five minutes after enrollment and requests the
-latest station window every five minutes, subject to the shared catalog interval
-and all SDK gates. It skips unhealthy sessions and pauses during live view,
-playback or an unresolved playback safety hold. It never acquires a session.
-Background continuation requires a possible overflow: a consistent full page of
-20 distinct normalized rows, all with valid start times and all absent from the
-preceding successful latest-window checkpoint. The checkpoint is process-local,
-updates only after a successful latest merge (browse or background), and resets
-on restart or scope/enrollment change. Startup without a checkpoint never grants
-background continuation; ordinary browse-driven paging remains available.
-The overflow cycle stops after merging a page containing an already-cataloged
-row with authenticated playback authority, or at the existing short-page,
-cursor, retention, four-extra-page or 60-second SDK-window boundary. Existing
-intra-cycle overlap, invalid-time and unsupported-latch guards still apply.
-Retained rows without playback authority do not count as covered overlap.
-Exactly 20 new events may cause one unnecessary page; the heuristic and bounds
-cannot guarantee completeness or cross-day history recovery.
+The background schedule starts 60 seconds after enrollment, with a live-configurable
+interval (milliseconds), subject to the unchanged shared 120-second latest-query
+admission gate and all SDK gates. It skips unhealthy sessions and pauses during
+live view, playback or an unresolved playback safety hold. It never acquires a
+session. Background continuation requires a consistent full page of the requested
+count, distinct normalized rows with valid start times, all absent from the prior
+successful latest-window checkpoint. The checkpoint is process-local and resets
+on scope change or restart; startup without a checkpoint cannot trigger overflow.
+A background burst stops at a known row with authenticated playback authority,
+a short page, cursor exhaustion, invalid page or failure.
+It also stops after 50 total pages (latest plus 49 older pages), recording
+`stoppedReason: "runaway_guard"`: a station that keeps returning fresh-looking
+pages would query forever. The four-extra-page and 60-second cycle stop rules
+are removed for background bursts; retention filtering/storage caps still apply
+but do not terminate background paging. Existing 5-second completion gaps,
+preemption, live kill switch, overlap checks and the `pagingStatus` latch remain.
+A scheduled latest refresh does not supersede a running background burst.
 
 `RECORDINGS_BACKGROUND_PAGING` defaults to `true`; `false` is a hard disable for
 background overflow continuation, leaving latest refreshes and browse paging
@@ -198,8 +198,7 @@ The playback model allowlist has a separate live file,
 It replaces the list at each catalog request and new playback admission without
 background refresh or restart. Models are trimmed, uppercased and deduplicated,
 and must match `^T\d{4}[A-Z0-9]*$`; `[]` disables all models. The built-in list is
-T8425, T8426, T8170, T8171, T8214, T8416, T8134. Precedence is active
-`recordings.test_playback_models`, valid file, startup `RECORDINGS_PLAYBACK_MODELS`,
+T8425, T8426, T8170, T8171, T8214, T8416, T8134. Precedence is valid file, startup `RECORDINGS_PLAYBACK_MODELS`,
 then built-in default. Missing files use the fallback. Malformed JSON, unknown
 versions/fields, invalid entries, linked, changing or unreadable files reject
 the entire file and use the fallback, with `rejection` in policy readback.
@@ -543,7 +542,7 @@ values on the order of minutes, so intervals below ~1 min mostly add load withou
 
 When recordings is available, `config.get` also returns
 `recordings.playbackModelPolicy`: `{version, models, source, rejection, revision}`.
-`source` is `file`, `env`, `default`, or `test_override`; `rejection` describes an
+`source` is `file`, `env`, or `default`; `rejection` describes an
 ignored live file, including during a test override. The same current policy is
 included in recordings capability, `recordings.diagnostics`, and the `recordings`
 section of `/diagnostics`. Reads do not require a restart or background refresh.
@@ -738,47 +737,34 @@ not disconnect the shared bridge connection or change other bridge features.
 Integration `f7b7f4e` also accepts a five-camera roster from a 3o-style bridge,
 so install it before or together with the new bridge.
 
-A catalog cycle starts with the same latest-20 station-wide query, no more often
-than two minutes. With live 60-second folder interest or the background overflow
-eligibility described above, it may
-perform four additional reads (100 station rows total). The private SDK cursor
-uses the existing `start_id`, `end_id`, `count` payload shape; coverage remains
-firmware-dependent. Each read uses independent station arbitration, renewal
-reserve, abort/preemption and a five-second gap. Covers retain priority over an
-unsent deeper read. No browse read connects to or wakes a child camera.
+A latest-catalog query defaults to 20 station-wide rows and retains the existing
+two-minute admission spacing. `catalogQueryCount` changes the per-query count.
+Foreground browse continuation keeps its 60-second interest, four-extra-page,
+retention and cursor rules. Background bursts use the stop rules above. Every
+page independently arbitrates with controls/live view and keeps the five-second
+completion gap. Empty deeper replies, repeated/overlapping IDs,
+duplicate events, invalid envelopes/time evidence or newer time bounds latch
+`pagingStatus` to `unsupported_stopped`. Three consecutive deeper timeout or
+invalid-reply exchange failures also latch it; successful deeper pages reset
+that failure count. Preemption, deferrals and other failures abandon the burst
+without clearing or setting the latch. `working` is evidence of page progress,
+not firmware qualification.
 
-Paging stops at the seven-day boundary, a short page, cursor exhaustion, camera
-retention cap, interest expiry or the four-page limit. An empty DEEPER page,
-repeated/overlapping IDs, duplicate events, invalid page envelope/time evidence
-or a newer time bound permanently changes `pagingStatus` to `unsupported_stopped`
-for the bridge process. An inconsistent latest window (including one invalid
-start time among its 20 rows) skips continuation for that cycle only: the installed
-SDK does not authorize a cursor from partial time evidence. Ordinary page-one
-cycles continue. `working` means a synthetic/runtime page made progress; it is
-not a claim of firmware qualification.
-Cancellation, abort, owner loss, SDK deferral, send refusal and other transient
-admission/transport failures abandon only the current continuation. Normal SDK
-state-refresh preemption does not disable later cycles. Three consecutive deeper
-exchange failures with `timeout` or `invalid_reply` stop paging for the process;
-a valid deeper page resets that count. Aborts/preemption and deferred attempts
-never increment it. Latest-window reads do not reset it. Retry opportunities still
-require browse interest or background eligibility, the two-minute catalog interval, a five-second completion gap,
-one feature read in flight and at most four extra pages per cycle.
-
-`recordings.set_pacing` updates process-local recording cover pacing through the
+`recordings.set_pacing` updates process-local recording pacing and catalog settings through the
 same command-policy filter and enrollment guards as other recordings commands:
 
 ```json
 { "id": 1, "cmd": "recordings.set_pacing", "prefetchGap": 2000, "coverGap": 2000, "coverRate": 0, "coverQuiet": 0 }
 ```
 
-All fields are optional partial updates. Defaults are `prefetchGap: 15000`,
-`coverGap: 5000`, `coverRate: 6`, `coverQuiet: 2000`. Gap/quiet values are finite
+All fields are optional partial updates. Defaults are `prefetchGap: 3000`,
+`coverGap: 500`, `coverRate: 20`, `coverQuiet: 500`,
+`backgroundCatalogInterval: 60000`, `catalogQueryCount: 20`. Gap/quiet values are finite
 nonnegative milliseconds; rate is a nonnegative safe integer. Rate 0 or null
 means no minute cap. Unknown fields, invalid numbers, empty updates and reset
 combined with pacing fields are rejected. `{ "id": 2, "cmd": "recordings.set_pacing",
 "reset": true }` restores defaults. Replies use `{id, ok: true, recordings:
-{pacing: {prefetchGap, coverGap, coverRate, coverQuiet}, setAtMs}}`. Restart also
+{pacing: {prefetchGap, coverGap, coverRate, coverQuiet, backgroundCatalogInterval, catalogQueryCount}, catalogSettings, setAtMs}}`. Restart also
 restores defaults; attempt history is not cleared by a change.
 
 For the ramp, set both gaps to 15000, 5000, 2000, then 0, with rate 0 and quiet 0.
@@ -832,11 +818,11 @@ lastAtMs}, retries}`. Times are epoch milliseconds or null. `catalogRuns` and
   from either source. `queued` counts eligible uncached prefetch rows, including
   negative waits. All counters are process-local; background diagnostics contain
   no identifiers, paths or row data;
-- `background.paging`: `{enabled, runs, pages, stopReasons, lastTrigger}`.
+- `background.paging`: `{enabled, runs, pages, stopReasons, lastTrigger, stoppedReason?}`.
   `runs` counts admitted overflow cycles; `pages` counts deeper adapter calls,
   including SDK deferrals, not confirmed wire sends. `stopReasons` is a detached
   map of counts keyed by fixed enums: `known_row`, `short_page`, `cursor_end`,
-  `retention`, `retention_cap`, `page_limit`, `window_expired`, `disabled`,
+  `runaway_guard`, `disabled`,
   `unsupported_stopped`, `preempted`, `superseded`, `store_unavailable`,
   `invalid_latest`, or the finite internal SDK reasons above. `lastTrigger` is
   `none`, `no_checkpoint`, `not_overflow`, `overflow`, `disabled` or
@@ -995,6 +981,46 @@ host CPU/storage behavior still require an authorized live acceptance test.
 Progressive HLS is an optional companion protocol described in
 [recordings-progressive.md](recordings-progressive.md). When enabled, capability
 adds `progressivePlayback: true` and `progressivePlayableMs` (effective integer
-1000-6000, default 6000). Diagnostics add bounded `clips.history` and
+1000-6000, default 3000). Diagnostics add bounded `clips.history` and
 `clips.progressive` session counters, fixed end reasons and the latest twenty
 job time-to-playable summary. Public MP4 state/reason enums are unchanged.
+
+
+### Live catalog interval and row count
+
+Use the existing authorized WS command, with milliseconds for the interval:
+
+```json
+{"id":1,"cmd":"recordings.set_pacing","backgroundCatalogInterval":60000,"catalogQueryCount":50}
+```
+
+Either setting can be changed alone; `{"id":2,"cmd":"recordings.set_pacing","reset":true}`
+restores all pacing defaults, including 60000 ms and 20 rows. Settings are held in
+process memory and reset on restart, matching existing cover pacing. No control
+file, expiry or new timer is added. An interval change immediately cancels and
+rearms the existing background timer from the change time. Intervals must be finite
+numbers >=1000 ms, with no upper policy cap. Long waits reuse the same timer
+in Node-representable chunks; this does not shorten the configured interval. Existing station/latest-read admission
+gates remain unchanged, so polling faster does not bypass them.
+
+`catalogQueryCount` is an integer 1..87381, derived from the SDK's existing 256 KiB
+`EVENT_TABLE_BYTE_CAP` (`src/transport/rtc/event-table-candidate.ts`): even an array
+of n empty objects needs 3n+1 bytes. This packet-derived ceiling is not a station
+capacity claim; actual rows and envelope consume more of that same byte budget.
+Counts of 50 and 100 can be tested without restarting. Short successful replies
+merge valid rows. A larger count returning fewer rows, malformed data or an error
+falls back on the next query to the last full successful count (initially 20).
+Admission deferrals do not establish station rejection. No automatic retry or
+immediate re-query is added. An in-flight query keeps its original requested count.
+
+`config.get.recordings.catalogSettings`, recordings capability and
+`recordings.diagnostics.catalogSettings` (also `/diagnostics.recordings`) expose
+`backgroundCatalogInterval: {value, source}` and
+`catalogQueryCount: {value, source, configuredValue, lastGoodCount}`. Source is
+`default`, `live`, or (count only) `fallback`. `lastQuery` is null or
+`{requestedCount, returnedCount, status, reason}`; failed reads have null returned
+count. Values contain no station identifiers. `stationWindow` and the catalog
+disclosure reflect the effective count for the next query. The retired
+`recordings.test_playback_models` command returns the normal unknown-command error;
+use `<RECORDINGS_ROOT>/playback-models.json`, e.g.
+`{"version":1,"models":["T8425","T8171"]}`, for live playback eligibility.

@@ -195,6 +195,7 @@ test("a new admitted cycle cancels a long retry hint from the previous cycle", a
 
 test("background catalog runs on a five-minute schedule with no browse interest", async (t) => {
   const h = await harness(t, { background: true, catalog: () => ({ status: "ok", rows: [] }) });
+  h.manager.setPacing({ backgroundCatalogInterval: 300_000 });
   const first = h.clocks.now() + 300_000;
   assert.equal(h.manager.diagnostics().background.nextCatalogAtMs, first);
   await advance(h, 299_999);
@@ -242,22 +243,22 @@ test("a catalog retry blocked by a foreground cover gets one further bounded opp
 test("background catalog skips live view, playback, unresolved playback and unhealthy sessions", async (t) => {
   const h = await harness(t, { background: true, catalog: () => ({ status: "ok", rows: [] }) });
   h.ctx.state.streaming.add("synthetic-camera");
-  await advance(h, 300_000);
+  await advance(h, 60_000);
   await tick();
   h.ctx.state.streaming.clear();
   h.eufy.rtc.getPlaybackSafetyDiagnostics = () => ({ active: true });
-  await advance(h, 300_000);
+  await advance(h, 60_000);
   await tick();
   h.eufy.rtc.getPlaybackSafetyDiagnostics = () => ({ unresolved: true });
-  await advance(h, 300_000);
+  await advance(h, 60_000);
   await tick();
   h.eufy.rtc.getPlaybackSafetyDiagnostics = () => ({});
   h.eufy.rtc.informationRefreshReady = () => false;
-  await advance(h, 300_000);
+  await advance(h, 60_000);
   await tick();
   assert.equal(h.calls.catalog.length, 0);
   h.eufy.rtc.informationRefreshReady = () => true;
-  await advance(h, 300_000);
+  await advance(h, 60_000);
   await settled(h);
   assert.equal(h.calls.catalog.length, 1);
 });
@@ -269,7 +270,7 @@ test("background deferrals retry without interest and report outcomes", async (t
     catalog: () =>
       ++count === 1 ? { status: "deferred", reason: "quiet_period", retryAfterMs: 5_000 } : { status: "ok", rows: [] },
   });
-  await advance(h, 300_000);
+  await advance(h, 60_000);
   await settled(h);
   h.manager.ownerLost({});
   await advance(h, 5_000);
@@ -551,14 +552,28 @@ test("background diagnostics are detached aggregate values with no row data", as
   const value = h.manager.diagnostics().background;
   assert.deepEqual(value, {
     paging: { enabled: true, runs: 0, pages: 0, stopReasons: {}, lastTrigger: "none" },
-    pacing: { prefetchGap: 3_000, coverGap: 500, coverRate: 20, coverQuiet: 500 },
+    pacing: {
+      backgroundCatalogInterval: 60_000,
+      catalogQueryCount: 20,
+      prefetchGap: 3_000,
+      coverGap: 500,
+      coverRate: 20,
+      coverQuiet: 500,
+    },
     pacingSetAtMs: h.clocks.now(),
     coverReads: {
       maxBuckets: 16,
       samplesPerBucket: 512,
       buckets: [
         {
-          pacing: { prefetchGap: 3_000, coverGap: 500, coverRate: 20, coverQuiet: 500 },
+          pacing: {
+            backgroundCatalogInterval: 60_000,
+            catalogQueryCount: 20,
+            prefetchGap: 3_000,
+            coverGap: 500,
+            coverRate: 20,
+            coverQuiet: 500,
+          },
           setAtMs: h.clocks.now(),
           count: 0,
           failures: {},
@@ -571,10 +586,9 @@ test("background diagnostics are detached aggregate values with no row data", as
       ],
     },
     testReread: { active: false, untilMs: null, reads: 0, failed: 0 },
-    testPlaybackModels: { active: false, untilMs: null, models: [] },
     enabled: true,
     lastCatalogAtMs: null,
-    nextCatalogAtMs: h.clocks.now() + 300_000,
+    nextCatalogAtMs: h.clocks.now() + 60_000,
     catalogRuns: 0,
     ok: 0,
     deferred: 0,

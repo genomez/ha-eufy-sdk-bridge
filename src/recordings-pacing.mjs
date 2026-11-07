@@ -1,6 +1,9 @@
-import { failure, reasonOf } from "./recordings-policy.mjs";
+import { CATALOG_QUERY_COUNT_MAX } from "@mega-yfue/eufy-sdk";
+import { LIMITS, failure, reasonOf } from "./recordings-policy.mjs";
 
 export const DEFAULT_PACING = Object.freeze({
+  backgroundCatalogInterval: LIMITS.backgroundCatalogInterval,
+  catalogQueryCount: 20,
   prefetchGap: 3_000,
   coverGap: 500,
   coverRate: 20,
@@ -20,6 +23,8 @@ export function pacingUpdate(args, current) {
       typeof value !== "number" ||
       !Number.isFinite(value) ||
       value < 0 ||
+      (key === "backgroundCatalogInterval" && value < 1000) ||
+      (key === "catalogQueryCount" && (!Number.isInteger(value) || value < 1 || value > CATALOG_QUERY_COUNT_MAX)) ||
       (key === "coverRate" && !Number.isSafeInteger(value))
     )
       throw failure("invalid");

@@ -186,9 +186,8 @@ each must match `^T\d{4}[A-Z0-9]*$`. An empty array disables all models. Missing
 use the environment or built-in default. Malformed JSON, unknown versions, bad
 entries, unknown fields, linked, changing or unreadable files are rejected as a
 whole and use that same fallback; no partial list or previous valid file is retained.
-Precedence is active `recordings.test_playback_models` override, valid live file,
-startup environment, built-in default. The test override keeps its existing expiry;
-the live file has no timer, expiry or new limits.
+Precedence is valid live file, startup environment, built-in default.
+The live file has no timer, expiry or new limits.
 
 Catalog flags and playback admission re-read the file on the next request, even
 without a catalog refresh. Removing a model after browsing blocks a new playback
@@ -197,9 +196,8 @@ Disallowed models remain browsable, report `playable: false`, and clip preparati
 returns `not_found`. Home Assistant uses these flags and needs no integration change.
 `config.get` returns `recordings.playbackModelPolicy`; the same policy appears in
 recordings capability, `recordings.diagnostics`, and `/diagnostics.recordings`.
-It includes `models`, `source` (`file`, `env`, `default`, or `test_override`),
-`rejection` (null when accepted/absent), and a policy `revision`. An underlying
-file rejection stays visible while a test override is active.
+It includes `models`, `source` (`file`, `env`, or `default`),
+`rejection` (null when accepted/absent), and a policy `revision`. File rejection remains visible when the fallback is used.
 
 Environment changes still require an add-on restart. The live controls
 `playback-models.json`, [`progressive.json`](docs/recordings-progressive.md#per-clip-runtime-policy)
@@ -209,3 +207,43 @@ Clip cleanup uncertainty triggers a bounded in-memory station reconnect. Existin
 `playback-safety.json` files are ignored and left untouched. Clip diagnostics expose
 finite capture, cessation, release and reconnect outcomes, ingress media counts,
 rejection counts by reason, and reconnect duration, with cumulative counters.
+
+
+### Live catalog interval and row count
+
+Use the existing authorized WS command, with milliseconds for the interval:
+
+```json
+{"id":1,"cmd":"recordings.set_pacing","backgroundCatalogInterval":60000,"catalogQueryCount":50}
+```
+
+Either setting can be changed alone; `{"id":2,"cmd":"recordings.set_pacing","reset":true}`
+restores all pacing defaults, including 60000 ms and 20 rows. Settings are held in
+process memory and reset on restart, matching existing cover pacing. No control
+file, expiry or new timer is added. An interval change immediately cancels and
+rearms the existing background timer from the change time. Intervals must be finite
+numbers >=1000 ms, with no upper policy cap. Long waits reuse the same timer
+in Node-representable chunks; this does not shorten the configured interval. Existing station/latest-read admission
+gates remain unchanged, so polling faster does not bypass them.
+
+`catalogQueryCount` is an integer 1..87381, derived from the SDK's existing 256 KiB
+`EVENT_TABLE_BYTE_CAP` (`src/transport/rtc/event-table-candidate.ts`): even an array
+of n empty objects needs 3n+1 bytes. This packet-derived ceiling is not a station
+capacity claim; actual rows and envelope consume more of that same byte budget.
+Counts of 50 and 100 can be tested without restarting. Short successful replies
+merge valid rows. A larger count returning fewer rows, malformed data or an error
+falls back on the next query to the last full successful count (initially 20).
+Admission deferrals do not establish station rejection. No automatic retry or
+immediate re-query is added. An in-flight query keeps its original requested count.
+
+`config.get.recordings.catalogSettings`, recordings capability and
+`recordings.diagnostics.catalogSettings` (also `/diagnostics.recordings`) expose
+`backgroundCatalogInterval: {value, source}` and
+`catalogQueryCount: {value, source, configuredValue, lastGoodCount}`. Source is
+`default`, `live`, or (count only) `fallback`. `lastQuery` is null or
+`{requestedCount, returnedCount, status, reason}`; failed reads have null returned
+count. Values contain no station identifiers. `stationWindow` and the catalog
+disclosure reflect the effective count for the next query. The retired
+`recordings.test_playback_models` command returns the normal unknown-command error;
+use `<RECORDINGS_ROOT>/playback-models.json`, e.g.
+`{"version":1,"models":["T8425","T8171"]}`, for live playback eligibility.

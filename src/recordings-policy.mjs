@@ -12,7 +12,7 @@ export const LIMITS = Object.freeze({
   cameraRows: 400,
   ttl: 604_800_000,
   coverFiles: 2_000,
-  backgroundCatalogInterval: 300_000,
+  backgroundCatalogInterval: 60_000,
   prefetchGap: 15_000,
   prefetchAge: 86_400_000,
   coverFailures: 3,

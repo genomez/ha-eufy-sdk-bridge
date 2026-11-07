@@ -165,31 +165,11 @@ test("playback open and legacy preparation recheck the live model list after bro
   assert.equal(pulls, 1);
 });
 
-test("test override retains precedence, validation and monotonic expiry over live edits", async (t) => {
+test("retired test override cannot supersede the live file", async (t) => {
   const h = await harness(t);
-  await seed(h);
-  write(h.root, []);
-  const startedAt = h.clocks.now();
-  const on = h.manager.testPlaybackModels({ enabled: true, models: [" t8425 ", "abc"] });
-  assert.equal(on.testPlaybackModels.untilMs, startedAt + 30 * 60_000);
-  assert.deepEqual(on.testPlaybackModels.models, ["T8425", "ABC"], "test model validation stays unchanged");
-  assert.equal(h.catalog().events[0].playable, true);
-  assert.equal(h.manager.playbackModelPolicy().source, "test_override");
-  fs.writeFileSync(file(h.root), "{");
-  assert.equal(h.manager.playbackModelPolicy().rejection, "malformed");
-  assert.equal(h.manager.playbackModelPolicy().source, "test_override");
   write(h.root, ["T8134"]);
-  h.clocks.wallJump(24 * 60 * 60_000);
-  h.clocks.advance(30 * 60_000 - 1);
-  assert.equal(h.catalog().events[0].playable, true);
-  h.clocks.advance(1);
-  assert.equal(h.catalog().events[0].playable, false);
+  assert.equal(h.manager.testPlaybackModels, undefined);
+  assert.deepEqual(readPlaybackModels(h.root, { overrideModels: ["T8425"] }).models, ["T8134"]);
   assert.equal(h.manager.playbackModelPolicy().source, "file");
-  assert.deepEqual(h.manager.playbackModelPolicy().models, ["T8134"]);
-  assert.equal(h.manager.diagnostics().background.testPlaybackModels.active, false);
-  h.manager.testPlaybackModels({ enabled: true, models: ["T8425"], minutes: 240 });
-  assert.equal(h.catalog().events[0].playable, true);
-  h.manager.testPlaybackModels({ enabled: false });
-  assert.equal(h.catalog().events[0].playable, false);
-  assert.throws(() => h.manager.testPlaybackModels({ enabled: true, minutes: 241 }), { code: "recordings_invalid" });
+  assert.equal(Object.hasOwn(h.manager.diagnostics().background, "testPlaybackModels"), false);
 });

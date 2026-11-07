@@ -80,10 +80,6 @@ export function readPlaybackModels(root, defaults = {}, io = fs) {
     if (rejection) models = fallback;
     else source = "file";
   }
-  if (defaults.overrideModels !== undefined) {
-    models = [...defaults.overrideModels];
-    source = "test_override";
-  }
   const revision = createHash("sha256")
     .update(JSON.stringify([1, source, rejection, models]))
     .digest("hex");

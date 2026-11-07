@@ -489,7 +489,7 @@ export function createClipJobs({
   changed,
   convert = convertClip,
   progressiveFps = null,
-  progressivePlayableMs = 6000,
+  progressivePlayableMs = 3000,
   progressiveSettingsRoot,
   progressivePolicy,
   progressiveEncoder = createProgressiveEncoder,

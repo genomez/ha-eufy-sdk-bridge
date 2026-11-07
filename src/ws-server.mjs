@@ -131,7 +131,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return send(ws, { ok: false, error: "bad json" });
     const { id, cmd } = msg;
     observeMethod(cmd);
-    if (typeof cmd === "string" && cmd.startsWith("recordings.")) {
+    if (typeof cmd === "string" && cmd.startsWith("recordings.") && cmd !== "recordings.test_playback_models") {
       const safeId =
         Number.isSafeInteger(id) || (typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(id)) ? id : null;
       try {
@@ -144,9 +144,6 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
             break;
           case "recordings.test_reread":
             recordings = ctx.recordings.testReread(msg);
-            break;
-          case "recordings.test_playback_models":
-            recordings = ctx.recordings.testPlaybackModels(msg);
             break;
           case "recordings.diagnostics":
             recordings = ctx.recordings.diagnostics(msg);
@@ -481,7 +478,12 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           return reply({
             pollMs: eufy.pollIntervalMs,
             ...(ctx.logging && { logging: ctx.logging.snapshot() }),
-            ...(ctx.recordings && { recordings: { playbackModelPolicy: ctx.recordings.playbackModelPolicy() } }),
+            ...(ctx.recordings && {
+              recordings: {
+                playbackModelPolicy: ctx.recordings.playbackModelPolicy(),
+                catalogSettings: ctx.recordings.catalogSettings(),
+              },
+            }),
           });
         case "config.set": {
           const loggingFields = ["debug", "event_log", "expires_ms"];

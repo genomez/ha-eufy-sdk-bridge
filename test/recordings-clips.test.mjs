@@ -1364,31 +1364,6 @@ for (const [model, models, allowed] of [
     }
   });
 
-test("test playback model override is validated, applies, and switches off", async (t) => {
-  const h = await harness(t);
-  h.ctx.cfg.recordings.playbackModels = ["T8425", "T8426"];
-  await h.manager.syncInventory(inventory.map((r) => (r.isCamera ? { ...r, model: "T8170" } : r)));
-  await seed(h);
-  assert.equal(h.catalog().events[0].playable, false);
-  for (const bad of [
-    { enabled: "yes" },
-    { enabled: true, minutes: 0 },
-    { enabled: true, minutes: 241 },
-    { enabled: true, models: "T8170" },
-    { enabled: true, models: ["T8170;x"] },
-    { enabled: true, models: ["T8170"], extra: 1 },
-  ])
-    assert.throws(() => h.manager.testPlaybackModels(bad), { code: "recordings_invalid" });
-  const on = h.manager.testPlaybackModels({ enabled: true, models: [" t8170 "], minutes: 5 });
-  assert.equal(on.testPlaybackModels.active, true);
-  assert.deepEqual(on.testPlaybackModels.models, ["T8170"]);
-  assert.equal(h.catalog().events[0].playable, true);
-  assert.deepEqual(h.manager.diagnostics().background.testPlaybackModels.models, ["T8170"]);
-  const off = h.manager.testPlaybackModels({ enabled: false });
-  assert.deepEqual(off.testPlaybackModels, { active: false, untilMs: null, models: [] });
-  assert.equal(h.catalog().events[0].playable, false);
-});
-
 test("playback model environment default, override and explicit empty list", () => {
   assert.deepEqual(loadConfig({}).cfg.recordings.playbackModels, [
     "T8425",

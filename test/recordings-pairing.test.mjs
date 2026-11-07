@@ -219,7 +219,14 @@ test("packed SDK pacing facade changes through WS without touching the synthetic
   const h = await paired(t);
   assert.deepEqual(h.eufy.setRecordingPacing({}), { coverGapMs: 500, coverQuietMs: 500, coverRatePerMinute: 20 });
   const reply = await h.rpc("recordings.set_pacing", { prefetchGap: 0, coverGap: 0, coverQuiet: 0, coverRate: null });
-  assert.deepEqual(reply.pacing, { prefetchGap: 0, coverGap: 0, coverQuiet: 0, coverRate: 0 });
+  assert.deepEqual(reply.pacing, {
+    backgroundCatalogInterval: 60000,
+    catalogQueryCount: 20,
+    prefetchGap: 0,
+    coverGap: 0,
+    coverQuiet: 0,
+    coverRate: 0,
+  });
   assert.deepEqual(h.eufy.setRecordingPacing({}), { coverGapMs: 0, coverQuietMs: 0, coverRatePerMinute: 0 });
   assert.equal(h.session.sent.length, 0);
   await h.rpc("recordings.set_pacing", { reset: true });
@@ -764,3 +771,22 @@ test("a synthetic legacy client rejecting the expanded roster leaves other WS fe
   assert.equal(h.manager.capability().enabled, true);
   assert.equal(h.session.isConnected, true);
 });
+
+for (const count of [50, 100])
+  test(`packed SDK accepts and persists a ${count}-row live query`, async (t) => {
+    const h = await paired(t);
+    h.session.rows = Array.from({ length: count }, (_, i) => rawRow({ record_id: recordId - i, thumb_path: "" }));
+    await h.rpc("recordings.set_pacing", { catalogQueryCount: count });
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+    assert.equal(h.manager.diagnostics().lastCatalogAttempt.outcome, "ok");
+    assert.equal(h.session.queries(1306)[0].payload.payload.count, count);
+    assert.equal(h.store.snapshot.rows.length, count);
+    assert.deepEqual(h.manager.diagnostics().catalogSettings.lastQuery, {
+      requestedCount: count,
+      returnedCount: count,
+      status: "ok",
+      reason: "none",
+    });
+    assert.equal(h.manager.catalogSettings().catalogQueryCount.lastGoodCount, count);
+  });

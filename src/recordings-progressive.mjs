@@ -147,7 +147,7 @@ export function createProgressiveEncoder({
   fps,
   expectedMs,
   nativeTiming,
-  playableMs = 6000,
+  playableMs = 3000,
   signal,
   changed = () => {},
   reserve = () => {},

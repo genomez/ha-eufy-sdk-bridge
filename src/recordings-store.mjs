@@ -1,3 +1,4 @@
+import { CATALOG_QUERY_COUNT_MAX } from "@mega-yfue/eufy-sdk";
 import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
@@ -482,9 +483,17 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
         await commit(next);
       });
     },
-    mergeCatalog(scope, rows, isCurrent = () => true, latest = true) {
+    mergeCatalog(scope, rows, isCurrent = () => true, latest = true, queryCount = 20) {
       return serial(async () => {
-        if (!isCurrent() || scope.scopeId !== data.scopeId || !Array.isArray(rows) || rows.length > 20)
+        if (
+          !isCurrent() ||
+          scope.scopeId !== data.scopeId ||
+          !Array.isArray(rows) ||
+          !Number.isInteger(queryCount) ||
+          queryCount < 1 ||
+          queryCount > CATALOG_QUERY_COUNT_MAX ||
+          rows.length > queryCount
+        )
           throw failure("invalid");
         const next = structuredClone(data),
           seen = new Set();

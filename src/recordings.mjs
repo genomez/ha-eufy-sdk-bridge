@@ -29,6 +29,54 @@ export function createRecordings(
     cancel = clocks.cancel ?? clearTimeout;
   let pacing = { ...DEFAULT_PACING },
     pacingSetAtMs = now();
+  let intervalSource = "default",
+    countSource = "default",
+    catalogCount = pacing.catalogQueryCount;
+  let lastGoodCount = DEFAULT_PACING.catalogQueryCount,
+    lastCountQuery = null,
+    countRevision = 0;
+  const catalogSettings = () => ({
+    backgroundCatalogInterval: { value: pacing.backgroundCatalogInterval, source: intervalSource },
+    catalogQueryCount: {
+      value: catalogCount,
+      source: countSource,
+      configuredValue: pacing.catalogQueryCount,
+      lastGoodCount,
+    },
+    lastQuery: lastCountQuery ? { ...lastCountQuery } : null,
+  });
+  function recordCatalogQuery(requestedCount, revision, result) {
+    const returnedCount = result.status === "ok" ? (result.page?.count ?? result.rows?.length ?? null) : null;
+    lastCountQuery = { requestedCount, returnedCount, status: result.status, reason: result.reason ?? "none" };
+    if (
+      result.status === "ok" &&
+      returnedCount === requestedCount &&
+      Array.isArray(result.rows) &&
+      result.rows.length <= requestedCount &&
+      result.page?.consistent !== false
+    ) {
+      lastGoodCount = requestedCount;
+    } else if (revision === countRevision && requestedCount > lastGoodCount && result.status !== "deferred") {
+      catalogCount = lastGoodCount;
+      countSource = "fallback";
+    }
+  }
+  async function queryCatalog(sdkScope, opts) {
+    const requestedCount = catalogCount,
+      revision = countRevision;
+    const aborted = () => {
+      if (!stopped && opts.signal.reason === "deadline")
+        recordCatalogQuery(requestedCount, revision, { status: "unavailable", reason: "timeout" });
+    };
+    opts.signal?.addEventListener("abort", aborted, { once: true });
+    try {
+      const result = await adapter.catalog(sdkScope, { ...opts, queryCount: requestedCount });
+      if (!stopped && !opts.signal?.aborted) recordCatalogQuery(requestedCount, revision, result);
+      return { ...result, requestedCount };
+    } finally {
+      opts.signal?.removeEventListener("abort", aborted);
+    }
+  }
   const measurements = createCoverMeasurements();
   measurements.set(pacing, pacingSetAtMs);
   const adapter = recordingsAdapter(ctx.eufy, () => (loaded ? store.key : null)),
@@ -50,8 +98,6 @@ export function createRecordings(
   // Test-only load generator for pacing ramps: re-reads already cached covers without storing them.
   // In memory only, off at start-up, and it switches itself off at its deadline.
   const testReread = { untilMono: -Infinity, untilMs: null, reads: 0, failed: 0 };
-  // Self-expiring test override of the playback model allowlist; in memory only.
-  const testModels = { untilMono: -Infinity, untilMs: null, models: [] };
   const lastTestRead = new Map();
   const testRereadActive = () => mono() < testReread.untilMono;
   const backgroundEnabled = () => enabled() && ctx.cfg.recordings?.background !== false;
@@ -113,12 +159,10 @@ export function createRecordings(
   let liveRequests = 0;
   const playbackEnabled = () =>
     enabled() && ctx.cfg.recordings?.playback !== false && typeof ctx.eufy.pullRecordingClip === "function";
-  const testModelsActive = () => mono() < testModels.untilMono;
   const playbackModelPolicy = () =>
     readPlaybackModels(ctx.cfg.recordings?.root ?? "/data/recordings", {
       models: ctx.cfg.recordings?.playbackModels,
       source: ctx.cfg.recordings?.playbackModelsSource,
-      ...(testModelsActive() ? { overrideModels: testModels.models } : {}),
     });
   const playbackAllowed = (cameraId, models = playbackModelPolicy().models) =>
     models.includes(
@@ -173,9 +217,10 @@ export function createRecordings(
         !stopped,
       scopeId: adapter.account() === account ? (scope?.scopeId ?? null) : null,
       timezone: "America/Chicago",
-      stationWindow: 20,
+      stationWindow: catalogCount,
       pageSize: 100,
       coverBudget: LIMITS.folderBudget,
+      catalogSettings: catalogSettings(),
     };
   };
   let lastCapability = JSON.stringify(base());
@@ -338,10 +383,6 @@ export function createRecordings(
       );
     return [...fresh, ...cached];
   }
-  function testModelsStatus() {
-    const active = testModelsActive();
-    return { active, untilMs: active ? testModels.untilMs : null, models: active ? [...testModels.models] : [] };
-  }
   function testRereadStatus() {
     const active = testRereadActive();
     return { active, untilMs: active ? testReread.untilMs : null, reads: testReread.reads, failed: testReread.failed };
@@ -361,7 +402,11 @@ export function createRecordings(
           Math.min(...rows.map(negativeWait)),
         )
       : Infinity;
-    backgroundTimer = schedule(runBackground, Math.max(1, Math.min(nextCatalog, coverAt) - mono()));
+    // Chunk long waits through the same timer; Node otherwise turns an overflowing delay into 1 ms.
+    backgroundTimer = schedule(
+      runBackground,
+      Math.min(2 ** 31 - 1, Math.max(1, Math.min(nextCatalog, coverAt) - mono())),
+    );
     backgroundTimer?.unref?.();
   }
   function runBackground() {
@@ -370,7 +415,7 @@ export function createRecordings(
     const ready = backgroundReady();
     if (ready === "playback") background.coverPrefetch.skippedPlayback++;
     if (nextCatalog <= mono()) {
-      nextCatalog = mono() + LIMITS.backgroundCatalogInterval;
+      nextCatalog = mono() + pacing.backgroundCatalogInterval;
       if (ready === "ready") requestCatalog("background");
     }
     const idle = !flight && !queued.length && !pendingPage,
@@ -459,8 +504,7 @@ export function createRecordings(
     return (cycle.background && backgroundEnabled()) || activeCameras().size > 0 || gatedBrowse;
   }
   function catalogRetryDelay(result, cycle) {
-    if (Number.isFinite(result.retryAfterMs))
-      return Math.max(1_000, Math.min(LIMITS.backgroundCatalogInterval, result.retryAfterMs));
+    if (Number.isFinite(result.retryAfterMs)) return Math.max(1_000, Math.min(300_000, result.retryAfterMs));
     // The installed SDK returns no remaining gate time. Allow its full 60 s
     // observation gate, or 8 s exchange + 5 s renewal reserve, with 1 s margin.
     if (result.reason === "observing") return 61_000;
@@ -511,7 +555,7 @@ export function createRecordings(
       );
       deadline = schedule(() => {
         timedOut = true;
-        controller.abort();
+        controller.abort("deadline");
       }, remaining);
       deadline?.unref?.();
     });
@@ -553,6 +597,7 @@ export function createRecordings(
   function finishBackgroundPaging(cycle, reason) {
     if (!cycle?.backgroundPaging || cycle.backgroundPaging.done) return;
     cycle.backgroundPaging.done = true;
+    backgroundPaging.stoppedReason = reason;
     backgroundPaging.stopReasons[reason] = (backgroundPaging.stopReasons[reason] ?? 0) + 1;
     if (backgroundPageCycle?.backgroundPaging === cycle.backgroundPaging) backgroundPageCycle = null;
   }
@@ -563,12 +608,12 @@ export function createRecordings(
     cancel(pageTimer);
     pageTimer = null;
   }
-  function pageValid(page) {
+  function pageValid(page, requestedCount = catalogCount) {
     return (
       page?.consistent === true &&
       Number.isInteger(page.count) &&
       page.count >= 1 &&
-      page.count <= 20 &&
+      page.count <= requestedCount &&
       Number.isSafeInteger(page.nextBefore) &&
       page.nextBefore > 0 &&
       Number.isSafeInteger(page.newestRecordId) &&
@@ -584,15 +629,20 @@ export function createRecordings(
     if (pagingStatus === "unsupported_stopped") return stop("unsupported_stopped");
     if (cycle.backgroundPaging && !pagingEnabled()) return stop("disabled");
     // The latest window may contain unknown times; only consistent evidence can seed a cursor.
-    if (!pageValid(result.page)) return stop("invalid_latest");
+    if (!pageValid(result.page, result.requestedCount)) return stop("invalid_latest");
     if (cycle.backgroundPaging && result.rows.some((r) => cycle.known.has(r.eventId))) return stop("known_row");
-    if (result.page.count < 20) return stop("short_page");
+    if (result.page.count < result.requestedCount) return stop("short_page");
     if (result.page.nextBefore <= 1) return stop("cursor_end");
-    if (cycle.extra >= 4) return stop("page_limit");
-    if (result.page.oldestAtMs < now() - LIMITS.ttl) return stop("retention");
+    // A station that keeps returning fresh-looking pages would query forever.
+    if (cycle.backgroundPaging && cycle.extra + 1 >= 50) return stop("runaway_guard");
+    if (!cycle.backgroundPaging && cycle.extra >= 4) return stop("page_limit");
+    if (!cycle.backgroundPaging && result.page.oldestAtMs < now() - LIMITS.ttl) return stop("retention");
     const active = cycle.backgroundPaging ? new Set(cycle.s.cameras.map((c) => c.cameraId)) : activeCameras();
     const retained = store.snapshot.rows;
-    if (![...active].some((id) => retained.filter((r) => r.cameraId === id).length < LIMITS.cameraRows))
+    if (
+      !cycle.backgroundPaging &&
+      ![...active].some((id) => retained.filter((r) => r.cameraId === id).length < LIMITS.cameraRows)
+    )
       return stop("retention_cap");
     pendingPage = { ...cycle, previous: result.page };
     pageTimer = schedule(readOlder, LIMITS.coverGap);
@@ -606,7 +656,7 @@ export function createRecordings(
       !current(cycle.s, cycle.generation) ||
       !scopeValid ||
       (!cycle.backgroundPaging && !activeCameras().size) ||
-      mono() - cycle.startedAt >= LIMITS.interest
+      (!cycle.backgroundPaging && mono() - cycle.startedAt >= LIMITS.interest)
     ) {
       finishBackgroundPaging(cycle, "window_expired");
       pendingPage = null;
@@ -638,7 +688,7 @@ export function createRecordings(
           (opts) => {
             if (cycle.backgroundPaging && !pagingEnabled()) return { status: "deferred", reason: "disabled" };
             if (cycle.backgroundPaging) backgroundPaging.pages++;
-            return adapter.catalog(cycle.s.sdkScope, { ...opts, beforeRecordId: cycle.previous.nextBefore });
+            return queryCatalog(cycle.s.sdkScope, { ...opts, beforeRecordId: cycle.previous.nextBefore });
           },
           cycle.s,
           cycle.generation,
@@ -657,8 +707,8 @@ export function createRecordings(
         collectDiagnostics(result);
         if (
           !Array.isArray(result.rows) ||
-          result.rows.length > 20 ||
-          !pageValid(result.page) ||
+          result.rows.length > result.requestedCount ||
+          !pageValid(result.page, result.requestedCount) ||
           result.page.newestRecordId >= cycle.previous.nextBefore ||
           result.page.newestAtMs > cycle.previous.oldestAtMs ||
           result.rows.some((row) => cycle.seen.has(row.eventId))
@@ -674,6 +724,7 @@ export function createRecordings(
           result.rows.filter((r) => r.startedAtMs === null || r.startedAtMs >= now() - LIMITS.ttl),
           () => current(cycle.s, cycle.generation),
           false,
+          result.requestedCount,
         );
         if (!current(cycle.s, cycle.generation)) return;
         notify("catalog");
@@ -709,7 +760,7 @@ export function createRecordings(
       refresh = { state: "deferred", reason: "busy", retryAfterMs: null };
       return;
     }
-    if (source === "background" && backgroundReady() !== "ready") return;
+    if (source === "background" && (backgroundPageCycle || backgroundReady() !== "ready")) return;
     if (
       catalogCycle?.retryAt &&
       mono() - catalogCycle.startedAt < LIMITS.catalogInterval &&
@@ -770,7 +821,7 @@ export function createRecordings(
           "catalog",
           (opts) => {
             sdkStartedAt = mono();
-            return adapter.catalog(s.sdkScope, opts);
+            return queryCatalog(s.sdkScope, opts);
           },
           s,
           generation,
@@ -793,7 +844,7 @@ export function createRecordings(
           };
           return;
         }
-        if (!Array.isArray(result.rows) || result.rows.length > 20) {
+        if (!Array.isArray(result.rows) || result.rows.length > result.requestedCount) {
           attempt.outcome = "failed";
           attempt.reason = "invalid_reply";
           refresh = { state: "failed", reason: "invalid_reply", retryAfterMs: null };
@@ -804,10 +855,10 @@ export function createRecordings(
         const validLatest = result.rows.filter((r) => r.timeStatus === "valid" && Number.isSafeInteger(r.startedAtMs));
         const overflow =
           latestCheckpoint !== null &&
-          pageValid(result.page) &&
-          result.page.count === 20 &&
-          validLatest.length === 20 &&
-          new Set(validLatest.map((r) => r.eventId)).size === 20 &&
+          pageValid(result.page, result.requestedCount) &&
+          result.page.count === result.requestedCount &&
+          validLatest.length === result.requestedCount &&
+          new Set(validLatest.map((r) => r.eventId)).size === result.requestedCount &&
           validLatest.every((r) => !latestCheckpoint.has(r.eventId));
         const backgroundEligible =
           source === "background" && overflow && pagingEnabled() && pagingStatus !== "unsupported_stopped";
@@ -828,6 +879,8 @@ export function createRecordings(
           s,
           result.rows.filter((r) => r.startedAtMs === null || r.startedAtMs >= now() - LIMITS.ttl),
           () => current(s, generation),
+          true,
+          result.requestedCount,
         );
         if (!current(s, generation)) return;
         if (source === "background")
@@ -841,7 +894,7 @@ export function createRecordings(
                   ? "overflow"
                   : "not_overflow";
         // Only a fully valid latest page may become the next overflow baseline; otherwise keep the last trustworthy one.
-        if (pageValid(result.page) && validLatest.length === result.rows.length)
+        if (pageValid(result.page, result.requestedCount) && validLatest.length === result.rows.length)
           latestCheckpoint = new Set(validLatest.map((r) => r.eventId));
         dirty = false;
         attempt.outcome = "ok";
@@ -994,11 +1047,21 @@ export function createRecordings(
   const api = {
     capability: base,
     playbackModelPolicy,
+    catalogSettings,
     setPacing(args) {
       fields(args, ["reset", ...Object.keys(DEFAULT_PACING)]);
       guard();
       const next = pacingUpdate(args, pacing);
       adapter.setPacing(next);
+      if (args.reset || Object.hasOwn(args, "backgroundCatalogInterval")) {
+        intervalSource = args.reset ? "default" : "live";
+        nextCatalog = mono() + next.backgroundCatalogInterval;
+      }
+      if (args.reset || Object.hasOwn(args, "catalogQueryCount")) {
+        countRevision++;
+        catalogCount = next.catalogQueryCount;
+        countSource = args.reset ? "default" : "live";
+      }
       pacing = next;
       pacingSetAtMs = now();
       policy.setPacing(pacing);
@@ -1006,7 +1069,8 @@ export function createRecordings(
       nextPrefetch = Number.isFinite(lastPrefetch) ? lastPrefetch + pacing.prefetchGap : mono() + pacing.prefetchGap;
       flush();
       armBackground();
-      return { pacing: { ...pacing }, setAtMs: pacingSetAtMs };
+      publishCapability();
+      return { pacing: { ...pacing }, catalogSettings: catalogSettings(), setAtMs: pacingSetAtMs };
     },
     testReread(args) {
       fields(args, ["enabled", "minutes"]);
@@ -1029,27 +1093,6 @@ export function createRecordings(
       armBackground();
       return { testReread: testRereadStatus() };
     },
-    testPlaybackModels(args) {
-      fields(args, ["enabled", "models", "minutes"]);
-      guard();
-      const minutes = args.minutes ?? 30;
-      const models = args.models ?? [];
-      if (
-        typeof args.enabled !== "boolean" ||
-        typeof minutes !== "number" ||
-        !Number.isFinite(minutes) ||
-        minutes <= 0 ||
-        minutes > 240 ||
-        !Array.isArray(models) ||
-        models.length > 32 ||
-        models.some((m) => typeof m !== "string" || !/^[A-Za-z0-9]{1,16}$/.test(m.trim()))
-      )
-        throw failure("invalid");
-      testModels.untilMono = args.enabled ? mono() + minutes * 60_000 : -Infinity;
-      testModels.untilMs = args.enabled ? now() + minutes * 60_000 : null;
-      testModels.models = args.enabled ? models.map((m) => m.trim().toUpperCase()) : [];
-      return { testPlaybackModels: testModelsStatus() };
-    },
     diagnostics(args = {}) {
       fields(args, []);
       const snapshot =
@@ -1060,6 +1103,7 @@ export function createRecordings(
       const cameras = scope && adapter.account() === account ? scope.cameras : [];
       return {
         clips: clips.diagnostics(),
+        catalogSettings: catalogSettings(),
         playbackModelPolicy: playbackModelPolicy(),
         rowsKeptPerCamera: cameras.map((c) => ({
           name: c.name,
@@ -1083,7 +1127,6 @@ export function createRecordings(
           pacingSetAtMs,
           coverReads: { maxBuckets: 16, samplesPerBucket: 512, buckets: measurements.snapshot() },
           testReread: testRereadStatus(),
-          testPlaybackModels: testModelsStatus(),
           enabled: backgroundEnabled(),
           lastCatalogAtMs: background.lastCatalogAtMs,
           nextCatalogAtMs:
@@ -1140,6 +1183,9 @@ export function createRecordings(
         const signature = (s) => JSON.stringify([s.scopeId, ...s.cameras.map((c) => c.cameraId).sort()]);
         if (!scope || signature(scope) !== signature(binding)) {
           latestCheckpoint = null;
+          lastGoodCount = DEFAULT_PACING.catalogQueryCount;
+          lastCountQuery = null;
+          countRevision++;
           await clips.invalidate();
           preempt();
           interests.clear();
@@ -1153,7 +1199,7 @@ export function createRecordings(
           scope.cameras = binding.cameras;
         }
         scopeValid = true;
-        if (!Number.isFinite(nextCatalog)) nextCatalog = mono() + LIMITS.backgroundCatalogInterval;
+        if (!Number.isFinite(nextCatalog)) nextCatalog = mono() + pacing.backgroundCatalogInterval;
         armBackground();
       } catch {
         if (sequence !== inventoryGeneration) return;
@@ -1217,8 +1263,8 @@ export function createRecordings(
         ),
         truncated,
         historyIncomplete: true,
-        stationWindow: 20,
-        disclosure: "latest 20 station-wide; history incomplete",
+        stationWindow: catalogCount,
+        disclosure: `latest ${catalogCount} station-wide; history incomplete`,
         lastSuccessfulQueryAtMs: state.lastSuccessfulQueryAtMs,
         lastAttemptAtMs: policy.snapshot().catalog,
         dirty,

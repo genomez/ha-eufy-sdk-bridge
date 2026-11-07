@@ -185,25 +185,30 @@ test("scope changes discard the latest checkpoint", async (t) => {
   assert.equal(h.manager.diagnostics().background.paging.lastTrigger, "no_checkpoint");
 });
 
-test("background overflow retains the four-extra-page cap and completion gaps", async (t) => {
+test("background overflow passes four pages and 60 seconds then stops at known rows", async (t) => {
   const h = await setup(t);
   h.latest(240);
   await background(h, 2);
-  for (let count = 3; count <= 6; count++) await older(h, count);
-  h.clocks.advance(5_000);
+  for (let count = 3; count <= 8; count++) await older(h, count);
+  h.clocks.advance(60_000);
+  await until(() => h.manager.diagnostics().background.paging.stoppedReason === "known_row");
   await tick();
-  assert.equal(h.calls.catalog.length, 6);
-  assert.equal(h.manager.diagnostics().background.paging.pages, 4);
-  assert.deepEqual(h.manager.diagnostics().background.paging.stopReasons, { page_limit: 1 });
+  assert.equal(h.manager.diagnostics().background.paging.pages, 7);
+  assert.deepEqual(h.manager.diagnostics().background.paging.stopReasons, { known_row: 1 });
 });
 
-test("background continuation expires at the initial SDK window despite delayed admission", async (t) => {
+test("fresh-looking pages stop only at the 50-page runaway guard", async (t) => {
   const h = await setup(t);
+  h.latest(5000);
   await background(h, 2);
-  h.clocks.advance(60_000);
+  for (let count = 3; count <= 51; count++) await older(h, count);
+  assert.equal(h.manager.diagnostics().background.paging.pages, 49);
+  assert.equal(h.manager.diagnostics().background.paging.stoppedReason, "runaway_guard");
+  assert.deepEqual(h.manager.diagnostics().background.paging.stopReasons, { runaway_guard: 1 });
+  assert.equal(h.manager.diagnostics().pagingStatus, "working");
+  h.clocks.advance(5000);
   await tick();
-  assert.equal(h.calls.catalog.length, 2);
-  assert.deepEqual(h.manager.diagnostics().background.paging.stopReasons, { window_expired: 1 });
+  assert.equal(h.calls.catalog.length, 51);
 });
 
 test("invalid latest time evidence cannot authorize background overflow", async (t) => {
@@ -296,4 +301,12 @@ test("an invalid latest page cannot become the overflow baseline for the same ro
   await tick();
   assert.equal(h.calls.catalog.length, 2);
   assert.equal(h.manager.diagnostics().background.paging.runs, 0);
+});
+
+test("empty background page preserves the unsupported paging latch", async (t) => {
+  const h = await setup(t, { older: (h) => page(h.scope, 120, 0) });
+  await background(h, 2);
+  await older(h);
+  assert.equal(h.manager.diagnostics().pagingStatus, "unsupported_stopped");
+  assert.equal(h.manager.diagnostics().background.paging.stoppedReason, "unsupported_stopped");
 });

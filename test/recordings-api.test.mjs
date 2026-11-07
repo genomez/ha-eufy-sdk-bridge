@@ -231,7 +231,14 @@ test("WS pacing follows recordings command filtering, validates strictly and pas
     coverQuiet: 0,
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(result.recordings.pacing, { prefetchGap: 0, coverGap: 0, coverRate: 0, coverQuiet: 0 });
+  assert.deepEqual(result.recordings.pacing, {
+    backgroundCatalogInterval: 60000,
+    catalogQueryCount: 20,
+    prefetchGap: 0,
+    coverGap: 0,
+    coverRate: 0,
+    coverQuiet: 0,
+  });
   assert.deepEqual(passed[0], { coverGapMs: 0, coverRatePerMinute: 0, coverQuietMs: 0 });
   for (const extra of [{ coverGap: -1 }, { coverRate: 0.1 }, { unknown: 1 }, { reset: true, coverGap: 0 }]) {
     assert.equal((await s.rpc({ id: 2, cmd: "recordings.set_pacing", ...extra })).code, "recordings_invalid");
@@ -264,6 +271,7 @@ test("hello advertises additive browse-only capability without changing schema",
     stationWindow: 20,
     pageSize: 100,
     coverBudget: 20,
+    catalogSettings: h.manager.capability().catalogSettings,
   });
 });
 
@@ -297,11 +305,14 @@ test("config.get and diagnostics read back live playback models and file rejecti
     assert.deepEqual((await s.rpc({ id: 2, cmd: "recordings.diagnostics" })).recordings.playbackModelPolicy, p);
     assert.deepEqual(JSON.parse((await request(h, "/diagnostics")).body).recordings.playbackModelPolicy, p);
   }
-  await s.rpc({ id: 3, cmd: "recordings.test_playback_models", enabled: true, models: ["T8134"] });
+  const retired = await s.rpc({ id: 3, cmd: "recordings.test_playback_models", enabled: true, models: ["T8134"] });
+  const unknown = await s.rpc({ id: 3, cmd: "synthetic_unknown" });
+  assert.equal(retired.ok, false);
+  assert.deepEqual(Object.keys(retired).sort(), Object.keys(unknown).sort());
+  assert.equal(retired.error, unknown.error);
   const p = (await s.rpc({ id: 4, cmd: "config.get" })).recordings.playbackModelPolicy;
-  assert.equal(p.source, "test_override");
-  assert.deepEqual(p.models, ["T8134"]);
-  assert.equal(p.rejection, "models", "underlying file rejection remains visible during a test override");
+  assert.equal(p.source, "default");
+  assert.equal(p.rejection, "models");
 });
 
 test("early clients receive enrollment, invalidation and replacement capabilities without reconnecting", async (t) => {
@@ -653,9 +664,27 @@ test("HA-facing progressive capability and diagnostics report the same effective
     await seed(h);
     h.ctx.cfg.recordings.progressiveFps = 15;
     h.eufy.pullRecordingClip = async () => {};
-    const expected = requested === 1000 || requested === 2500 ? requested : 6000;
+    const expected = requested === 1000 || requested === 2500 ? requested : 3000;
     assert.equal(h.manager.capability().progressivePlayableMs, expected);
     assert.equal(h.manager.diagnostics().clips.progressive.playableThresholdMs, expected);
     assert.deepEqual(h.manager.diagnostics().clips.history, []);
   }
+});
+
+test("config.get and WS/HTTP diagnostics expose live catalog settings and sources", async (t) => {
+  const h = await harness(t),
+    s = await socket(t, h);
+  const update = await s.rpc({
+    id: 1,
+    cmd: "recordings.set_pacing",
+    backgroundCatalogInterval: 1000,
+    catalogQueryCount: 100,
+  });
+  assert.equal(update.ok, true);
+  const settings = update.recordings.catalogSettings;
+  assert.deepEqual(settings.backgroundCatalogInterval, { value: 1000, source: "live" });
+  assert.deepEqual(settings.catalogQueryCount, { value: 100, source: "live", configuredValue: 100, lastGoodCount: 20 });
+  assert.deepEqual((await s.rpc({ id: 2, cmd: "config.get" })).recordings.catalogSettings, settings);
+  assert.deepEqual((await s.rpc({ id: 3, cmd: "recordings.diagnostics" })).recordings.catalogSettings, settings);
+  assert.deepEqual(JSON.parse((await request(h, "/diagnostics")).body).recordings.catalogSettings, settings);
 });

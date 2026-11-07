@@ -632,7 +632,7 @@ test("playable threshold controls early delivery and invalid direct options fall
     encoder.commit(6);
     manifest(directory, 3);
     await until(() => encoder.snapshot().segments.length === 3);
-    assert.equal(encoder.snapshot().delivery, threshold === 1000 || threshold === 2500 ? "playable" : "warming");
+    assert.equal(encoder.snapshot().delivery, threshold === 6000 ? "warming" : "playable");
     await encoder.abort("viewer_released");
   }
 });

@@ -16,7 +16,7 @@ export const endReasons = Object.freeze([
 ]);
 export const isViewerEnd = (reason) => ["viewer_released", "viewer_expired", "session_evicted"].includes(reason);
 export function playableThreshold(value) {
-  return Number.isInteger(value) && value >= 1000 && value <= 6000 ? value : 6000;
+  return Number.isInteger(value) && value >= 1000 && value <= 6000 ? value : 3000;
 }
 export function processFailure({ code, signal, spawned = false, input = false, timeout = false } = {}) {
   return {

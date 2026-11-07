@@ -112,7 +112,14 @@ test("background ramp updates existing timers immediately and records API latenc
 
 test("startup sends default cover pacing to the SDK before any runtime update", async (t) => {
   const h = await harness(t);
-  assert.deepEqual(DEFAULT_PACING, { prefetchGap: 3000, coverGap: 500, coverRate: 20, coverQuiet: 500 });
+  assert.deepEqual(DEFAULT_PACING, {
+    backgroundCatalogInterval: 60000,
+    catalogQueryCount: 20,
+    prefetchGap: 3000,
+    coverGap: 500,
+    coverRate: 20,
+    coverQuiet: 500,
+  });
   assert.deepEqual(h.pacingCalls, [{ coverGapMs: 500, coverRatePerMinute: 20, coverQuietMs: 500 }]);
 });
 
