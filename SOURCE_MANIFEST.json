@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.12",
   "status": "local-build-unpublished",
-  "exactInputCommit": "627a27fa4298d7ffba2b0e059dee408a98979b4a",
+  "exactInputCommit": "dd922bf6dd064516e3f037cc0903128949dad41f",
   "files": {
     ".env.example": {
       "bytes": 3966,
@@ -22,7 +22,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 749,
-      "sha256": "ad355e974699431b18fbd0e0864a63de1444d969fff1c3118b7046f757e93811"
+      "sha256": "39f89d3a3805d5d9749c4232405ba6e74e7914b5c7ba02f2f03b0f1321cc4c39"
     },
     "CONTRIBUTING.md": {
       "bytes": 983,
@@ -106,11 +106,11 @@
     },
     "package-lock.json": {
       "bytes": 26816,
-      "sha256": "1f947e96c1ac51e7b30711808cc07f65f2db8a3991bcf8298afdbbc3f134a8bd"
+      "sha256": "ab0a9bfdfc28c3dfb567b90ccecb87ed40f5d33fbfb29036fdc32fa779c79a37"
     },
     "package.json": {
       "bytes": 1415,
-      "sha256": "29ea9b011695207adfd1b90f8d13d2339e20b726ca8e52b239a0b9122b4f7ee8"
+      "sha256": "5989718a6de8a603a4d1b29c6ada44733af2fd9ea9d643747789d8b896fa9913"
     },
     "scripts/devices.mjs": {
       "bytes": 1721,
@@ -198,7 +198,7 @@
     },
     "src/event-playback-probe-pins.mjs": {
       "bytes": 2214,
-      "sha256": "cf50a1711cceb6823ab652f31f94d591e685d38eed178ba1efeb9bc45854e124"
+      "sha256": "6c6ebbb00ca58dc8b98ecd476bb112a49b2079612b20808d179b541c48831628"
     },
     "src/event-playback-probe.mjs": {
       "bytes": 44158,
