@@ -554,3 +554,5 @@ Offline synthetic validation only; installation acceptance remains false.
 - Pin the rebuilt local 3p7r SDK tarball and installed runtime independently. Local synthetic validation only; latch, reconnect and refusal policy are unchanged.
 
 - Playback 3p7r2, 2026-11-06: pin the local a545c5b SDK tarball and runtime with unsaturated EOF truncation checks and bounded receipt counts; offline packaging only.
+
+- Playback 3p7r3, 2026-11-06: pin the local 4638c5d SDK tarball and runtime accepting fully covered EOF playback despite arrival pauses; offline packaging only.

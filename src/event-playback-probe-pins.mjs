@@ -1,7 +1,7 @@
 /** SDK distribution tarball pin from the authorized offline build, 2026-11-06. */
-export const eventPlaybackProbeSdkSha256 = "fa865bdab9c03433a593ace60dcf695d62ee1241e1ea0e6ebbaf64e2f936a0b9";
+export const eventPlaybackProbeSdkSha256 = "a453aa3ba603454d195cdec41d9c14b17036ecd48786a4f0b9e7fa7ab1a9ec4c";
 /** Probe gates hash the installed JavaScript bundle, separately from its distribution tarball. */
-export const eventPlaybackProbeSdkRuntimeSha256 = "fcb6aa475b40c00ce3c76f60e80f078f19979723299762dec085032d18fc1c21";
+export const eventPlaybackProbeSdkRuntimeSha256 = "8c28de4b379edea384ebd0be83ef9956506d5e28c7275048f30043cac15e00d2";
 export const eventPlaybackProbeFiles = [
   "bin/event-playback-probe-control.mjs",
   "bin/event-table-probe-control.mjs",
