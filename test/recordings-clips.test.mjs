@@ -37,7 +37,13 @@ for (const issue of ["over-bound", "spike-regression", "zero-clock"])
       pull: async (_, opts) => {
         opts.beforeDispatch();
         for (let i = 0; i < (zero ? 120 : 180); i++) {
-          const timestamp = zero ? 0 : i === 60 ? (issue === "over-bound" ? 3599800 : 11000) : Math.round(i * 1000 / 15);
+          const timestamp = zero
+            ? 0
+            : i === 60
+              ? issue === "over-bound"
+                ? 3599800
+                : 11000
+              : Math.round((i * 1000) / 15);
           opts.video(Buffer.from("frame"), { nativeTimestamp: timestamp });
         }
         return { ...clean, mediaDurationMs: zero ? 8000 : 12000 };
@@ -69,6 +75,79 @@ const deferred = () => {
   });
   return { promise, resolve };
 };
+
+for (const issue of ["over-bound", "spike-regression", "zero-clock"])
+  test(`progressive capture qualifies and handles ${issue} even if pull swallows the callback error`, async (t) => {
+    const zero = issue === "zero-clock";
+    let input,
+      committed = 0,
+      finished = false,
+      stopped = false,
+      calls = 0;
+    const f = await fixture(t, {
+      progressiveFps: 15,
+      progressiveEncoder: (options) => {
+        calls++;
+        input = options.input;
+        assert.equal(options.nativeTiming.frames, 4, "encoder starts only after qualification");
+        assert.equal(options.nativeTiming.native, !zero);
+        fs.mkdirSync(options.directory);
+        return {
+          commit: (bytes) => {
+            committed += bytes;
+          },
+          snapshot: () => ({ delivery: stopped ? "unavailable" : finished ? "complete" : "warming", segments: [] }),
+          finish: async ({ frames }) => {
+            assert.ok(zero);
+            assert.equal(frames, 120);
+            finished = true;
+          },
+          finalizeMp4: async (output) => fs.writeFileSync(output, "converted"),
+          abort: async () => {
+            stopped = true;
+          },
+          dispose() {},
+        };
+      },
+      pull: async (_, opts) => {
+        opts.beforeDispatch();
+        for (let i = 0; i < (zero ? 120 : 180); i++) {
+          const timestamp = zero
+            ? 0
+            : i === 60
+              ? issue === "over-bound"
+                ? 3599800
+                : 11000
+              : Math.round((i * 1000) / 15);
+          const before = committed;
+          try {
+            opts.video(Buffer.from("frame"), { nativeTimestamp: timestamp });
+          } catch (error) {
+            assert.equal(i, issue === "over-bound" ? 60 : 61);
+            assert.equal(error.reason, "convert_failed");
+            assert.equal(error.endReason, "conversion_validation_failed");
+            assert.equal(committed, before, "bad frame never reaches the encoder");
+            assert.equal(fs.statSync(input).size, committed, "bad frame never reaches the spool");
+            assert.ok(opts.signal.aborted, "conversion failure immediately stops capture/encoder ingress");
+            break;
+          }
+        }
+        return { ...clean, mediaDurationMs: zero ? 8000 : 12000 };
+      },
+      convert: async () => assert.fail("progressive conversion must use its encoder"),
+    });
+    f.jobs.prepare("camera", issue, { selector: { expectedMs: zero ? 8000 : 12000 } }, { progressive: true });
+    await until(() => !f.jobs.busy());
+    assert.equal(calls, 1);
+    assert.equal(state(f, issue).state, zero ? "ready" : "failed");
+    assert.equal(state(f, issue).reason, zero ? "none" : "convert_failed");
+    assert.equal(finished, zero);
+    if (!zero) {
+      assert.ok(stopped);
+      assert.equal(f.jobs.diagnostics().history.at(-1).endReason, "conversion_validation_failed");
+      assert.deepEqual(fs.readdirSync(f.root), []);
+    }
+  });
 
 test("MP4 preserves native per-frame PTS instead of uniformly retiming 120 frames to 12s", async () => {
   let seen;
@@ -140,6 +219,31 @@ test("capture spools native PTS and converts from that clock rather than receipt
   assert.equal(state(f, "native").state, "ready");
   assert.ok(converted);
 });
+
+for (const writeFailure of [false, true])
+  test(`short native capture flushes raw prefix at EOF, storage failure ${writeFailure}`, async (t) => {
+    const f = await fixture(t, {
+      pull: async (_, opts) => {
+        opts.beforeDispatch();
+        opts.video(Buffer.from("first"), { nativeTimestamp: 0 });
+        opts.video(Buffer.from("last"), { nativeTimestamp: 67 });
+        if (writeFailure)
+          t.mock.method(fs, "writeSync", () => {
+            throw new Error("synthetic write failure");
+          });
+        return clean;
+      },
+      convert: async ({ input, output, nativeTiming }) => {
+        assert.equal(nativeTiming.native, false);
+        assert.equal(fs.readFileSync(input, "utf8"), "firstlast");
+        fs.writeFileSync(output, "converted");
+      },
+    });
+    f.jobs.prepare("camera", "short", selection);
+    await until(() => !f.jobs.busy());
+    assert.equal(state(f, "short").state, writeFailure ? "failed" : "ready");
+    assert.equal(state(f, "short").reason, writeFailure ? "storage" : "none");
+  });
 
 for (const failure of ["start_refused", "eof"])
   test(`2x ${failure} retries once at 1x in the same job with clean conversion input`, async (t) => {

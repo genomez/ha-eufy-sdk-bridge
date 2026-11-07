@@ -23,12 +23,25 @@ function pts(value) {
 
 /**
  * Single-stream HEVC transport spool. Native header words are interpreted as milliseconds;
- * arrival time and transfer speed never enter this clock. Missing initial metadata selects
- * the legacy raw path; a missing later word advances one 15fps period. Regressions and
- * duplicates advance by 1ms, including across the unsigned 32-bit header rollover.
+ * arrival time and transfer speed never enter this clock. Qualify four frames before
+ * selecting TS; otherwise retain raw fixed-rate input. Missing later words advance one
+ * 15fps period. Only duplicate/regression jitter up to 10ms is clamped to 1ms.
  */
-export function createRecordingTiming() {
+export function createRecordingTiming({ expectedMs }) {
   const timing = { native: false, frames: 0, spanMs: 0, durationMs: 0 };
+  const maxSpanMs = Number.isSafeInteger(expectedMs) && expectedMs > 0 ? expectedMs + 1000 : 0;
+  const validWord = (word) => Number.isInteger(word) && word >= 0 && word <= 0xffffffff;
+  let pending = [],
+    pendingBytes = 0,
+    selected = false,
+    rejected;
+  const reject = () => {
+    rejected ??= Object.assign(new Error("Unusable recording clock"), {
+      reason: "convert_failed",
+      endReason: "conversion_validation_failed",
+    });
+    throw rejected;
+  };
   const continuity = new Map();
   let previous,
     nativePosition = 0;
@@ -65,35 +78,67 @@ export function createRecordingTiming() {
     }
     return packets;
   };
+  const encode = (data, word) => {
+    const valid = validWord(word);
+    if (!timing.native) {
+      timing.frames++;
+      return data;
+    }
+    let position = nativePosition,
+      span = timing.spanMs;
+    if (timing.frames) {
+      if (valid) {
+        const delta = (word - previous) | 0;
+        if (delta < -10) reject();
+        // Preserve the original origin after a regression; do not accumulate drift.
+        position += delta;
+        span = Math.max(span + 1, position);
+      } else span += 1000 / 15;
+    }
+    // Check before mutating accepted timing, packetizing, writing or feeding ffmpeg.
+    if (!maxSpanMs || span > maxSpanMs) reject();
+    nativePosition = position;
+    timing.spanMs = span;
+    if (valid) previous = word;
+    timing.frames++;
+    timing.durationMs = timing.spanMs + 1000 / 15;
+    const clock = Math.round(timing.spanMs * 90);
+    const pat = section(Buffer.from([0x00, 0xb0, 0x0d, 0, 1, 0xc1, 0, 0, 0, 1, 0xf0, 0]));
+    const pmt = section(Buffer.from([0x02, 0xb0, 0x12, 0, 1, 0xc1, 0, 0, 0xe1, 0, 0xf0, 0, 0x24, 0xe1, 0, 0xf0, 0]));
+    const pes = Buffer.concat([Buffer.from([0, 0, 1, 0xe0, 0, 0, 0x80, 0x80, 5]), pts(clock), data]);
+    return Buffer.concat([...packetize(0, pat), ...packetize(0x1000, pmt), ...packetize(0x100, pes, clock)]);
+  };
+  const select = (native) => {
+    selected = true;
+    timing.native = native;
+    const buffered = pending;
+    pending = [];
+    pendingBytes = 0;
+    return Buffer.concat(buffered.map(({ data, word }) => encode(data, word)));
+  };
   return {
     timing,
     frame(data, metadata) {
+      if (rejected) throw rejected;
       const word = metadata?.nativeTimestamp;
-      const valid = Number.isInteger(word) && word >= 0 && word <= 0xffffffff;
-      if (!timing.frames) {
-        timing.native = valid;
-        previous = valid ? word : undefined;
-      }
-      if (!timing.native) {
-        timing.frames++;
-        return data;
-      }
-      if (timing.frames) {
-        if (valid) {
-          // Preserve the original origin after a regression; do not accumulate drift.
-          nativePosition += (word - previous) | 0;
-          timing.spanMs = Math.max(timing.spanMs + 1, nativePosition);
-          previous = word;
-        } else timing.spanMs += 1000 / 15;
-      }
-      if (timing.spanMs > 3_600_000) throw new Error("Recording clock exceeds one hour");
-      timing.frames++;
-      timing.durationMs = timing.spanMs + 1000 / 15;
-      const clock = Math.round(timing.spanMs * 90);
-      const pat = section(Buffer.from([0x00, 0xb0, 0x0d, 0, 1, 0xc1, 0, 0, 0, 1, 0xf0, 0]));
-      const pmt = section(Buffer.from([0x02, 0xb0, 0x12, 0, 1, 0xc1, 0, 0, 0xe1, 0, 0xf0, 0, 0x24, 0xe1, 0, 0xf0, 0]));
-      const pes = Buffer.concat([Buffer.from([0, 0, 1, 0xe0, 0, 0, 0x80, 0x80, 5]), pts(clock), data]);
-      return Buffer.concat([...packetize(0, pat), ...packetize(0x1000, pmt), ...packetize(0x100, pes, clock)]);
+      if (selected) return encode(data, word);
+      // Bound retained memory as well as the four-frame qualification delay.
+      if (pendingBytes + data.length > 1024 ** 2) return Buffer.concat([select(false), encode(data, word)]);
+      pending.push({ data: Buffer.from(data), word });
+      pendingBytes += data.length;
+      if (!validWord(word)) return select(false);
+      if (pending.length < 4) return Buffer.alloc(0);
+      const deltas = pending.slice(1).map((entry, i) => (entry.word - pending[i].word) | 0);
+      return select(
+        deltas.every((delta) => delta >= -10) &&
+          deltas.filter((delta) => delta > 0).length >= 2 &&
+          deltas.some((delta) => delta >= 10 && delta <= 250),
+      );
+    },
+    flush() {
+      if (rejected) throw rejected;
+      // Short captures never qualified; retain every buffered byte in the raw path.
+      return selected ? Buffer.alloc(0) : select(false);
     },
   };
 }

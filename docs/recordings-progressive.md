@@ -15,7 +15,15 @@ The playback callback accepts optional `{ nativeTimestamp }` metadata from the S
 This requires the companion SDK callback change; the previously pinned SDK tarball
 does not provide it. No package artifact is replaced by this source change.
 
-With metadata on the first frame, the private spool contains single-stream HEVC
+Native mode is selected after four buffered frames: all four header words must be
+unsigned 32-bit integers, at least two deltas must increase, at least one must be
+10-250 ms, and no backward step may exceed 10 ms. Other positive deltas can be
+long gaps. Qualification retains at most 1 MiB; missing/constant/implausible
+initial timing, a larger prefix, or EOF before four frames selects the existing
+raw/fixed-rate path for the whole capture. The encoder starts only after selection;
+every buffered byte is preserved, including a short raw prefix flushed at EOF.
+
+With qualified metadata, the private spool contains single-stream HEVC
 MPEG-TS, with PTS/PCR from native milliseconds relative to the first frame. Its
 private `.hevc` filename is retained; ffmpeg's explicit input format selects TS.
 A backpressure-aware pump supplies ffmpeg while capture continues. `-copyts`
@@ -26,11 +34,19 @@ validation target is native span plus one 15 fps frame period. Native time is
 experimental for this source population; transport arrival and transfer multipliers
 never supply presentation timestamps.
 
-Duplicate/backward words clamp forward by 1 ms; 32-bit rollover is unwrapped.
+Duplicate words and backward jitter of at most 10 ms clamp forward by 1 ms;
+32-bit rollover is unwrapped. Larger regressions fail closed, including a forward
+spike followed by a return to the original clock. Both HLS and MP4 reject such
+timing after native selection rather than silently dropping frames or retiming it.
 A missing middle timestamp advances by one 15 fps period without moving the native
-origin. Missing initial metadata selects the existing raw/fixed-rate path for the
-whole capture. Timing state resets on the existing settled retry. Native spans
-over one hour are refused before CFR expansion. Standalone MP4 uses the same TS
+origin. Timing state resets on the existing settled retry. Native spans exceeding
+`expectedMs + 1000` fail before that frame is packetized, written to the spool, or
+committed to the running encoder. This fixed 1000 ms ingress margin tolerates
+catalog rounding while limiting expansion; completion still requires catalog
+agreement within 200 ms. Timing failures use `convert_failed` and the existing
+`conversion_validation_failed` end reason (subprocess shutdown may supply another
+existing process end reason), immediately aborting capture and encoder input even
+if the pull implementation swallows the callback error. Standalone MP4 uses the same TS
 clock and filter. Output is video-only H.264, closed one-second GOPs, no B frames,
 one-second TS segments, an EVENT history starting at zero, and a fixed two-second
 target duration. Only closed, atomically renamed muxer files enter the inventory.

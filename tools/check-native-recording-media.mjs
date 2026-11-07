@@ -9,7 +9,13 @@ import { createProgressiveEncoder } from "../src/recordings-progressive.mjs";
 import { convertClip } from "../src/recordings-clips.mjs";
 
 /** Only generated HEVC is used; all media and receipts stay in a unique offline directory. */
-export async function checkNativeRecordingMedia({ ffmpeg, ffprobe, gapMs = 4069, gapIndex = 60 }) {
+export async function checkNativeRecordingMedia({
+  ffmpeg,
+  ffprobe,
+  gapMs = 4069,
+  gapIndex = 60,
+  timestampCase = "native",
+}) {
   const root = path.resolve(".offline/native-media", randomUUID());
   fs.mkdirSync(root, { recursive: true });
   const run = (program, args) =>
@@ -44,21 +50,54 @@ export async function checkNativeRecordingMedia({ ffmpeg, ffprobe, gapMs = 4069,
   ).packets;
   assert.equal(packets.length, 120);
   const raw = fs.readFileSync(fixture);
-  const mux = createRecordingTiming();
-  fs.writeFileSync(input, "");
   const directory = path.join(root, "hls"),
-    expectedMs = gapMs ? Math.round((7866 + gapMs + 1000 / 15) / 1000) * 1000 : 8000;
+    expectedMs = timestampCase === "zero" ? 8000 : gapMs ? Math.round((7866 + gapMs + 1000 / 15) / 1000) * 1000 : 8000;
+  const mux = createRecordingTiming({ expectedMs });
+  fs.writeFileSync(input, "");
+  const rejectionIndex = timestampCase === "over-bound" ? 60 : timestampCase === "spike-regression" ? 61 : null;
+  const save = (receipt) => {
+    fs.writeFileSync(path.join(root, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
+    return { root, ...receipt };
+  };
   let active;
   let early = false;
+  let earlyCommittedFrames;
   try {
     for (let i = 0; i < packets.length; i++) {
       const timestamp = gapMs
         ? Math.round(((i - (i >= gapIndex ? 1 : 0)) * 7866) / 118) + (i >= gapIndex ? gapMs : 0)
         : Math.round((i * 1000) / 15);
       const { pos, size } = packets[i];
-      const bytes = mux.frame(raw.subarray(Number(pos), Number(pos) + Number(size)), {
-        nativeTimestamp: 100000 + timestamp,
-      });
+      const word =
+        timestampCase === "zero"
+          ? 0
+          : timestampCase === "over-bound" && i === 60
+            ? 3599800
+            : timestampCase === "spike-regression"
+              ? i === 60
+                ? 11000
+                : Math.round((i * 1000) / 15)
+              : timestamp;
+      const before = fs.statSync(input).size;
+      let bytes;
+      try {
+        bytes = mux.frame(raw.subarray(Number(pos), Number(pos) + Number(size)), { nativeTimestamp: 100000 + word });
+      } catch (error) {
+        assert.equal(i, rejectionIndex, "only the deliberately corrupt clock may fail");
+        assert.equal(error.reason, "convert_failed");
+        assert.equal(error.endReason, "conversion_validation_failed");
+        assert.equal(mux.timing.frames, i, "rejected frame must not enter timing or spool");
+        assert.equal(fs.statSync(input).size, before);
+        await active.abort(error.reason, { endReason: error.endReason, exitCode: null, signal: null });
+        assert.equal(active.snapshot().delivery, "unavailable");
+        return save({
+          timestampCase,
+          rejectedFrame: i,
+          committedFrames: mux.timing.frames,
+          endReason: active.snapshot().endReason,
+        });
+      }
+      if (!bytes.length) continue;
       fs.appendFileSync(input, bytes);
       active ??= createProgressiveEncoder({
         directory,
@@ -70,15 +109,19 @@ export async function checkNativeRecordingMedia({ ffmpeg, ffprobe, gapMs = 4069,
         nativeTiming: mux.timing,
       });
       active.commit(bytes.length);
-      // Fast ingress with unrelated pauses proves the presentation clock is independent.
-      await delay(i === 90 ? 150 : 5);
-      if (active.snapshot().delivery === "playable") early = true;
+      // Stop at a sufficient prefix. The remaining 30 frames are not even muxed yet:
+      // a converter that buffers until all source frames/EOF cannot pass this proof.
+      if (i === 89) {
+        for (let n = 0; n < 250 && active.snapshot().delivery === "warming"; n++) await delay(20);
+        assert.equal(active.snapshot().delivery, "playable", "segments must become playable while ingress is paused");
+        early = true;
+        earlyCommittedFrames = mux.timing.frames;
+        assert.equal(earlyCommittedFrames, 90);
+        assert.ok(earlyCommittedFrames < packets.length);
+      }
+      await delay(5);
     }
-    // Give the subprocess time to publish its already-fed prefix before EOF.
-    for (let n = 0; n < 100 && !early; n++) {
-      await delay(20);
-      early = active.snapshot().delivery === "playable";
-    }
+    assert.equal(rejectionIndex, null, "a corrupt clock must fail before conversion completes");
     assert.ok(early, "segments must be playable before source EOF");
     await active.finish({ frames: 120, durationMs: expectedMs });
     const progressiveOutput = path.join(root, "progressive.mp4"),
@@ -118,33 +161,37 @@ export async function checkNativeRecordingMedia({ ffmpeg, ffprobe, gapMs = 4069,
       assert.equal(stream.avg_frame_rate, "15/1");
       assert.ok(Math.abs(Number(stream.duration) * 1000 - expectedMs) <= 134, JSON.stringify(stream));
     }
-    const pts = JSON.parse(
-      run(ffprobe, [
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_frames",
-        "-show_entries",
-        "frame=best_effort_timestamp_time",
-        "-of",
-        "json",
-        input,
-      ]),
-    ).frames;
-    assert.equal(pts.length, 120);
+    const pts = mux.timing.native
+      ? JSON.parse(
+          run(ffprobe, [
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_frames",
+            "-show_entries",
+            "frame=best_effort_timestamp_time",
+            "-of",
+            "json",
+            input,
+          ]),
+        ).frames
+      : [];
     const times = pts.map((p) => Number(p.best_effort_timestamp_time));
-    assert.ok(Math.abs((times.at(-1) - times[0]) * 1000 - mux.timing.spanMs) < 1);
-    if (gapMs) assert.ok(Math.abs((times[gapIndex] - times[gapIndex - 1]) * 1000 - gapMs) < 1);
+    if (mux.timing.native) {
+      assert.equal(pts.length, 120);
+      assert.ok(Math.abs((times.at(-1) - times[0]) * 1000 - mux.timing.spanMs) < 1);
+      if (gapMs) assert.ok(Math.abs((times[gapIndex] - times[gapIndex - 1]) * 1000 - gapMs) < 1);
+    } else assert.equal(timestampCase, "zero");
     const hashes = (file, filter) =>
       run(ffmpeg, ["-v", "error", "-copyts", "-i", file, ...(filter ? ["-vf", filter] : []), "-f", "framemd5", "-"])
         .split("\n")
         .filter((line) => line && !line.startsWith("#"))
         .map((line) => line.split(",").at(-1).trim());
     const sourceHashes = hashes(fixture),
-      timedHashes = hashes(input, nativeVideoFilter);
+      timedHashes = mux.timing.native ? hashes(input, nativeVideoFilter) : sourceHashes;
     assert.equal(timedHashes.at(-1), sourceHashes.at(-1), "the final native frame must survive EOF");
-    if (gapMs) {
+    if (gapMs && mux.timing.native) {
       const start = Math.round((times[gapIndex - 1] - times[0]) * 15),
         end = Math.round((times[gapIndex] - times[0]) * 15);
       assert.ok(end - start >= 60);
@@ -156,15 +203,17 @@ export async function checkNativeRecordingMedia({ ffmpeg, ffprobe, gapMs = 4069,
     }
     const receipt = {
       inputFrames: 120,
+      timestampCase,
+      native: mux.timing.native,
       nativeSpanMs: mux.timing.spanMs,
       maxGapMs: gapMs || 67,
       progressive,
       mp4,
       earlySegments: early,
+      earlyCommittedFrames,
       hlsDurationMs: active.snapshot().segments.reduce((n, s) => n + s.durationMs, 0),
     };
-    fs.writeFileSync(path.join(root, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
-    return { root, ...receipt };
+    return save(receipt);
   } finally {
     await active?.abort();
     active?.dispose();

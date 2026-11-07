@@ -129,3 +129,70 @@ Companion SDK:
 - `src/transport/rtc/command-router.ts`
 - `src/transport/rtc/event-playback-candidate.ts`
 - `src/transport/rtc/__tests__/event-playback-candidate.spec.ts`
+
+## Review remediation, 2026-11-07
+
+Reviewed bridge revision: `8c6afcefbcdba40cab0dfdbc3aae1af3e7052840`.
+The companion SDK remains unchanged at `8a7d6bc`.
+
+The first remediation commit, `502fa5a`, contains tests only. Against the reviewed
+revision, `node --test --test-name-pattern='review:' test/recordings-timing.test.mjs
+test/recordings-clips.test.mjs` reported **1 passed, 5 failed**. All three direct
+timing regressions failed: 3,599,800 ms on a 12-second clip did not throw, an
+11,000 -> 4,067 ms regression did not throw, and 120 zero timestamps selected
+native mode. Two capture regressions also failed. The capture over-bound case
+already failed final admission, but did not protect a running encoder.
+
+The shared timing spool now admits at most `expectedMs + 1000` of native span,
+checking before accepting/packetizing each frame. The fixed one-second margin
+allows catalog rounding without granting an hour of CFR expansion to short clips;
+final catalog agreement remains 200 ms. Backward steps over 10 ms fail closed;
+duplicates and <=10 ms regression jitter retain the 1 ms clamp. Both progressive
+HLS and standalone MP4 reject discontinuities after native selection. No new
+public reason or end-reason enum was added. Capture errors abort the shared
+controller immediately and remain `convert_failed` even if pull swallows them.
+
+Native selection buffers four frames, capped at 1 MiB. Qualification requires
+valid u32 words, at least two increasing deltas, at least one 10-250 ms delta, and
+no regression over 10 ms. Large positive gaps remain supported. Unqualified
+prefixes use the legacy fixed-rate path; EOF before qualification flushes every
+buffered byte as raw input. Encoder creation waits for the chosen input format.
+The 15 fps gate, playable threshold, pump backpressure, watchdogs, cleanup and
+final-duration checks are preserved.
+
+The real-media harness pauses after exactly 90 of 120 source frames. It waits up
+to five seconds for closed segments to meet its existing 2000 ms playable
+threshold before muxing/committing any of the remaining 30 frames. All five valid
+native/fallback cases passed this stricter proof; an encoder waiting for complete
+input cannot pass it.
+
+Real ffmpeg ran with `ssh ubuntu`, the same existing image ID documented above,
+`--rm --pull=never --network none`, and only a new task-owned
+`/tmp/recording-clock-review-auLJnhKg` mount. The seven native/fallback/rejection
+cases plus the two unchanged metadata-free arrival profiles passed: **9 passed,
+0 failed, 0 skipped**. After the final short-prefix EOF/storage handling change,
+the seven native cases ran again: **7 passed, 0 failed, 0 skipped**. Results:
+
+- Gapped 11,935 ms -> 12.000 seconds, 180 H.264 frames, both HLS/remux and MP4.
+- No-gap 7,933 ms -> 8.000 seconds, 120 frames, both outputs.
+- First-frame 4,069/16,069 ms gaps -> 12.000/24.000 seconds, 180/360 frames.
+- All-zero timestamps -> raw fixed-rate fallback, 8.000 seconds, 120 frames.
+- Spike/regression rejected frame index 61; over-bound rejected index 60.
+  Neither rejected frame reached the spool or encoder. Delivery became
+  unavailable; subprocess shutdown retained the existing `ffmpeg_exit` end reason.
+
+Final bridge `npm test`: **1052 passed, 0 failed, 42 skipped**, 1094 total
+(18 additional passing regressions and three additional ffmpeg skips versus the
+reviewed revision). Changed-file Prettier checks and `git diff --check` passed.
+
+Evidence is preserved under `.offline/review-timing-20261107/`: `fail-first.log`,
+`full-suite-complete.log`, `real-media-first.log`, `real-media-final.log`, exact
+transferred source archives, and all synthetic media/receipts. All **242** remote
+evidence files matched their SHA-256 manifest, and all 11 transferred source files
+matched the final local source. The final source archive SHA-256 is
+`981dd8faf4528fbb4f21c1b8be702d3707f12b2d675595815ec1a076d36e717e`.
+Only the task-owned Ubuntu directory was removed after verification; existing
+artifacts, images, persistent containers and services were not touched.
+Live/device acceptance is still
+pending. Native-clock qualification is deliberately conservative: unusual initial
+cadence uses the legacy fallback, which does not preserve native gaps.

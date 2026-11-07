@@ -733,7 +733,7 @@ export function createClipJobs({
     const start = monotonic();
     const bridgeTimeline = {};
     let experiment, spool;
-    let recordingTiming = createRecordingTiming();
+    let recordingTiming = createRecordingTiming({ expectedMs: j.expectedMs });
     const timing = () => ({
       ...evidence,
       transferSpeed: evidence.transferSpeed ?? j.transferSpeed,
@@ -764,7 +764,13 @@ export function createClipJobs({
             first ??= monotonic();
             latest = monotonic();
             frames++;
-            if (j.progressiveRequested && progressiveFps === 15 && !experiment && j.expectedMs <= 3_600_000) {
+            if (
+              bytes.length &&
+              j.progressiveRequested &&
+              progressiveFps === 15 &&
+              !experiment &&
+              j.expectedMs <= 3_600_000
+            ) {
               if (!j.encoder) {
                 j.directory = path.join(root, `hls-${name}`);
                 j.encoder = progressiveEncoder({
@@ -799,6 +805,10 @@ export function createClipJobs({
             );
           } catch (e) {
             writeFailed = true;
+            if (e?.reason === "convert_failed") {
+              j.endReason = e.endReason ?? "conversion_validation_failed";
+              abort(j, "convert_failed");
+            }
             // A local write failure is storage, whether or not the SDK rethrows it.
             throw clipReasons.includes(e?.reason) ? e : fault("storage");
           }
@@ -928,7 +938,7 @@ export function createClipJobs({
           if (monotonic() >= admissionDeadline) break;
           pullOptions.transferSpeed = 1;
           frames = 0;
-          recordingTiming = createRecordingTiming();
+          recordingTiming = createRecordingTiming({ expectedMs: j.expectedMs });
           first = latest = undefined;
           j.pulledMs = 0;
           if (fd !== undefined) {
@@ -955,6 +965,18 @@ export function createClipJobs({
         if (monotonic() >= admissionDeadline) break;
       }
       pullMs = Math.round(monotonic() - start);
+      if (fd !== undefined && !writeFailed) {
+        try {
+          const tail = recordingTiming.flush();
+          if (tail.length) {
+            room(tail.length);
+            writeAll(fd, tail);
+            j.encoder?.commit(tail.length);
+          }
+        } catch (error) {
+          throw clipReasons.includes(error?.reason) ? error : fault("storage");
+        }
+      }
       if (fd !== undefined) fs.closeSync(fd);
       fd = undefined;
       if (experiment?.mode === "download" || receipt.mode === "download")
