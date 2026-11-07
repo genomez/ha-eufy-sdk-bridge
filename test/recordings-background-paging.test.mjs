@@ -274,3 +274,26 @@ test("live paging control is bounded and fails closed; environment disable wins"
   await fs.writeFile(file, '{"version":1,"enabled":false}');
   assert.equal(backgroundPagingEnabled(root), false);
 });
+
+test("an invalid latest page cannot become the overflow baseline for the same rows", async (t) => {
+  let invalid = true;
+  const h = await harness(t, {
+    background: true,
+    catalog: (s, opts) => {
+      if (opts.beforeRecordId) return page(h.scope, opts.beforeRecordId - 1);
+      const p = page(h.scope, 100);
+      if (invalid)
+        p.rows = p.rows.map((_, i) =>
+          row(h.scope, 100 - i, { coverSelector: null, timeStatus: "invalid", startedAtMs: null }),
+        );
+      return p;
+    },
+  });
+  await background(h, 1);
+  invalid = false;
+  await background(h, 2);
+  h.clocks.advance(5_000);
+  await tick();
+  assert.equal(h.calls.catalog.length, 2);
+  assert.equal(h.manager.diagnostics().background.paging.runs, 0);
+});

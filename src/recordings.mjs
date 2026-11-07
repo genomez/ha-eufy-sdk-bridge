@@ -835,7 +835,9 @@ export function createRecordings(
                 : overflow
                   ? "overflow"
                   : "not_overflow";
-        latestCheckpoint = new Set(validLatest.map((r) => r.eventId));
+        // Only a fully valid latest page may become the next overflow baseline; otherwise keep the last trustworthy one.
+        if (pageValid(result.page) && validLatest.length === result.rows.length)
+          latestCheckpoint = new Set(validLatest.map((r) => r.eventId));
         dirty = false;
         attempt.outcome = "ok";
         attempt.reason = "none";
