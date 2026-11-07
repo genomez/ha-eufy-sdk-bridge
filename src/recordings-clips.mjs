@@ -252,6 +252,7 @@ function clipEvidence(receipt = {}) {
   ];
   return {
     ...experimentEvidence(receipt),
+    transferSpeed: [1, 2, 4, 8].includes(receipt.transferSpeed) ? receipt.transferSpeed : null,
     mode: receipt.mode === "download" || receipt.experiment?.mode === "download" ? "download" : "playback",
     ...(receipt.download && { download: downloadEvidence(receipt.download) }),
     ...boundedPlaybackDiagnostics(receipt),
@@ -335,7 +336,13 @@ function experimentEvidence(receipt) {
     ...(experiment && { experiment }),
     selectedIceCandidateType: type(receipt.selectedIceCandidateType),
     selectedRemoteIceCandidateType: type(receipt.selectedRemoteIceCandidateType),
-    durationBasis: finite(receipt.durationBasis, ["arrival", "catalog_experiment", "native_header_experiment"]),
+    durationBasis: finite(receipt.durationBasis, [
+      "arrival",
+      "catalog_experiment",
+      "native_header_experiment",
+      "catalog",
+      "native_header",
+    ]),
     ...(fps && {
       arrivalFps: {
         buckets: count(fps.buckets),
@@ -486,6 +493,7 @@ export function createClipJobs({
       jobOrdinal: j.jobOrdinal,
       state: j.state,
       reason: j.reason,
+      transferSpeed: j.transferSpeed ?? null,
       durationBucket:
         j.expectedMs <= 0 ? "unknown" : j.expectedMs < 15000 ? "lt15s" : j.expectedMs < 60000 ? "lt60s" : "ge60s",
       source: j.source,
@@ -551,6 +559,7 @@ export function createClipJobs({
     let experiment, spool;
     const timing = () => ({
       ...evidence,
+      transferSpeed: evidence.transferSpeed ?? j.transferSpeed,
       ...(experiment && { experiment }),
       timeline: { ...evidence.timeline, ...bridgeTimeline },
     });
@@ -565,6 +574,7 @@ export function createClipJobs({
       const pullOptions = {
         timelineOriginMs: start,
         signal: j.controller.signal,
+        transferSpeed: 2,
         beforeDispatch: () => state(j, "pulling"),
         video(data) {
           if (experiment?.mode === "download") throw fault("experiment_only");
@@ -576,7 +586,10 @@ export function createClipJobs({
             first ??= monotonic();
             latest = monotonic();
             frames++;
-            j.pulledMs = Math.min(j.expectedMs, Math.round(latest - first));
+            j.pulledMs = Math.min(
+              j.expectedMs,
+              Math.round((latest - first) * (experiment?.playSpeed ?? pullOptions.transferSpeed)),
+            );
           } catch (e) {
             writeFailed = true;
             // A local write failure is storage, whether or not the SDK rethrows it.
@@ -586,7 +599,6 @@ export function createClipJobs({
       };
       let receipt;
       const admissionDeadline = monotonic() + 150_000;
-      let freshRetried = false;
       for (;;) {
         if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
         if (live()) throw fault("live_view");
@@ -604,6 +616,7 @@ export function createClipJobs({
           pendingPull = Promise.resolve().then(() => {
             experiment ??= validateExperiments(experiments?.take()) ?? undefined;
             if (experiment) pullOptions.experiment = experiment;
+            j.transferSpeed = experiment?.playSpeed ?? pullOptions.transferSpeed;
             if (experiment?.mode === "download") {
               try {
                 spool ??= createDownloadSpool(path.dirname(root));
@@ -640,6 +653,7 @@ export function createClipJobs({
           receipt = { captureOutcome: "not_admitted", ...error, startAttempted: false };
         }
         evidence = clipEvidence(receipt);
+        j.transferSpeed = evidence.transferSpeed ?? j.transferSpeed;
         captureAttempted ||= receipt.startAttempted === true || frames > 0;
         if (evidence.admissionGate !== "none" && evidence.admissionGate !== "unknown")
           counters.admissionGates[evidence.admissionGate] = (counters.admissionGates[evidence.admissionGate] ?? 0) + 1;
@@ -653,21 +667,42 @@ export function createClipJobs({
           audioIncluded: false,
           ...timing(),
         };
-        const endedAt = j.selection?.selector?.begin * 1000 + j.expectedMs;
-        const age = now() - endedAt;
-        const freshRefusal =
+        const speedFailure =
+          receipt.captureOutcome === "start_refused" ||
+          (receipt.startAttempted &&
+            !receipt.boundedMediaObserved &&
+            (["eof", "complete", "capped", "no_media"].includes(receipt.captureOutcome) ||
+              ["random_access", "frames", "span", "gap", "density", "truncated"].includes(
+                receipt.completenessFailure,
+              )));
+        const released =
+          !receipt.startAttempted ||
+          receipt.reconnectOutcome === "connected" ||
+          (receipt.releaseOutcome === "release_confirmed" &&
+            receipt.latchCleared &&
+            receipt.cessationOutcome === "ceased");
+        if (
           !experiment &&
-          !freshRetried &&
-          receipt.captureOutcome === "start_refused" &&
-          !receipt.startAcknowledged &&
-          !frames &&
-          age >= 0 &&
-          age < 90000 &&
-          receipt.stationStatusCounts?.some((status) => status.state === 2 && status.code === 18);
-        if (freshRefusal) {
-          const pause = Math.max(0, endedAt + 60000 - now());
-          if (pause < admissionDeadline - monotonic()) {
-            freshRetried = true;
+          pullOptions.transferSpeed === 2 &&
+          speedFailure &&
+          released &&
+          !writeFailed &&
+          !mediaReceipt
+        ) {
+          await pendingPull;
+          pullOptions.transferSpeed = 1;
+          const endedAt = j.selection?.selector?.begin * 1000 + j.expectedMs;
+          const age = now() - endedAt;
+          if (
+            receipt.captureOutcome === "start_refused" &&
+            !receipt.startAcknowledged &&
+            !frames &&
+            age >= 0 &&
+            age < 90000 &&
+            receipt.stationStatusCounts?.some((s) => s.state === 2 && s.code === 18)
+          ) {
+            const pause = Math.max(0, endedAt + 60000 - now());
+            if (pause >= admissionDeadline - monotonic()) break;
             j.waitingForAdmission = true;
             state(j, "queued");
             try {
@@ -675,8 +710,20 @@ export function createClipJobs({
             } finally {
               j.waitingForAdmission = false;
             }
-            if (monotonic() < admissionDeadline) continue;
           }
+          frames = 0;
+          first = latest = undefined;
+          j.pulledMs = 0;
+          if (fd !== undefined) {
+            fs.closeSync(fd);
+            fd = undefined;
+            try {
+              fd = fs.openSync(j.input, "w", 0o600);
+            } catch {
+              throw fault("storage");
+            }
+          }
+          continue;
         }
         if (experiment || receipt.startAttempted || frames || !transientAdmission.has(evidence.admissionGate)) break;
         const remaining = admissionDeadline - monotonic();
@@ -958,6 +1005,7 @@ export function createClipJobs({
         reason: "none",
         readers: 0,
         mediaComplete: false,
+        transferSpeed: null,
       });
       jobs.set(id, j);
       const reason =

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-export const DOWNLOAD_BYTES = 16 * 1024 * 1024;
+export const DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const integer = (v, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(v) && v >= 0 && v <= max;
 
 /** Closed scalar projection; payload bytes, identifiers and arbitrary strings never enter evidence. */
@@ -17,6 +17,23 @@ export function downloadEvidence(value) {
     cancelAttempted: value.cancelAttempted === true,
     cancelSent: value.cancelSent === true,
     fileBytes: integer(value.fileBytes, DOWNLOAD_BYTES) ? value.fileBytes : 0,
+    firstFileByteMs: integer(value.firstFileByteMs) ? value.firstFileByteMs : null,
+    lastFileByteMs: integer(value.lastFileByteMs) ? value.lastFileByteMs : null,
+    parsedFrameCount: integer(value.parsedFrameCount) ? value.parsedFrameCount : 0,
+    mediaDurationMs: integer(value.mediaDurationMs) && value.mediaDurationMs > 0 ? value.mediaDurationMs : null,
+    codec: ["h264", "hevc"].includes(value.codec) ? value.codec : "unknown",
+    terminalStatus:
+      value.terminalStatus &&
+      integer(value.terminalStatus.command, 65535) &&
+      integer(value.terminalStatus.innerCommand, 65535)
+        ? {
+            command: value.terminalStatus.command,
+            innerCommand: value.terminalStatus.innerCommand,
+            subcommand: status(value.terminalStatus.subcommand),
+            state: status(value.terminalStatus.state),
+            code: status(value.terminalStatus.code),
+          }
+        : null,
     firstBytes: ["empty", "mp4_ftyp", "hevc_annex_b", "other"].includes(value.firstBytes) ? value.firstBytes : "other",
     links: (Array.isArray(value.links) ? value.links : [])
       .slice(0, 32)
@@ -88,6 +105,52 @@ export function createDownloadSpool(recordingsRoot) {
   }
   let bytes = 0,
     closed = false;
+  let pending = Buffer.alloc(0),
+    elementaryFd,
+    codec = "unknown",
+    parsedFrameCount = 0,
+    demuxInvalid = false;
+  const demux = (data) => {
+    if (demuxInvalid) return;
+    pending = pending.length ? Buffer.concat([pending, data]) : data;
+    while (pending.length >= 16) {
+      if (pending.toString("ascii", 0, 4) !== "XZYH") {
+        demuxInvalid = true;
+        pending = Buffer.alloc(0);
+        return;
+      }
+      const length = pending.readUInt32LE(6) + 16;
+      if (length > 8 * 1024 ** 2) {
+        demuxInvalid = true;
+        pending = Buffer.alloc(0);
+        return;
+      }
+      if (pending.length < length) break;
+      const frame = pending.subarray(0, length);
+      pending = pending.subarray(length);
+      if (frame.readUInt16LE(4) !== 1300 || length < 44 || frame.readUInt32LE(16) !== length - 38) continue;
+      const video = frame.subarray(38);
+      const start = video.readUInt32BE(0) === 1 ? 4 : video.readUIntBE(0, 3) === 1 ? 3 : -1;
+      if (start < 0) continue;
+      const avc = video[start] & 31,
+        hevc = (video[start] >>> 1) & 63;
+      const detected =
+        avc === 7 || avc === 8 ? "h264" : hevc >= 32 && hevc <= 34 ? "hevc" : frame[21] === 1 ? "hevc" : "h264";
+      if (codec === "unknown") {
+        codec = detected;
+        elementaryFd = fs.openSync(path.join(directory, `${name}.${codec}`), flags, 0o600);
+        fs.fchmodSync(elementaryFd, 0o600);
+      }
+      if (detected !== codec) {
+        demuxInvalid = true;
+        pending = Buffer.alloc(0);
+        return;
+      }
+      fs.writeFileSync(elementaryFd, video);
+      parsedFrameCount++;
+    }
+    pending = Buffer.from(pending);
+  };
   return {
     file,
     write(data) {
@@ -100,6 +163,7 @@ export function createDownloadSpool(recordingsRoot) {
         offset += n;
         bytes += n;
       }
+      demux(data.subarray(0, size));
       return size;
     },
     close(evidence) {
@@ -109,6 +173,13 @@ export function createDownloadSpool(recordingsRoot) {
         fs.fsyncSync(fd);
       } finally {
         fs.closeSync(fd);
+        if (elementaryFd !== undefined) {
+          try {
+            fs.fsyncSync(elementaryFd);
+          } finally {
+            fs.closeSync(elementaryFd);
+          }
+        }
       }
       const receipt = {
         mode: "download",
@@ -117,6 +188,7 @@ export function createDownloadSpool(recordingsRoot) {
           "time_refused",
           "start_refused",
           "storage_failed",
+          "eof",
           "capped",
           "capped_wrong_route",
           "invalid_media",
@@ -128,6 +200,7 @@ export function createDownloadSpool(recordingsRoot) {
           ? evidence.captureOutcome
           : "unknown",
         spoolBytes: bytes,
+        demux: { codec, parsedFrameCount, complete: !demuxInvalid && !pending.length },
         download: downloadEvidence(evidence?.download),
         reconnectOutcome: ["not_needed", "connected", "failed", "timed_out"].includes(evidence?.reconnectOutcome)
           ? evidence.reconnectOutcome

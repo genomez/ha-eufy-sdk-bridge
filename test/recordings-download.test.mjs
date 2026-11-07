@@ -7,6 +7,31 @@ import { createPlaybackExperiments, validateExperiments } from "../src/recording
 import { createDownloadSpool, DOWNLOAD_BYTES, downloadEvidence } from "../src/recordings-download.mjs";
 import { createClipJobs } from "../src/recordings-clips.mjs";
 
+for (const [codec, nal] of [
+  ["h264", [0x67, 0x64]],
+  ["hevc", [0x40, 1]],
+])
+  test(`demuxes fragmented XZYH ${codec} into a private elementary stream`, async (t) => {
+    const root = await temporary(t),
+      spool = createDownloadSpool(root);
+    const data = Buffer.from([0, 0, 0, 1, ...nal, 9]);
+    const raw = Buffer.alloc(38 + data.length);
+    raw.write("XZYH");
+    raw.writeUInt16LE(1300, 4);
+    raw.writeUInt32LE(raw.length - 16, 6);
+    raw.writeUInt32LE(data.length, 16);
+    raw[21] = codec === "hevc" ? 1 : 0;
+    data.copy(raw, 38);
+    spool.write(raw.subarray(0, 9));
+    spool.write(raw.subarray(9));
+    spool.close({ captureOutcome: "eof" });
+    assert.deepEqual(fs.readFileSync(spool.file.replace(/\.bin$/, `.${codec}`)), data);
+    const receipt = JSON.parse(fs.readFileSync(spool.file.replace(/\.bin$/, ".json")));
+    assert.equal(receipt.outcome, "eof");
+    assert.equal(receipt.demux.parsedFrameCount, 1);
+    assert.equal(receipt.demux.codec, codec);
+  });
+
 test("download mode requires valid arming and consumes its durable budget once", async (t) => {
   const root = await temporary(t),
     file = path.join(root, "experiments.json");

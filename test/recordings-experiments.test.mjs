@@ -19,9 +19,17 @@ function clientSessionIcePolicy(root) {
     .icePolicyAtSessionCreation;
 }
 
+for (const mode of ["playback", "download"])
+  test(`${mode} without maxClips stays armed beyond five runs and across restart`, async (t) => {
+    const root = await temporary(t);
+    fs.writeFileSync(path.join(root, "experiments.json"), JSON.stringify({ mode }));
+    for (let i = 0; i < 8; i++) assert.equal(createPlaybackExperiments(root).take()?.mode, mode);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "experiments-state.json"))).used, 8);
+  });
+
 for (const playSpeed of [1, 2, 4, 8])
   test(`bounded playback speed ${playSpeed}`, () => {
-    assert.deepEqual(validateExperiments({ playSpeed }), { playSpeed, playType: 1, clientType: "WEB", maxClips: 1 });
+    assert.deepEqual(validateExperiments({ playSpeed }), { playSpeed, playType: 1, clientType: "WEB" });
   });
 for (const invalid of [
   null,
@@ -85,7 +93,7 @@ test("shared ICE callback reads file only at session creation and exhaustion res
   const root = await temporary(t);
   const callback = playbackSessionIcePolicy(root);
   assert.equal(callback(), undefined);
-  fs.writeFileSync(path.join(root, "experiments.json"), '{"icePolicy":"all"}');
+  fs.writeFileSync(path.join(root, "experiments.json"), '{"icePolicy":"all","maxClips":1}');
   assert.equal(callback(), "all");
   playbackExperiments(root).take();
   assert.equal(callback(), undefined);

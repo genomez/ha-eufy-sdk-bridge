@@ -13,16 +13,14 @@ export function validateExperiments(value) {
     )
   )
     return null;
-  const v = { playSpeed: 1, playType: 1, clientType: "WEB", maxClips: 1, ...value };
+  const v = { playSpeed: 1, playType: 1, clientType: "WEB", ...value };
   if (
     (v.mode !== undefined && !["playback", "download"].includes(v.mode)) ||
     ![1, 2, 4, 8].includes(v.playSpeed) ||
     v.playType !== 1 ||
     v.clientType !== "WEB" ||
     (v.icePolicy !== undefined && !["relay", "all"].includes(v.icePolicy)) ||
-    !Number.isInteger(v.maxClips) ||
-    v.maxClips < 1 ||
-    v.maxClips > 5
+    (v.maxClips !== undefined && (!Number.isSafeInteger(v.maxClips) || v.maxClips < 1 || v.maxClips > 5))
   )
     return null;
   return {
@@ -31,7 +29,7 @@ export function validateExperiments(value) {
     playType: v.playType,
     clientType: v.clientType,
     ...(v.icePolicy === undefined ? {} : { icePolicy: v.icePolicy }),
-    maxClips: v.maxClips,
+    ...(v.maxClips === undefined ? {} : { maxClips: v.maxClips }),
   };
 }
 
@@ -76,19 +74,15 @@ export function createPlaybackExperiments(root) {
       let used = 0;
       try {
         const saved = read(ledger).value;
-        if (
-          !saved ||
-          !/^[a-f0-9]{64}$/.test(saved.key) ||
-          !Number.isInteger(saved.used) ||
-          saved.used < 0 ||
-          saved.used > 5
-        )
+        if (!saved || !/^[a-f0-9]{64}$/.test(saved.key) || !Number.isSafeInteger(saved.used) || saved.used < 0)
           return null;
         if (saved.key === key) used = saved.used;
       } catch (e) {
         if (e.code !== "ENOENT") return null;
       }
-      return key !== failedKey && used < overrides.maxClips ? { key, used, overrides } : null;
+      return key !== failedKey && (overrides.maxClips === undefined || used < overrides.maxClips)
+        ? { key, used, overrides }
+        : null;
     } catch {
       return null;
     }
@@ -143,7 +137,7 @@ export function createPlaybackExperiments(root) {
     },
     take() {
       const a = armed();
-      return a ? persist(a, a.used + 1) : undefined;
+      return a ? persist(a, Math.min(Number.MAX_SAFE_INTEGER, a.used + 1)) : undefined;
     },
   };
 }

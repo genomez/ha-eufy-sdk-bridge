@@ -36,6 +36,37 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+for (const failure of ["start_refused", "eof"])
+  test(`2x ${failure} retries once at 1x in the same job with clean conversion input`, async (t) => {
+    const speeds = [],
+      logs = [];
+    const f = await fixture(t, {
+      log: (line) => logs.push(line),
+      pull: async (_, opts) => {
+        speeds.push(opts.transferSpeed);
+        opts.beforeDispatch();
+        if (speeds.length === 1) {
+          if (failure === "eof") opts.video(Buffer.from("discard"));
+          return { ...clean, captureOutcome: failure, boundedMediaObserved: false, completenessFailure: "frames" };
+        }
+        opts.video(Buffer.from("first"));
+        opts.video(Buffer.from("last"));
+        return { ...clean, transferSpeed: opts.transferSpeed };
+      },
+      convert: async ({ input, output, frames, durationMs }) => {
+        assert.equal(fs.readFileSync(input, "utf8"), "firstlast");
+        assert.equal(frames, 2);
+        assert.equal(durationMs, 10000);
+        fs.writeFileSync(output, "converted");
+      },
+    });
+    await ready(f, "a");
+    await until(() => !f.jobs.busy());
+    assert.deepEqual(speeds, [2, 1]);
+    assert.equal(f.jobs.diagnostics().lastJob.transferSpeed, 1);
+    assert.equal(logs.find((r) => r.event === "recordings.clip_terminal").transferSpeed, 1);
+  });
+
 for (const cleanup of ["connected", "failed", "reject"])
   test(`EOF publishes before ${cleanup} retirement and live preserves ready media`, async (t) => {
     const cleanupGate = deferred();
@@ -233,9 +264,9 @@ for (const age of [10000, 65000, 90000])
     });
     f.jobs.prepare("camera", "a", { selector: { expectedMs: 10000, begin: (100000 - age - 10000) / 1000 } });
     await until(() => ["ready", "failed"].includes(state(f, "a").state));
-    assert.equal(attempts, age < 90000 ? 2 : 1);
+    assert.equal(attempts, 2);
     assert.deepEqual(waits, age < 90000 ? [Math.max(0, 60000 - age)] : []);
-    assert.equal(state(f, "a").state, age < 90000 ? "ready" : "failed");
+    assert.equal(state(f, "a").state, "ready");
   });
 
 test("a fresh event gets only one refused-start retry", async (t) => {
@@ -1046,6 +1077,7 @@ test("failed clip exposes only finite receipt evidence and cumulative counts", a
   const d = f.jobs.diagnostics();
   assert.equal(state(f, "a").reason, "cleanup_uncertain");
   assert.deepEqual(d.lastJob, {
+    transferSpeed: 2,
     jobOrdinal: 2,
     state: "failed",
     reason: "cleanup_uncertain",
@@ -1459,6 +1491,7 @@ test("new jobs log exactly one bounded queue/terminal pair including deduplicati
     jobOrdinal: 1,
     state: "queued",
     reason: "none",
+    transferSpeed: null,
     durationBucket: "lt15s",
     source: { connection: 7, locality: "remote", client: "ha-integration" },
   });
@@ -1507,7 +1540,7 @@ test("truncated capture evidence survives queued cancellation and immediate refu
     log() {},
     pull: async (_, options) => {
       options.beforeDispatch();
-      if (++calls > 1) await gate.promise;
+      if (++calls > 2) await gate.promise;
       return {
         ...clean,
         boundedMediaObserved: false,
@@ -1541,7 +1574,7 @@ test("truncated capture evidence survives queued cancellation and immediate refu
   d.lastCaptureJob.droppedAfterCutoff = 0;
   assert.equal(f.jobs.diagnostics().lastCaptureJob.droppedAfterCutoff, 230);
   gate.resolve();
-  await until(() => state(f, "b").state === "failed");
+  await until(() => state(f, "b").state === "refused");
 });
 
 test("discarded tail counts are bounded", async (t) => {
