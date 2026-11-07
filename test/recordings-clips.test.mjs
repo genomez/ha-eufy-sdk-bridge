@@ -178,6 +178,7 @@ for (const cleanup of ["connected", "failed", "reject"])
       await ready(f, "a");
       assert.equal(f.jobs.busy(), true);
       assert.equal(f.jobs.diagnostics().lastJob.cleanupOutcome, "pending");
+      assert.deepEqual(f.jobs.diagnostics().history, []);
       f.jobs.prepare("camera", "b", selection);
       assert.equal(attempts, 1);
       f.live(true);
@@ -194,6 +195,9 @@ for (const cleanup of ["connected", "failed", "reject"])
       assert.equal(attempts, 1);
       assert.equal(state(f, "a").state, "ready");
       assert.equal(f.jobs.diagnostics().lastJob.cleanupOutcome, cleanup === "connected" ? "connected" : "failed");
+      const history = f.jobs.diagnostics().history.find((row) => row.jobOrdinal === 1);
+      assert.equal(history.endReason, "normal_completion");
+      if (cleanup !== "reject") assert.equal(history.reconnectDurationMs, 250);
       const asset = f.jobs.ready("camera", "a");
       assert.ok(asset && fs.existsSync(asset.path));
       asset.release();
@@ -618,7 +622,8 @@ test("one FIFO worker, event idempotency and finite public projections", async (
   assert.equal(f.jobs.prepare("camera", "a", selection).clip.state, "ready");
   assert.deepEqual(Object.keys(state(f, "a")), ["state", "reason", "progress", "durationMs", "bytes", "expiresAtMs"]);
   assert.equal(f.jobs.diagnostics().audioIncluded, false);
-  assert.equal(JSON.stringify(f.jobs.diagnostics()).includes("camera"), false);
+  assert.deepEqual(f.jobs.diagnostics().history[0].camera, { name: null, model: null });
+  assert.equal(JSON.stringify(f.jobs.diagnostics()).includes("cameraId"), false);
 });
 
 test("queued and active cancellation wait for release and remove temporary files", async (t) => {
@@ -1657,6 +1662,13 @@ test("truncated capture evidence survives queued cancellation and immediate refu
   assert.equal(d.lastJob.reason, "disabled");
   assert.equal(d.lastJob.jobOrdinal, 4);
   assert.deepEqual(d.lastCaptureJob, captured);
+  assert.deepEqual(
+    d.history.map((row) => row.jobOrdinal),
+    [1, 3, 4],
+  );
+  assert.equal(d.history[0].completenessFailure, "truncated");
+  assert.equal(d.history[1].state, "cancelled");
+  assert.equal(d.history[2].state, "refused");
   d.lastCaptureJob.droppedAfterCutoff = 0;
   assert.equal(f.jobs.diagnostics().lastCaptureJob.droppedAfterCutoff, 230);
   gate.resolve();

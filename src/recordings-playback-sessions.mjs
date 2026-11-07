@@ -4,15 +4,17 @@ const failure = () => Object.assign(new Error("not_found"), { reason: "not_found
 const id = () => "p_" + randomBytes(16).toString("base64url");
 
 /** Finite, generation-bound viewer leases; expired sessions can never be revived. */
-export function createPlaybackSessions({ now = Date.now, empty = () => {}, limit = 128 }) {
+export function createPlaybackSessions({ now = Date.now, empty = () => {}, observe = () => {}, limit = 128 }) {
   const sessions = new Map();
-  function retire(s) {
+  function retire(s, reason) {
     if (!sessions.delete(s.sessionId)) return;
-    if (![...sessions.values()].some((v) => v.job === s.job)) empty(s.job);
+    observe("retired", s, reason);
+    if (![...sessions.values()].some((v) => v.job === s.job)) empty(s.job, reason);
   }
   function expire() {
     for (const s of sessions.values())
-      if (now() >= (s.job.hlsComplete ? s.hardExpiresAtMs : Math.min(s.expires, s.hardExpiresAtMs))) retire(s);
+      if (now() >= (s.job.hlsComplete ? s.hardExpiresAtMs : Math.min(s.expires, s.hardExpiresAtMs)))
+        retire(s, "viewer_expired");
   }
   function get(sessionId, generation, owner) {
     expire();
@@ -46,6 +48,7 @@ export function createPlaybackSessions({ now = Date.now, empty = () => {}, limit
         hardExpiresAtMs: now() + Math.max(900_000, job.expectedMs + 450_000),
       };
       sessions.set(s.sessionId, s);
+      observe("opened", s);
       return s;
     },
     get,
@@ -59,7 +62,7 @@ export function createPlaybackSessions({ now = Date.now, empty = () => {}, limit
       if (!s) return;
       if (s.job.generation !== generation || s.owner !== owner) throw failure();
       if (cameraId !== undefined && (s.job.cameraId !== cameraId || s.job.eventId !== eventId)) throw failure();
-      retire(s);
+      retire(s, "viewer_released");
     },
     ownerLost(owner) {
       for (const s of sessions.values()) if (s.owner === owner) s.expires = Math.min(s.expires, now() + 30_000);
@@ -69,8 +72,21 @@ export function createPlaybackSessions({ now = Date.now, empty = () => {}, limit
       return [...sessions.values()].filter((s) => s.job === job).length;
     },
     expire,
+    delivery(job, delivery) {
+      for (const s of sessions.values()) {
+        if (s.job !== job) continue;
+        if (["playable", "complete"].includes(delivery) && !s.playable) {
+          s.playable = true;
+          observe("playable", s);
+        }
+        if (delivery === "complete" && !s.complete) {
+          s.complete = true;
+          observe("completed", s);
+        }
+      }
+    },
     clear() {
-      for (const s of [...sessions.values()]) retire(s);
+      for (const s of [...sessions.values()]) retire(s, "session_evicted");
     },
   };
 }

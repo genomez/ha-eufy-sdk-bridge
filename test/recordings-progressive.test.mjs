@@ -491,3 +491,328 @@ test("encoder watchdog is duration-bound and a successful exit cannot bypass EOF
   await encoder.abort();
   assert.equal(encoder.snapshot().delivery, "unavailable");
 });
+
+test("viewer release has its own terminal history reason and never counts as conversion failure", async (t) => {
+  const f = await fixture(t);
+  f.jobs.playbackRelease("a", f.a.sessionId, f.a.generation);
+  await until(() => !f.jobs.busy());
+  const d = f.jobs.diagnostics();
+  assert.equal(d.history.at(-1).endReason, "viewer_released");
+  assert.equal(d.history.at(-1).kind, "progressive");
+  assert.equal(d.progressive.sessionsOpened, 1);
+  assert.equal(d.progressive.releasedEarly, 1);
+  assert.equal(d.progressive.failuresByReason.ffmpeg_exit, 0);
+});
+
+test("viewer expiry and eviction preserve distinct terminal history reasons", async (t) => {
+  for (const cause of ["expired", "evicted"]) {
+    let now = 0;
+    const f = await fixture(t, { now: () => now });
+    if (cause === "expired") {
+      now = 180001;
+      assert.throws(() => f.jobs.playbackStatus("a", f.a.sessionId, f.a.generation));
+    } else await f.jobs.stop();
+    await until(() => !f.jobs.busy());
+    const d = f.jobs.diagnostics();
+    assert.equal(d.history.at(-1).endReason, cause === "expired" ? "viewer_expired" : "session_evicted");
+    assert.equal(d.progressive[cause], 1);
+  }
+});
+
+test("an explicit encoder abort survives the asynchronous process close", async (t) => {
+  const root = await temporary(t),
+    directory = path.join(root, "hls"),
+    input = path.join(root, "input.hevc");
+  fs.writeFileSync(input, "source");
+  const encoder = createProgressiveEncoder({
+    directory,
+    input,
+    fps: 15,
+    expectedMs: 6000,
+    spawnProcess: fakeProcess(directory, []),
+  });
+  await encoder.abort("viewer_released");
+  assert.equal(encoder.snapshot().reason, "viewer_released");
+  assert.equal(encoder.snapshot().endReason, "viewer_released");
+});
+
+test("playable threshold controls early delivery and invalid direct options fall back", async (t) => {
+  for (const threshold of [1000, 2500, 6000, 999, 6001, 1.5, NaN]) {
+    const root = await temporary(t),
+      directory = path.join(root, "hls"),
+      input = path.join(root, "input.hevc");
+    fs.writeFileSync(input, "source");
+    const encoder = createProgressiveEncoder({
+      directory,
+      input,
+      fps: 15,
+      expectedMs: 6000,
+      playableMs: threshold,
+      spawnProcess: fakeProcess(directory, []),
+    });
+    encoder.commit(6);
+    manifest(directory, 3);
+    await until(() => encoder.snapshot().segments.length === 3);
+    assert.equal(encoder.snapshot().delivery, threshold === 1000 || threshold === 2500 ? "playable" : "warming");
+    await encoder.abort("viewer_released");
+  }
+});
+
+for (const mode of ["exit", "signal", "spawn", "input", "timeout"])
+  test(`encoder process ${mode} has a precise fixed terminal classification`, async (t) => {
+    const root = await temporary(t),
+      directory = path.join(root, "hls"),
+      input = path.join(root, "input.hevc");
+    fs.writeFileSync(input, "source");
+    let child;
+    if (mode === "timeout") t.mock.timers.enable({ apis: ["setTimeout"] });
+    const encoder = createProgressiveEncoder({
+      directory,
+      input,
+      fps: 15,
+      expectedMs: 6000,
+      spawnProcess: (...args) => {
+        child = fakeProcess(directory, [])(...args);
+        return child;
+      },
+    });
+    if (mode === "exit") child.emit("close", 7);
+    if (mode === "signal") child.emit("close", null, "SIGSEGV");
+    if (mode === "spawn") {
+      child.emit("error", new Error("private spawn path"));
+      child.emit("close", -2);
+    }
+    if (mode === "input") {
+      child.stdin.emit("error", new Error("private pipe path"));
+      child.emit("close", 0);
+    }
+    if (mode === "timeout") {
+      t.mock.timers.tick(120000);
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.equal(encoder.snapshot().endReason, "encoder_timeout");
+      await encoder.abort();
+      return;
+    }
+    await until(() => encoder.snapshot().delivery === "unavailable");
+    const snapshot = encoder.snapshot();
+    assert.equal(
+      snapshot.endReason,
+      { exit: "ffmpeg_exit", signal: "ffmpeg_signal", spawn: "ffmpeg_spawn_error", input: "ffmpeg_input_error" }[mode],
+    );
+    assert.equal(snapshot.process.exitCode, mode === "exit" ? 7 : mode === "spawn" ? -2 : mode === "input" ? 0 : null);
+    assert.equal(snapshot.process.signal, mode === "signal" ? "SIGSEGV" : null);
+    assert.equal(JSON.stringify(snapshot).includes("private"), false);
+    await encoder.abort();
+    assert.equal(encoder.snapshot().endReason, snapshot.endReason);
+  });
+
+test("progressive history distinguishes capture failure and normal completion", async (t) => {
+  const failed = await fixture(t);
+  failed.resolvePull({ ...clean, captureOutcome: "invalid_media", boundedMediaObserved: false });
+  await until(() => !failed.jobs.busy());
+  const failure = failed.jobs.diagnostics();
+  assert.equal(failure.history.at(-1).endReason, "capture_failure");
+  assert.equal(failure.progressive.failuresByReason.capture_failure, 1);
+  const complete = await fixture(t);
+  complete.finish();
+  await until(() => !complete.jobs.busy());
+  const d = complete.jobs.diagnostics();
+  assert.equal(d.history.at(-1).endReason, "normal_completion");
+  assert.equal(d.history.at(-1).progressive.delivery, "complete");
+  assert.equal(d.history.at(-1).progressive.finalSegmentCount, 6);
+  assert.equal(d.progressive.reachedPlayable, 1);
+  assert.equal(d.progressive.completed, 1);
+  complete.jobs.playbackStatus("a", complete.a.sessionId, complete.a.generation);
+  assert.equal(complete.jobs.diagnostics().progressive.completed, 1);
+});
+
+test("history is a detached twenty-job ring with sanitized camera metadata and retained cleanup evidence", async (t) => {
+  let tick = 0;
+  const root = await temporary(t);
+  const jobs = createClipJobs({
+    root,
+    enabled: () => true,
+    live: () => false,
+    changed() {},
+    log() {},
+    monotonic: () => tick,
+    pull: async (_s, o) => {
+      o.beforeDispatch();
+      o.video(Buffer.from("first"));
+      tick += 100;
+      o.video(Buffer.from("tail"));
+      return {
+        ...clean,
+        retainedVideoSpanMs: 9500,
+        retainedVideoFrames: 150,
+        ingressAudioFrames: 4,
+        ingressVideoFrames: 151,
+        transferSpeed: 2,
+        selectedIceCandidateType: "host",
+        selectedRemoteIceCandidateType: "relay",
+        reconnectOutcome: "connected",
+        reconnectDurationMs: 23,
+        timeline: { admissionGrantedMs: 10, private: "secret" },
+      };
+    },
+    convert: async ({ output }) => {
+      tick += 50;
+      fs.writeFileSync(output, "mp4");
+    },
+  });
+  jobs.load();
+  t.after(() => jobs.stop());
+  for (let i = 0; i < 23; i++) {
+    jobs.prepare("private-camera-id", `private-event-${i}`, {
+      selector: { expectedMs: 10000, record: "private-record", path: "/private/path" },
+      camera:
+        i === 22
+          ? { name: "https://private.invalid/path", model: "T1234567890123456" }
+          : { name: "Front Porch", model: "T8425", sn: "private-serial" },
+    });
+    await until(() => !jobs.busy());
+  }
+  const d = jobs.diagnostics(),
+    h = d.history;
+  assert.equal(h.length, 20);
+  assert.equal(h[0].jobOrdinal, 4);
+  assert.equal(h.at(-1).jobOrdinal, 23);
+  assert.deepEqual(h[0].camera, { name: "Front Porch", model: "T8425" });
+  assert.deepEqual(h.at(-1).camera, { name: null, model: null });
+  assert.equal(h[0].kind, "mp4");
+  assert.equal(h[0].endReason, "normal_completion");
+  assert.equal(h[0].reconnectDurationMs, 23);
+  assert.equal(h[0].ingressAudioFrames, 4);
+  assert.equal(h[0].ingressVideoFrames, 151);
+  assert.equal(h[0].retainedVideoFrames, 150);
+  assert.equal(h[0].frames, 2);
+  assert.equal(h[0].pullMs, 100);
+  assert.equal(h[0].convertMs, 50);
+  assert.equal(h[0].timeline.admissionGrantedMs, 10);
+  assert.equal(JSON.stringify(h).includes("private"), false);
+  h[0].camera.name = "mutated";
+  h[0].timeline.admissionGrantedMs = 100;
+  assert.equal(jobs.diagnostics().history[0].camera.name, "Front Porch");
+  assert.equal(jobs.diagnostics().history[0].timeline.admissionGrantedMs, 10);
+});
+
+test("time to playable keeps the last twenty samples and counts shared viewers once per lease", async (t) => {
+  let tick = 0;
+  const root = await temporary(t);
+  let encoderOptions, snapshot, resolvePull;
+  const jobs = createClipJobs({
+    root,
+    enabled: () => true,
+    live: () => false,
+    changed() {},
+    log() {},
+    monotonic: () => tick,
+    progressiveFps: 15,
+    progressivePlayableMs: 1000,
+    progressiveEncoder: (options) => {
+      encoderOptions = options;
+      snapshot = { delivery: "warming", segments: [{ sequence: 0, durationMs: 1000, startMs: 0, bytes: 188 }] };
+      return {
+        commit() {},
+        snapshot: () => snapshot,
+        async finish() {
+          snapshot.delivery = "complete";
+          options.changed();
+        },
+        async finalizeMp4(output) {
+          fs.writeFileSync(output, "mp4");
+        },
+        dispose() {},
+        async abort() {},
+      };
+    },
+    pull: async (_s, o) => {
+      o.beforeDispatch();
+      o.video(Buffer.from("a"));
+      o.video(Buffer.from("b"));
+      return new Promise((resolve) => {
+        resolvePull = resolve;
+      });
+    },
+  });
+  jobs.load();
+  t.after(() => jobs.stop());
+  for (let i = 1; i <= 23; i++) {
+    resolvePull = null;
+    jobs.prepare("camera", `event-${i}`, { selector: { expectedMs: 10000 } }, { progressive: true });
+    const a = jobs.playbackOpen("viewer-a", `request-a-${i}`, "camera", `event-${i}`).playback;
+    jobs.playbackOpen("viewer-a", `request-a-${i}`, "camera", `event-${i}`);
+    const b = jobs.playbackOpen("viewer-b", `request-b-${i}`, "camera", `event-${i}`).playback;
+    await until(() => resolvePull);
+    assert.equal(encoderOptions.playableMs, 1000);
+    tick += i * 10;
+    snapshot.delivery = "playable";
+    encoderOptions.changed();
+    encoderOptions.changed();
+    resolvePull(clean);
+    await until(() => !jobs.busy());
+    jobs.playbackRelease("viewer-a", a.sessionId, a.generation);
+    jobs.playbackRelease("viewer-b", b.sessionId, b.generation);
+  }
+  const d = jobs.diagnostics();
+  assert.deepEqual(d.progressive.timeToPlayable, { count: 20, min: 40, median: 135, max: 230 });
+  assert.equal(d.progressive.sessionsOpened, 46);
+  assert.equal(d.progressive.reachedPlayable, 46);
+  assert.equal(d.progressive.completed, 46);
+  assert.equal(d.progressive.releasedEarly, 0);
+  assert.equal(d.progressive.playableThresholdMs, 1000);
+  const h = d.history.at(-1).progressive;
+  assert.equal(h.playableMs, 230);
+  assert.equal(h.playableSegments, 1);
+  assert.equal(h.playableDurationMs, 1000);
+});
+
+for (const cause of ["released", "expired", "evicted"])
+  test(`real encoder ${cause} input shutdown is not convert_failed`, async (t) => {
+    let now = 0;
+    const f = await fixture(t, {
+      now: () => now,
+      progressiveEncoder: (options) =>
+        createProgressiveEncoder({ ...options, spawnProcess: fakeProcess(options.directory, []) }),
+    });
+    if (cause === "released") f.jobs.playbackRelease("a", f.a.sessionId, f.a.generation);
+    else if (cause === "expired") {
+      now = 180001;
+      assert.throws(() => f.jobs.playbackStatus("a", f.a.sessionId, f.a.generation));
+    } else await f.jobs.stop();
+    await until(() => !f.jobs.busy());
+    const d = f.jobs.diagnostics(),
+      h = d.history.at(-1);
+    assert.equal(h.endReason, cause === "evicted" ? "session_evicted" : `viewer_${cause}`);
+    assert.equal(h.state, "cancelled");
+    assert.equal(h.reason, "none");
+    assert.equal(h.progressive.delivery, "unavailable");
+    assert.equal(
+      Object.values(d.progressive.failuresByReason).reduce((a, b) => a + b, 0),
+      0,
+    );
+  });
+
+test("real encoder exit reaches job history as a process failure rather than capture cancellation", async (t) => {
+  let child;
+  const f = await fixture(t, {
+    progressiveEncoder: (options) =>
+      createProgressiveEncoder({
+        ...options,
+        spawnProcess: (...args) => {
+          child = fakeProcess(options.directory, [])(...args);
+          return child;
+        },
+      }),
+  });
+  child.emit("close", 23);
+  await until(() => !f.jobs.busy());
+  const d = f.jobs.diagnostics(),
+    h = d.history.at(-1);
+  assert.equal(h.state, "failed");
+  assert.equal(h.reason, "convert_failed");
+  assert.equal(h.endReason, "ffmpeg_exit");
+  assert.deepEqual(h.process, { exitCode: 23, signal: null });
+  assert.equal(d.progressive.failuresByReason.ffmpeg_exit, 1);
+});

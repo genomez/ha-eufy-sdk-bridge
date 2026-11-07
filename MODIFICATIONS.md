@@ -570,3 +570,12 @@ Offline synthetic validation only; installation acceptance remains false.
 - Playback 3s r3, 2026-11-07: pin the local 453e758 SDK tarball and runtime; offline packaging only.
 
 - playback 3t, 2026-11-07: project bounded ICE establishment evidence and grant timeouts; pin the local 27dda82 SDK tarball and all probe runtime hashes. Offline packaging only.
+
+### Playback 3u bounded job diagnostics, 2026-11-07
+
+- Add a detached ring of the latest 20 terminal clip jobs, after capture cleanup settles, with sanitized display metadata, fixed capture/transport/timeline evidence and progressive first-playable/final-delivery metrics. Preserve lastJob and lastCaptureJob.
+- Preserve viewer release, expiry and eviction causes through asynchronous encoder shutdown. Record process exit/signal, spawn, input, timeout, validation, capture and normal-completion end reasons separately; viewer abandonment does not increment conversion failures.
+- Add saturating per-session lifecycle counters, fixed per-job failure buckets and the latest twenty job time-to-playable count/min/median/max.
+- Add RECORDINGS_PROGRESSIVE_PLAYABLE_MS (decimal integer 1000-6000, default/fallback 6000), reported consistently in diagnostics and the HA-facing progressivePlayableMs capability. The companion HA validator still hardcodes 6000 and requires a separate matching update before lower thresholds are enabled.
+- Add real installed SDK router/session/peer projection coverage using signaling/native fakes, exact connection deadline, active relay recovery, populated transitions and candidate grant_timeout. The candidate test uses the runtime's candidate-creation seam, without changing SDK code or pins.
+- Local offline qualification only; SDK tarball and all three historical probe pin files are unchanged. No installation, device or client acceptance is claimed.

@@ -932,3 +932,10 @@ Offline qualification uses synthetic frames and a fake conversion runner, plus
 real loopback HTTP range tests. Full-event EOF/first-last coverage, timing,
 Android and desktop decoding/seeking, live preemption, natural owner renewal and
 host CPU/storage behavior still require an authorized live acceptance test.
+
+Progressive HLS is an optional companion protocol described in
+[recordings-progressive.md](recordings-progressive.md). When enabled, capability
+adds `progressivePlayback: true` and `progressivePlayableMs` (effective integer
+1000-6000, default 6000). Diagnostics add bounded `clips.history` and
+`clips.progressive` session counters, fixed end reasons and the latest twenty
+job time-to-playable summary. Public MP4 state/reason enums are unchanged.

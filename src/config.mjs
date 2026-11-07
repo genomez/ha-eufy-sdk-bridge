@@ -111,6 +111,11 @@ export function loadConfig(env = process.env) {
     recordings: {
       enabled: env.RECORDINGS_ENABLED == null ? true : truthy(env.RECORDINGS_ENABLED),
       playback: env.RECORDINGS_PLAYBACK == null ? true : truthy(env.RECORDINGS_PLAYBACK),
+      progressivePlayableMs:
+        typeof env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS === "string" &&
+        /^(?:[1-5][0-9]{3}|6000)$/.test(env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS)
+          ? Number(env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS)
+          : 6000,
       progressiveFps: env.RECORDINGS_PROGRESSIVE_FPS === "15" ? 15 : null,
       playbackModels: (env.RECORDINGS_PLAYBACK_MODELS ?? "T8425,T8426,T8170")
         .split(",")

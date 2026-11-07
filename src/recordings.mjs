@@ -1,5 +1,6 @@
 import path from "node:path";
 import { playbackExperiments } from "./recordings-experiments.mjs";
+import { playableThreshold } from "./recordings-job-evidence.mjs";
 import { createClipJobs, armClipSafety } from "./recordings-clips.mjs";
 import { randomBytes } from "node:crypto";
 import { DEFAULT_PACING, pacingUpdate, createCoverMeasurements } from "./recordings-pacing.mjs";
@@ -110,9 +111,13 @@ export function createRecordings(
         .trim()
         .toUpperCase(),
     );
+  const progressivePlayableMs = playableThreshold(
+    ctx.cfg.recordings?.progressivePlayableMs ?? clipOptions.progressivePlayableMs,
+  );
   const clips = createClipJobs({
     ...clipOptions,
     progressiveFps: ctx.cfg.recordings?.progressiveFps ?? clipOptions.progressiveFps,
+    progressivePlayableMs,
     root: path.join(ctx.cfg.recordings?.root ?? "/data/recordings", "clips"),
     enabled: playbackEnabled,
     experiments: playbackExperiments(ctx.cfg.recordings?.root),
@@ -136,7 +141,8 @@ export function createRecordings(
     version: 1,
     browseOnly: !playbackEnabled(),
     playback: playbackEnabled(),
-    ...(playbackEnabled() && ctx.cfg.recordings?.progressiveFps === 15 && { progressivePlayback: true }),
+    ...(playbackEnabled() &&
+      ctx.cfg.recordings?.progressiveFps === 15 && { progressivePlayback: true, progressivePlayableMs }),
     enabled:
       enabled() &&
       adapter.supported() &&
@@ -1181,7 +1187,11 @@ export function createRecordings(
         !ctx.authPolicy?.blocked &&
         !!selector &&
         selector.sourceKey === row.sourceKey
-          ? { scope: scope.sdkScope, selector }
+          ? {
+              scope: scope.sdkScope,
+              selector,
+              camera: { name: camera(args.cameraId).name, model: camera(args.cameraId).model },
+            }
           : null;
       if (playbackEnabled() && selection) preempt();
       return clips.prepare(args.cameraId, args.eventId, selection, source);

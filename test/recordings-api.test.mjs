@@ -607,3 +607,16 @@ test("WebSocket clip source is connection-owned, bounded and backward compatible
   assert.equal(records[2].source.client, "unknown");
   assert.equal(records[2].source.connection, 1);
 });
+
+test("HA-facing progressive capability and diagnostics report the same effective threshold", async (t) => {
+  for (const requested of [1000, 2500, undefined, 999]) {
+    const h = await harness(t, { clipOptions: { progressiveFps: 15, progressivePlayableMs: requested } });
+    await seed(h);
+    h.ctx.cfg.recordings.progressiveFps = 15;
+    h.eufy.pullRecordingClip = async () => {};
+    const expected = requested === 1000 || requested === 2500 ? requested : 6000;
+    assert.equal(h.manager.capability().progressivePlayableMs, expected);
+    assert.equal(h.manager.diagnostics().clips.progressive.playableThresholdMs, expected);
+    assert.deepEqual(h.manager.diagnostics().clips.history, []);
+  }
+});

@@ -3,7 +3,12 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
-const failure = () => Object.assign(new Error("convert_failed"), { reason: "convert_failed" });
+import {
+  conversionFailure as failure,
+  processFailure,
+  playableThreshold,
+  endReasons,
+} from "./recordings-job-evidence.mjs";
 const owned = /^(?:index\.m3u8(?:\.tmp)?|segment[0-9]{6}\.ts(?:\.tmp)?|final\.mp4)$/;
 
 /** Read only closed muxer output; a manifest never authorizes arbitrary filenames. */
@@ -67,12 +72,17 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess) {
   const child = spawnProcess(executable, args, { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   let bad = false,
     closed = false,
-    escalation;
+    escalation,
+    spawned = false,
+    inputError = false,
+    timedOut = false;
   child.stderr.on("data", () => {});
   child.stdin.on("error", () => {
+    inputError = true;
     bad = true;
   });
   child.on("error", () => {
+    spawned = true;
     bad = true;
   });
   const abort = () => {
@@ -84,16 +94,20 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess) {
       if (!closed) child.kill("SIGKILL");
     }, 5000);
   };
-  const watchdog = setTimeout(abort, timeoutMs);
+  const watchdog = setTimeout(() => {
+    timedOut = true;
+    abort();
+  }, timeoutMs);
   signal?.addEventListener("abort", abort, { once: true });
   const done = new Promise((resolve, reject) => {
-    child.once("close", (code) => {
+    child.once("close", (code, closeSignal) => {
       closed = true;
       clearTimeout(watchdog);
       clearTimeout(escalation);
       signal?.removeEventListener("abort", abort);
       if (code === 0 && !bad) resolve();
-      else reject(failure());
+      else
+        reject(failure(processFailure({ code, signal: closeSignal, spawned, input: inputError, timeout: timedOut })));
     });
   });
   done.catch(() => {});
@@ -110,6 +124,7 @@ export function createProgressiveEncoder({
   input,
   fps,
   expectedMs,
+  playableMs = 6000,
   signal,
   changed = () => {},
   reserve = () => {},
@@ -120,7 +135,13 @@ export function createProgressiveEncoder({
   if (fps !== 15 || !(expectedMs > 0 && expectedMs <= 3_600_000)) throw failure();
   fs.mkdirSync(directory, { mode: 0o700 });
   const controller = new AbortController();
-  const onAbort = () => controller.abort();
+  let failureDetail, failureReason;
+  const onAbort = () => {
+    const endReason = endReasons.includes(signal?.reason?.endReason) ? signal.reason.endReason : "cancelled";
+    failureDetail ??= { endReason, exitCode: null, signal: null };
+    failureReason ??= endReason;
+    controller.abort();
+  };
   signal?.addEventListener("abort", onAbort, { once: true });
   if (signal?.aborted) onAbort();
   const args = [
@@ -186,8 +207,7 @@ export function createProgressiveEncoder({
     complete = false,
     outputFrames = 0;
   let segments = [],
-    progress = "",
-    failureReason;
+    progress = "";
   process.child.stdout.on("data", (chunk) => {
     progress += chunk.toString();
     const lines = progress.split("\n");
@@ -229,6 +249,7 @@ export function createProgressiveEncoder({
     }
   })();
   pump.catch(() => {
+    failureDetail ??= processFailure({ input: true });
     failed = true;
     controller.abort();
   });
@@ -236,13 +257,16 @@ export function createProgressiveEncoder({
     () => {
       if (!ended) {
         failed = true;
+        failureDetail ??= processFailure();
         controller.abort();
         changed();
       }
     },
-    () => {
+    (error) => {
       failed = true;
-      failureReason = "convert_failed";
+      if (!failureDetail || ["ffmpeg_input_error", "conversion_validation_failed"].includes(failureDetail.endReason))
+        failureDetail = { endReason: error.endReason, exitCode: error.exitCode, signal: error.signal };
+      failureReason ??= "convert_failed";
       controller.abort();
       changed();
     },
@@ -254,14 +278,17 @@ export function createProgressiveEncoder({
     },
     snapshot() {
       return {
-        delivery: failed
-          ? "unavailable"
-          : complete
-            ? "complete"
-            : segments.reduce((n, s) => n + s.durationMs, 0) >= 6000
-              ? "playable"
-              : "warming",
+        delivery:
+          failed || controller.signal.aborted
+            ? "unavailable"
+            : complete
+              ? "complete"
+              : segments.reduce((n, s) => n + s.durationMs, 0) >= playableThreshold(playableMs)
+                ? "playable"
+                : "warming",
         reason: failureReason ?? "none",
+        endReason: complete ? "normal_completion" : (failureDetail?.endReason ?? "none"),
+        process: failureDetail ? { exitCode: failureDetail.exitCode, signal: failureDetail.signal } : null,
         segments: segments.map((s) => ({ ...s })),
       };
     },
@@ -319,9 +346,14 @@ export function createProgressiveEncoder({
       fs.chmodSync(temp, 0o600);
       fs.renameSync(temp, output);
     },
-    async abort(reason = "convert_failed") {
+    async abort(reason = "convert_failed", detail) {
       failed = true;
-      failureReason = reason;
+      failureReason ??= reason;
+      failureDetail ??= detail ?? {
+        endReason: reason === "convert_failed" ? "conversion_validation_failed" : reason,
+        exitCode: null,
+        signal: null,
+      };
       controller.abort();
       await Promise.allSettled([pump, process.done]);
       signal?.removeEventListener("abort", onAbort);

@@ -82,3 +82,16 @@ test("RTC command keepalive defaults off and parses like the session refresh int
   }
   assert.equal(loadConfig({ ...base, BRIDGE_RTC_COMMAND_KEEPALIVE_MS: "29000" }).cfg.rtcCommandKeepaliveMs, 29_000);
 });
+
+test("progressive playable threshold accepts only integer milliseconds in range", () => {
+  for (const value of [undefined, "", "999", "6001", "1e3", "1000.0", " 1000", "NaN", "-1000"])
+    assert.equal(
+      loadConfig({ ...base, RECORDINGS_PROGRESSIVE_PLAYABLE_MS: value }).cfg.recordings.progressivePlayableMs,
+      6000,
+    );
+  for (const value of ["1000", "2500", "6000"])
+    assert.equal(
+      loadConfig({ ...base, RECORDINGS_PROGRESSIVE_PLAYABLE_MS: value }).cfg.recordings.progressivePlayableMs,
+      Number(value),
+    );
+});

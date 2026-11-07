@@ -679,6 +679,10 @@
     "tools/check-progressive-media.mjs": {
       "bytes": 5168,
       "sha256": "d7896ce027087e77489b39a24358b39195578a295e6f19b4b86f3d47b37410f9"
+    },
+    "src/recordings-job-evidence.mjs": {
+      "bytes": 1888,
+      "sha256": "d4a313fe04574547c9da947de3d5d71b061b4e54f8661d2aeb48423668f8d1af"
     }
   }
 }

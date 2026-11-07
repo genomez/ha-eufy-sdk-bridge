@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { createProgressiveEncoder, progressiveUsage } from "./recordings-progressive.mjs";
+import { endReasons, isViewerEnd, playableThreshold, cameraLabel, processFailure } from "./recordings-job-evidence.mjs";
 import { createPlaybackSessions } from "./recordings-playback-sessions.mjs";
 
 const HOUR = 3_600_000;
@@ -191,6 +192,8 @@ export function convertClip({
       stderrTruncated ||= stderr.length + chunk.length > 2048;
       stderr = Buffer.concat([stderr, chunk.subarray(-2048)]).subarray(-2048);
     });
+    let spawnFailed = false,
+      timedOut = false;
     const terminate = () => {
       if (closed || terminating) return;
       terminating = true;
@@ -200,13 +203,20 @@ export function convertClip({
         if (!closed) child.kill("SIGKILL");
       }, 5000);
     };
-    const watchdog = setTimeout(terminate, Math.min(2_147_483_647, Math.max(120_000, durationMs * 6)));
+    const watchdog = setTimeout(
+      () => {
+        timedOut = true;
+        terminate();
+      },
+      Math.min(2_147_483_647, Math.max(120_000, durationMs * 6)),
+    );
     signal?.addEventListener("abort", terminate, { once: true });
     if (signal?.aborted) terminate();
     child.once("error", () => {
+      spawnFailed = true;
       failed = true;
     });
-    child.once("close", (code) => {
+    child.once("close", (code, closeSignal) => {
       closed = true;
       clearTimeout(watchdog);
       clearTimeout(escalation);
@@ -221,7 +231,12 @@ export function convertClip({
           exitCode: Number.isInteger(code) ? code : null,
           stderr: conversionStderr(diagnostic),
         });
-        reject(fault("convert_failed"));
+        reject(
+          Object.assign(
+            fault("convert_failed"),
+            processFailure({ code, signal: closeSignal, spawned: spawnFailed, timeout: timedOut }),
+          ),
+        );
       }
     });
   });
@@ -449,6 +464,7 @@ export function createClipJobs({
   changed,
   convert = convertClip,
   progressiveFps = null,
+  progressivePlayableMs = 6000,
   progressiveEncoder = createProgressiveEncoder,
   log = (record) => process.stdout.write(JSON.stringify(record) + "\n"),
   now = Date.now,
@@ -460,10 +476,37 @@ export function createClipJobs({
 }) {
   root = path.resolve(root);
   const jobs = new Map();
+  const history = [],
+    playableTimes = [];
+  const progressive = {
+    sessionsOpened: 0,
+    reachedPlayable: 0,
+    completed: 0,
+    releasedEarly: 0,
+    expired: 0,
+    evicted: 0,
+    failuresByReason: Object.fromEntries(
+      endReasons.filter((r) => !isViewerEnd(r) && r !== "normal_completion").map((r) => [r, 0]),
+    ),
+  };
+  const increment = (object, field) => {
+    object[field] = Math.min(Number.MAX_SAFE_INTEGER, object[field] + 1);
+  };
+  progressivePlayableMs = playableThreshold(progressivePlayableMs);
   const sessions = createPlaybackSessions({
     now,
-    empty(j) {
-      if (!j.legacyInterest && !j.mediaComplete && ["queued", "pulling"].includes(j.state)) abort(j);
+    observe(event, s, reason) {
+      if (event === "opened") increment(progressive, "sessionsOpened");
+      if (event === "playable") increment(progressive, "reachedPlayable");
+      if (event === "completed") increment(progressive, "completed");
+      if (event === "retired") {
+        if (reason === "viewer_released" && !s.job.hlsComplete) increment(progressive, "releasedEarly");
+        if (reason === "viewer_expired") increment(progressive, "expired");
+        if (reason === "session_evicted") increment(progressive, "evicted");
+      }
+    },
+    empty(j, reason) {
+      if (!j.legacyInterest && !j.mediaComplete && ["queued", "pulling"].includes(j.state)) abort(j, reason);
       if (j.hlsComplete && !j.deletePending) j.hlsRetireAt = now() + 30_000;
       if (j.deletePending && !j.readers && j !== active) remove(j);
     },
@@ -524,12 +567,102 @@ export function createClipJobs({
       startedAtMs: j.startedAtMs,
       finishedAtMs: j.finishedAtMs,
     };
+    if (j !== active) recordHistory(j);
   }
   function state(j, next, reason = "none") {
     j.state = next;
     j.reason = reason;
     if (j !== active) terminal(j);
     changed(j.cameraId, j.eventId);
+  }
+  function observeProgressive(j) {
+    const snapshot = j.encoder?.snapshot();
+    if (!snapshot) return;
+    const segments = Array.isArray(snapshot.segments) ? snapshot.segments : [];
+    j.finalSegmentCount = Math.min(3600, segments.length);
+    j.finalDurationMs = Math.min(
+      3_600_000,
+      segments.reduce((n, s) => n + count(s.durationMs), 0),
+    );
+    j.finalDelivery = ["warming", "playable", "complete", "unavailable"].includes(snapshot.delivery)
+      ? snapshot.delivery
+      : "unavailable";
+    if (["playable", "complete"].includes(snapshot.delivery) && j.playableAtMs === null) {
+      j.playableAtMs = Math.max(0, Math.round(monotonic() - j.admittedMono));
+      j.playableSegments = j.finalSegmentCount;
+      j.playableDurationMs = j.finalDurationMs;
+      playableTimes.push(j.playableAtMs);
+      if (playableTimes.length > 20) playableTimes.shift();
+    }
+    sessions.delivery(j, snapshot.delivery);
+  }
+  function recordHistory(j, evidence = clipEvidence(), metrics = {}) {
+    if (j.historyRecorded) return;
+    j.historyRecorded = true;
+    observeProgressive(j);
+    const endReason = endReasons.includes(j.endReason)
+      ? j.endReason
+      : j.state === "ready"
+        ? "normal_completion"
+        : isViewerEnd(j.cancelReason)
+          ? j.cancelReason
+          : j.reason === "convert_failed"
+            ? "conversion_validation_failed"
+            : j.state === "cancelled"
+              ? "cancelled"
+              : j.state === "refused"
+                ? "refused"
+                : "capture_failure";
+    if (j.progressiveRequested && !isViewerEnd(endReason) && endReason !== "normal_completion")
+      increment(progressive.failuresByReason, endReason);
+    const row = {
+      jobOrdinal: j.jobOrdinal,
+      kind: j.progressiveRequested ? "progressive" : "mp4",
+      camera: { name: cameraLabel(j.selection?.camera?.name), model: cameraLabel(j.selection?.camera?.model) },
+      expectedMs: count(j.expectedMs),
+      state: j.state,
+      reason: j.reason,
+      endReason,
+      transferSpeed: [1, 2, 4, 8].includes(j.transferSpeed) ? j.transferSpeed : null,
+      mode: evidence.mode,
+      selectedIceCandidateType: evidence.selectedIceCandidateType,
+      selectedRemoteIceCandidateType: evidence.selectedRemoteIceCandidateType,
+      timeline: { ...evidence.timeline },
+      pullMs: count(metrics.pullMs),
+      convertMs: count(metrics.convertMs),
+      bytes: count(j.bytes),
+      frames: count(metrics.frames),
+      retainedVideoSpanMs: evidence.retainedVideoSpanMs,
+      retainedVideoFrames: evidence.retainedVideoFrames,
+      captureOutcome: evidence.captureOutcome,
+      completenessFailure: evidence.completenessFailure,
+      releaseOutcome: evidence.releaseOutcome,
+      cessationOutcome: evidence.cessationOutcome,
+      reconnectOutcome: evidence.reconnectOutcome,
+      reconnectDurationMs: evidence.reconnectDurationMs,
+      ingressAudioFrames: evidence.ingressAudioFrames,
+      ingressVideoFrames: evidence.ingressVideoFrames,
+      process: j.processDetail
+        ? {
+            exitCode: Number.isSafeInteger(j.processDetail.exitCode) ? j.processDetail.exitCode : null,
+            signal: processFailure({ signal: j.processDetail.signal }).signal,
+          }
+        : null,
+      ...(j.progressiveRequested && {
+        progressive: {
+          playableMs: j.playableAtMs,
+          playableSegments: j.playableSegments,
+          playableDurationMs: j.playableDurationMs,
+          finalSegmentCount: j.finalSegmentCount,
+          finalDurationMs: j.finalDurationMs,
+          delivery:
+            ["failed", "refused", "cancelled"].includes(j.state) && !j.hlsComplete ? "unavailable" : j.finalDelivery,
+          endReason,
+        },
+      }),
+    };
+    history.push(row);
+    if (history.length > 20) history.shift();
   }
   function remove(j) {
     if (j.readers || sessions.count(j)) {
@@ -614,15 +747,24 @@ export function createClipJobs({
                   directory: j.directory,
                   input: j.input,
                   fps: progressiveFps,
+                  playableMs: progressivePlayableMs,
                   expectedMs: j.expectedMs,
                   signal: j.controller.signal,
                   reserve: room,
                   changed: () => {
-                    if (j.encoder?.snapshot().delivery === "unavailable" && !j.controller.signal.aborted)
+                    observeProgressive(j);
+                    const snapshot = j.encoder?.snapshot();
+                    if (snapshot?.delivery === "unavailable" && !j.controller.signal.aborted) {
+                      j.endReason = endReasons.includes(snapshot.endReason)
+                        ? snapshot.endReason
+                        : "conversion_validation_failed";
+                      j.processDetail = snapshot.process ?? null;
                       abort(j, "convert_failed");
+                    }
                     changed(j.cameraId, j.eventId);
                   },
                 });
+                observeProgressive(j);
                 j.encoder.commit(fs.statSync(j.input).size);
               } else j.encoder.commit(data.length);
             }
@@ -885,10 +1027,19 @@ export function createClipJobs({
       };
       if (captureAttempted) lastCapture = last;
     } catch (e) {
-      const externallyCancelled = j.controller.signal.aborted;
+      if (e?.endReason && endReasons.includes(e.endReason)) {
+        j.endReason ??= e.endReason;
+        j.processDetail ??= {
+          exitCode: Number.isInteger(e.exitCode) ? e.exitCode : null,
+          signal: processFailure({ signal: e.signal }).signal,
+        };
+      }
+      const externallyCancelled = j.controller.signal.aborted && j.cancelReason !== "convert_failed";
       const reason =
         j.controller.signal.aborted && e.reason !== "cleanup_uncertain"
-          ? (j.cancelReason ?? "none")
+          ? isViewerEnd(j.cancelReason)
+            ? "none"
+            : (j.cancelReason ?? "none")
           : clipReasons.includes(e.reason)
             ? e.reason
             : "station_error";
@@ -896,7 +1047,20 @@ export function createClipJobs({
         fs.closeSync(fd);
         fd = undefined;
       }
-      if (j.encoder && !j.hlsComplete) await j.encoder.abort(reason);
+      if (j.encoder && !j.hlsComplete) {
+        j.endReason ??= isViewerEnd(j.cancelReason)
+          ? j.cancelReason
+          : externallyCancelled
+            ? "cancelled"
+            : reason === "convert_failed"
+              ? "conversion_validation_failed"
+              : "capture_failure";
+        await j.encoder.abort(reason, {
+          endReason: j.endReason,
+          exitCode: j.processDetail?.exitCode ?? null,
+          signal: j.processDetail?.signal ?? null,
+        });
+      }
       if (!j.mediaComplete && pendingPull && !j.controller.signal.aborted) j.controller.abort();
       try {
         remove(j);
@@ -960,6 +1124,7 @@ export function createClipJobs({
         ...timing(),
       };
       if (captureAttempted) lastCapture = last;
+      recordHistory(j, timing(), { pullMs, convertMs, frames });
       counters.jobs++;
       for (const name of ["startAcknowledged", "ingressVideoFrames", "ingressAudioFrames", "reconnectDurationMs"])
         counters[name] = Math.min(Number.MAX_SAFE_INTEGER, counters[name] + Number(evidence[name]));
@@ -986,16 +1151,18 @@ export function createClipJobs({
     active.done = Promise.resolve().then(() => run(active));
   }
   function abort(j, reason = "none") {
+    if (j.controller.signal.aborted) return;
     j.cancelReason = reason;
-    j.controller.abort();
+    if (isViewerEnd(reason)) j.endReason = reason;
+    j.controller.abort({ endReason: j.endReason ?? "cancelled" });
     if (j.state === "queued") {
       pending = pending.filter((x) => x !== j);
-      state(j, "cancelled", reason);
+      state(j, "cancelled", isViewerEnd(reason) ? "none" : reason);
     }
     if (j.state === "ready") {
       if (j.readers) j.deletePending = true;
       else remove(j);
-      state(j, "cancelled", reason);
+      state(j, "cancelled", isViewerEnd(reason) ? "none" : reason);
     }
   }
   const timer = setInterval(() => {
@@ -1075,6 +1242,13 @@ export function createClipJobs({
         {
           generation: randomUUID(),
           progressiveRequested: source.progressive === true,
+          admittedMono: monotonic(),
+          playableAtMs: null,
+          playableSegments: 0,
+          playableDurationMs: 0,
+          finalSegmentCount: 0,
+          finalDurationMs: 0,
+          finalDelivery: "warming",
           legacyInterest: !source.progressive,
           encoder: null,
           directory: null,
@@ -1145,6 +1319,7 @@ export function createClipJobs({
       const j = jobs.get(key(c, e));
       if (!j) throw fault("not_found");
       const s = sessions.open(owner, requestKey, j);
+      observeProgressive(j);
       return playbackView(s);
     },
     playbackExisting(owner, requestKey, c, e) {
@@ -1241,6 +1416,21 @@ export function createClipJobs({
         reasons: Object.fromEntries(
           clipReasons.map((r) => [r, [...jobs.values()].filter((j) => j.reason === r).length]),
         ),
+        history: structuredClone(history),
+        progressive: {
+          ...structuredClone(progressive),
+          playableThresholdMs: progressivePlayableMs,
+          timeToPlayable: (() => {
+            const sorted = [...playableTimes].sort((a, b) => a - b),
+              n = sorted.length;
+            return {
+              count: n,
+              min: n ? sorted[0] : null,
+              median: n ? (sorted[Math.floor((n - 1) / 2)] + sorted[Math.floor(n / 2)]) / 2 : null,
+              max: n ? sorted[n - 1] : null,
+            };
+          })(),
+        },
         lastJob: last && structuredClone(last),
         lastCaptureJob: lastCapture && structuredClone(lastCapture),
         counters: structuredClone(counters),
@@ -1259,6 +1449,7 @@ export function createClipJobs({
 
   function playbackView(s) {
     const j = s.job;
+    observeProgressive(j);
     const snapshot = j.encoder?.snapshot() ?? { delivery: "warming", reason: "none", segments: [] };
     const unavailable = !enabled() || stopped || ["failed", "refused", "cancelled", "idle"].includes(j.state);
     return {

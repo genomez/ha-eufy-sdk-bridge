@@ -455,3 +455,127 @@ test("state refresh retry projection contains descriptor failures to the affecte
     assert.deepEqual(retryFields(raw), { ...retry(), [key]: null });
   }
 });
+import { EventEmitter } from "node:events";
+import { RtcCommandRouter, RtcSession } from "@mega-yfue/eufy-sdk";
+
+test("installed SDK router and real sessions project terminal all timeout beside relay recovery and grant timeout", async (t) => {
+  let now = 0;
+  t.mock.method(performance, "now", () => now);
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 100000 });
+  const signals = [],
+    natives = [],
+    realSessions = [];
+  const flush = async () => {
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+  };
+  class Signaling extends EventEmitter {
+    isOpen = true;
+    async fetchSign() {}
+    async connect() {
+      this.emit("message", { action: 1, code: 200 });
+    }
+    sendCall() {}
+    sendHangup() {}
+    close() {
+      this.isOpen = false;
+    }
+    sendInfoCandidate() {}
+  }
+  const native = () => {
+    const callbacks = {};
+    const pc = {
+      callbacks,
+      close() {},
+      onLocalDescription(cb) {
+        callbacks.description = cb;
+      },
+      onLocalCandidate(cb) {
+        callbacks.candidate = cb;
+      },
+      onGatheringStateChange(cb) {
+        callbacks.gathering = cb;
+      },
+      onStateChange(cb) {
+        callbacks.connection = cb;
+      },
+      onIceStateChange(cb) {
+        callbacks.ice = cb;
+      },
+      onDataChannel(cb) {
+        callbacks.channel = cb;
+      },
+      getSelectedCandidatePair: () => ({ local: { type: "host" }, remote: { type: "relay" } }),
+    };
+    natives.push(pc);
+    return pc;
+  };
+  const deps = {
+    identity: () => ({ authToken: "offline-token", userId: "offline-user" }),
+    shard: () => "offline",
+    accountName: () => "offline",
+    findDevice: () => ({ sn: "offline-station", model: "T9000", deviceClass: "homebase" }),
+    icePolicy: "all",
+    connectTimeoutMs: 12000,
+    createSession(opts) {
+      const session = new RtcSession({
+        ...opts,
+        createSignaling() {
+          const s = new Signaling();
+          signals.push(s);
+          return s;
+        },
+        peer: { ...opts.peer, createPeer: native },
+      });
+      realSessions.push(session);
+      return session;
+    },
+  };
+  const router = new RtcCommandRouter(deps);
+  t.after(() => router.close());
+  const pending = router.sessionFor("offline-station").catch((error) => error);
+  await flush();
+  signals[0].emit("message", {
+    dataType: "scall",
+    data: JSON.stringify({
+      status: 100,
+      turn: { turn_addr: "offline.invalid", turn_port: 3478, turn_user: "fixture", turn_password: "fixture" },
+    }),
+  });
+  await flush();
+  natives[0].callbacks.ice("checking");
+  natives[0].callbacks.connection("connecting");
+  natives[0].callbacks.candidate("candidate:1 1 udp 1 192.0.2.1 1 typ host");
+  deps.connectTimeoutMs = 20000;
+  now = 12000;
+  t.mock.timers.tick(12000);
+  await flush();
+  const first = router.getConnectionDiagnostics();
+  assert.equal(first.active.length, 1);
+  assert.equal(first.active[0].stages.establishment.policy, "relay");
+  assert.equal(first.terminal[0].stages.establishment.policy, "all");
+  assert.deepEqual(first.terminal[0].stages.establishment.deadlines, [{ kind: "connection", atMs: 12000 }]);
+  assert.ok(first.terminal[0].stages.establishment.transitions.length >= 2);
+  assert.deepEqual(rtcConnectionEvidence(first), first);
+  // A candidate's grant timeout preserves grant_timeout: a current relay is instead
+  // synchronously dropped by the router's error listener. Use the actual router
+  // candidate-creation seam to exercise this path without opening a native socket.
+  const candidate = router.createStationSession("offline-station", "offline-user", deps.identity(), true, "relay");
+  const candidateDone = candidate.ready.catch((error) => error);
+  await flush();
+  signals[2].emit("message", { dataType: "info", data: JSON.stringify({ sdp: "v=0\r\n" }) });
+  await flush();
+  now = 27000;
+  t.mock.timers.tick(15000);
+  await flush();
+  assert.ok((await candidateDone) instanceof Error);
+  const second = router.getConnectionDiagnostics();
+  assert.equal(second.active.length, 1);
+  const timedOut = second.terminal.find((row) => row.closeOrigin === "grant_timeout");
+  assert.ok(timedOut);
+  assert.deepEqual(timedOut.stages.establishment.deadlines, [{ kind: "turn_grant", atMs: 15000 }]);
+  assert.equal(timedOut.stages.lastFailure.stage, "grant");
+  assert.deepEqual(rtcConnectionEvidence(second), second);
+  assert.ok(realSessions.every((session) => session instanceof RtcSession));
+  router.close();
+  await pending;
+});
