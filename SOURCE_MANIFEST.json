@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.12",
   "status": "local-build-unpublished",
-  "exactInputCommit": "b4ec2c83355056063f5d125be34db37ddd1dac1c",
+  "exactInputCommit": "7cd72aa89f981b34c51be104f8d559e4baf273fe",
   "files": {
     ".env.example": {
       "bytes": 3763,
@@ -22,7 +22,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 749,
-      "sha256": "4619d71ce1cc8b54c4a1cca0c0f920fa631192adc53ca6fd251fe8949589a631"
+      "sha256": "32c80f7e2e9e4e2f58c7daac4c205089ef26a6b4e329589399db62a4fc730735"
     },
     "CONTRIBUTING.md": {
       "bytes": 983,
@@ -106,11 +106,11 @@
     },
     "package-lock.json": {
       "bytes": 26812,
-      "sha256": "87b3bb241c78c7660149ef2612254cee521354aa6fa651591be1a45e30948229"
+      "sha256": "1c09be5264f09f598670ab0764de5daef3756c0a1e5cd2a38e59d020e92f7a5c"
     },
     "package.json": {
       "bytes": 1413,
-      "sha256": "d988e76f0acd4948acede0779d71d3d873fc79dbb83e1a0603d1e6c2b0524ada"
+      "sha256": "28138216a5d8245468a6abc9337752cfcfce9e346045ffbdb420f3704472c192"
     },
     "scripts/devices.mjs": {
       "bytes": 1721,
@@ -198,7 +198,7 @@
     },
     "src/event-playback-probe-pins.mjs": {
       "bytes": 2214,
-      "sha256": "60e0a98a6e10f2a6796f45c897e94ab80a57bbb5d028e250c372f053593bfb18"
+      "sha256": "3157e7ea869090b69579f6f49df6aa7520b1d32f5f57497d18a95f1ab5ff8c9f"
     },
     "src/event-playback-probe.mjs": {
       "bytes": 44158,
@@ -257,8 +257,8 @@
       "sha256": "1eaae1890c71b2dd77cce77adc0f274c068bccf059ba047c65f435ab8c227bec"
     },
     "src/recordings-clips.mjs": {
-      "bytes": 54734,
-      "sha256": "14997ac5362c6125ce2c7dd0c6a8f5fa4fefb76d136db86a54b3ad6f9e6eb639"
+      "bytes": 57471,
+      "sha256": "a87df40eb8684645663cfd31634eb3e36fd65771bfb6330fc467412ecea8404a"
     },
     "src/recordings-download.mjs": {
       "bytes": 8435,
@@ -541,8 +541,8 @@
       "sha256": "96958cf7d990539fe5a3ec6545576814de84213c73d9c3763108eeba17b605e6"
     },
     "test/recordings-clips.test.mjs": {
-      "bytes": 64028,
-      "sha256": "c04f266f7ce5722c052c41b2f244818c5edea33485641c66147cb24e54075798"
+      "bytes": 73924,
+      "sha256": "8f27b93ffab6d8f1ba2956672c2d2e0fa3f8ab78f626cc501e572a56cc83f031"
     },
     "test/recordings-download.test.mjs": {
       "bytes": 8239,
@@ -649,16 +649,16 @@
       "sha256": "113f0690310e492db1d596cd9a3c5b744ef8d41c1fc153d6028064ae6d0f44d1"
     },
     "docs/recordings-progressive.md": {
-      "bytes": 10955,
-      "sha256": "175f5a6f3c5b02b8ee7f84ed0e21569f0dce2b6ddf9fbf536b79514b0867158a"
+      "bytes": 13931,
+      "sha256": "a749fe450b086d7be0cd3b5899a9958d78c74f25d86c38b0e489e77c06c404b9"
     },
     "src/recordings-playback-sessions.mjs": {
       "bytes": 3273,
       "sha256": "5bb6d73f2c74ebc531a1cae07e556d161f6412da5aecbee18566755c1a5938fc"
     },
     "src/recordings-progressive.mjs": {
-      "bytes": 12529,
-      "sha256": "4d0be6f201e58c52dc0ddd255fa4fddfe970e7cf9f659763ffbf7d686e7aee71"
+      "bytes": 13034,
+      "sha256": "dac01b4d86b87113f963e3c826f883e216aa66735ec7d598ad7315179c0b690e"
     },
     "test/ice-establishment-evidence.test.mjs": {
       "bytes": 8663,
@@ -673,8 +673,8 @@
       "sha256": "2f47c7c941e3f44a3f5e22bb739fefb938d923fbb755296584000a762e5efcad"
     },
     "test/recordings-progressive.test.mjs": {
-      "bytes": 39418,
-      "sha256": "558955f6428ccc87fb2a5bbfecbe69896431794fec5fdd3aadd197230da6df04"
+      "bytes": 40546,
+      "sha256": "d7d50241af4dbf2ece3dab5148944216df28ddadd84c074183e3034a666bbcaf"
     },
     "tools/check-progressive-media.mjs": {
       "bytes": 5168,
@@ -683,6 +683,26 @@
     "src/recordings-job-evidence.mjs": {
       "bytes": 2327,
       "sha256": "a66bc06225e65c631093a6a7ae9ad59348be2b86f910633fc6a3a99004f002fa"
+    },
+    "docs/recordings-native-timing-validation.md": {
+      "bytes": 11707,
+      "sha256": "16d152b6bc9a885635ea20844ef54f0f7bc5491391039dcefc484ec44c823471"
+    },
+    "src/recordings-timing.mjs": {
+      "bytes": 6437,
+      "sha256": "5c49834a79e224806ca92d54d800843d5072d9c955016220ddbd84f219c7ab35"
+    },
+    "test/recordings-native-media.test.mjs": {
+      "bytes": 994,
+      "sha256": "15b3fff2070b1aa63ff87b4b66ff5b016b4af92238ff6af899b02060aba9bdf4"
+    },
+    "test/recordings-timing.test.mjs": {
+      "bytes": 9572,
+      "sha256": "cc009cb44cdfbb129cf56064ad11730fcc0202b47436284ebb1221467577a074"
+    },
+    "tools/check-native-recording-media.mjs": {
+      "bytes": 8333,
+      "sha256": "29579cbb56342fefe47fc1062a1cdd8807935e7e820ff0cf6f364aceeacd3909"
     }
   }
 }
