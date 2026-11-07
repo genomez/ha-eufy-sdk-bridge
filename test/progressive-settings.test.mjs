@@ -350,3 +350,76 @@ test("active experiments still exclude progressive despite an accepted file poli
   assert.equal(encoded, false);
   assert.equal(jobs.diagnostics().history[0].progressivePolicy.fps, 15);
 });
+
+for (const shape of ["short-eof-flush", "native-qualified"])
+  test(`frozen file policy survives an edit before the 1x retry creates its encoder (${shape})`, async (t) => {
+    const root = await temporary(t),
+      file = path.join(root, "progressive.json");
+    // Startup ENV is off; only the admitted file snapshot may enable the encoder.
+    fs.writeFileSync(file, '{"version":1,"fps":15,"playableMs":2000}');
+    const speeds = [],
+      encoderOptions = [];
+    const native = shape === "native-qualified";
+    const expectedMs = native ? 8000 : 1000;
+    const jobs = createClipJobs({
+      root: path.join(root, "clips"),
+      progressiveSettingsRoot: root,
+      progressiveFps: null,
+      enabled: () => true,
+      live: () => false,
+      changed() {},
+      log() {},
+      wait: async () => {},
+      progressiveEncoder(options) {
+        encoderOptions.push({ fps: options.fps, playableMs: options.playableMs, native: options.nativeTiming.native });
+        fs.mkdirSync(options.directory);
+        return {
+          commit() {},
+          snapshot: () => ({ delivery: "warming", segments: [] }),
+          async abort() {},
+          dispose() {},
+          async finish() {},
+          async finalizeMp4(output) {
+            fs.writeFileSync(output, "mp4");
+          },
+        };
+      },
+      pull: async (_, opts) => {
+        speeds.push(opts.transferSpeed);
+        opts.beforeDispatch();
+        const receipt = {
+          admissionGate: 0,
+          startAttempted: true,
+          boundedMediaObserved: true,
+          mediaDurationMs: expectedMs,
+          randomAccess: true,
+          captureOutcome: "eof",
+          releaseOutcome: "release_confirmed",
+          cessationOutcome: "ceased",
+          latchCleared: true,
+        };
+        if (speeds.length === 1) {
+          // A conflicting edit lands while the first (2x) attempt is refused.
+          fs.writeFileSync(file, '{"version":1,"fps":"off","playableMs":6000}');
+          return {
+            ...receipt,
+            captureOutcome: "start_refused",
+            boundedMediaObserved: false,
+            completenessFailure: "frames",
+          };
+        }
+        const count = native ? 120 : 3;
+        for (let i = 0; i < count; i++)
+          opts.video(Buffer.from("frame"), { nativeTimestamp: 50000 + Math.round((i * 1000) / 15) });
+        if (!native) assert.equal(encoderOptions.length, 0, "short capture has not qualified before EOF");
+        return { ...receipt, transferSpeed: opts.transferSpeed };
+      },
+      convert: async () => assert.fail("progressive job must use its encoder"),
+    });
+    jobs.load();
+    t.after(() => jobs.stop());
+    jobs.prepare("camera", shape, { selector: { expectedMs } }, { progressive: true });
+    await until(() => !jobs.busy());
+    assert.deepEqual(speeds, [2, 1]);
+    assert.deepEqual(encoderOptions, [{ fps: 15, playableMs: 2000, native }]);
+  });
