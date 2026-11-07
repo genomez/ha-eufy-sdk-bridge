@@ -140,6 +140,60 @@ export function pilotRecordEvent(line) {
   return undefined;
 }
 
+/** Reconstruct only the fixed clip trace schema before forwarding child stdout. */
+export function pilotClipRecord(line) {
+  try {
+    const r = JSON.parse(line);
+    if (!r || typeof r !== "object" || Array.isArray(r)) return;
+    const keys = ["event", "ts", "jobOrdinal", "state", "reason", "durationBucket", "source"];
+    if (Object.keys(r).length !== keys.length || !keys.every((k) => Object.hasOwn(r, k))) return;
+    if (!["recordings.clip_queued", "recordings.clip_terminal"].includes(r.event)) return;
+    if (typeof r.ts !== "string" || !ISO_UTC.test(r.ts)) return;
+    if (!Number.isSafeInteger(r.jobOrdinal) || r.jobOrdinal < 1) return;
+    if (
+      r.event === "recordings.clip_queued"
+        ? r.state !== "queued"
+        : !["ready", "failed", "refused", "cancelled"].includes(r.state)
+    )
+      return;
+    if (
+      ![
+        "none",
+        "live_view",
+        "busy",
+        "owner_unavailable",
+        "not_found",
+        "too_long",
+        "storage",
+        "convert_failed",
+        "station_error",
+        "cleanup_uncertain",
+        "disabled",
+      ].includes(r.reason)
+    )
+      return;
+    if (!["unknown", "lt15s", "lt60s", "ge60s"].includes(r.durationBucket)) return;
+    const source = r.source;
+    if (!source || typeof source !== "object" || Array.isArray(source) || Object.keys(source).length !== 3) return;
+    if (!Number.isSafeInteger(source.connection) || source.connection < 0) return;
+    if (
+      !["local", "remote", "unknown"].includes(source.locality) ||
+      !["ha-integration", "unknown"].includes(source.client)
+    )
+      return;
+    return {
+      event: r.event,
+      ts: r.ts,
+      jobOrdinal: r.jobOrdinal,
+      state: r.state,
+      reason: r.reason,
+      durationBucket: r.durationBucket,
+      source: { connection: source.connection, locality: source.locality, client: source.client },
+    };
+  } catch {}
+  return undefined;
+}
+
 export function pilotLog(event) {
   if (!events.has(event)) return;
   const record = { event };

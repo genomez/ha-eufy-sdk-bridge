@@ -238,6 +238,17 @@ function clipEvidence(receipt = {}) {
       "timeout",
     ]),
     startAcknowledged: receipt.startAcknowledged === true,
+    retainedVideoSpanMs: count(receipt.retainedVideoSpanMs),
+    maxVideoGapMs: count(receipt.maxVideoGapMs),
+    retainedVideoFrames: count(receipt.retainedVideoFrames),
+    completenessFailure: finite(receipt.completenessFailure, [
+      "none",
+      "random_access",
+      "frames",
+      "span",
+      "gap",
+      "density",
+    ]),
     ingressVideoFrames: count(receipt.ingressVideoFrames),
     ingressAudioFrames: count(receipt.ingressAudioFrames),
     rejectedByReason: Object.fromEntries(
@@ -327,6 +338,7 @@ export function createClipJobs({
   pull,
   changed,
   convert = convertClip,
+  log = (record) => process.stdout.write(JSON.stringify(record) + "\n"),
   now = Date.now,
   monotonic = () => performance.now(),
   wait = (ms, signal) => delay(ms, undefined, { signal }),
@@ -341,7 +353,8 @@ export function createClipJobs({
     stopped = false,
     loaded = false,
     storageFailed = false,
-    last = null;
+    last = null,
+    jobOrdinal = 0;
   const counters = {
     jobs: 0,
     startAcknowledged: 0,
@@ -364,9 +377,28 @@ export function createClipJobs({
     bytes: j?.bytes ?? 0,
     expiresAtMs: j?.expiresAtMs ?? null,
   });
+  function trace(j, event) {
+    log({
+      event,
+      ts: new Date(now()).toISOString(),
+      jobOrdinal: j.jobOrdinal,
+      state: j.state,
+      reason: j.reason,
+      durationBucket:
+        j.expectedMs <= 0 ? "unknown" : j.expectedMs < 15000 ? "lt15s" : j.expectedMs < 60000 ? "lt60s" : "ge60s",
+      source: j.source,
+    });
+  }
+  function terminal(j) {
+    if (!["ready", "failed", "refused", "cancelled"].includes(j.state) || j.finishedAtMs !== null) return;
+    j.finishedAtMs = now();
+    trace(j, "recordings.clip_terminal");
+    last = { startedAtMs: j.startedAtMs, finishedAtMs: j.finishedAtMs };
+  }
   function state(j, next, reason = "none") {
     j.state = next;
     j.reason = reason;
+    if (j !== active) terminal(j);
     changed(j.cameraId, j.eventId);
   }
   function remove(j) {
@@ -451,7 +483,15 @@ export function createClipJobs({
         if (evidence.admissionGate !== "none" && evidence.admissionGate !== "unknown")
           counters.admissionGates[evidence.admissionGate] = (counters.admissionGates[evidence.admissionGate] ?? 0) + 1;
         pullMs = Math.round(monotonic() - start);
-        last = { pullMs, convertMs, bytes: 0, audioIncluded: false, ...evidence };
+        last = {
+          startedAtMs: j.startedAtMs,
+          finishedAtMs: j.finishedAtMs,
+          pullMs,
+          convertMs,
+          bytes: 0,
+          audioIncluded: false,
+          ...evidence,
+        };
         if (receipt.startAttempted || frames || !transientAdmission.has(evidence.admissionGate)) break;
         const remaining = admissionDeadline - monotonic();
         if (remaining <= 0) break;
@@ -556,7 +596,16 @@ export function createClipJobs({
         reason,
       );
     } finally {
-      last = { pullMs, convertMs, bytes: j.bytes, audioIncluded: false, ...evidence };
+      terminal(j);
+      last = {
+        startedAtMs: j.startedAtMs,
+        finishedAtMs: j.finishedAtMs,
+        pullMs,
+        convertMs,
+        bytes: j.bytes,
+        audioIncluded: false,
+        ...evidence,
+      };
       counters.jobs++;
       for (const name of ["startAcknowledged", "ingressVideoFrames", "ingressAudioFrames", "reconnectDurationMs"])
         counters[name] = Math.min(Number.MAX_SAFE_INTEGER, counters[name] + Number(evidence[name]));
@@ -622,7 +671,7 @@ export function createClipJobs({
         storageFailed = true;
       }
     },
-    prepare(cameraId, eventId, selection) {
+    prepare(cameraId, eventId, selection, source = {}) {
       if (!selection) return { clip: { ...view(), state: "refused", reason: "not_found" } };
       const id = key(cameraId, eventId);
       if (loaded && !storageFailed)
@@ -640,6 +689,14 @@ export function createClipJobs({
         else return { clip: { ...view(), state: "refused", reason: "busy" } };
       }
       const j = Object.assign(previous ?? {}, {
+        jobOrdinal: (jobOrdinal = (jobOrdinal % Number.MAX_SAFE_INTEGER) + 1),
+        startedAtMs: now(),
+        finishedAtMs: null,
+        source: {
+          connection: count(source.connection),
+          locality: finite(source.locality, ["local", "remote"]),
+          client: finite(source.client, ["ha-integration"]),
+        },
         input: null,
         output: null,
         done: null,
@@ -654,7 +711,7 @@ export function createClipJobs({
         selection,
         expectedMs: selection?.selector?.expectedMs ?? 0,
         controller: new AbortController(),
-        state: "idle",
+        state: "queued",
         reason: "none",
         readers: 0,
       });
@@ -671,6 +728,7 @@ export function createClipJobs({
                 : pending.length >= queueLimit
                   ? "busy"
                   : null;
+      trace(j, "recordings.clip_queued");
       if (reason) state(j, "refused", reason);
       else {
         state(j, "queued");

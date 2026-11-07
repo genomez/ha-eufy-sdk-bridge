@@ -1160,7 +1160,7 @@ export function createRecordings(
       flush();
       return { ...result, state: "pending", retryAfterMs: Math.ceil(policy.coverWait()) || null };
     },
-    clipPrepare(args) {
+    clipPrepare(args, source) {
       fields(args, ["cameraId", "eventId"]);
       camera(args.cameraId);
       if (!validId(args.eventId, "e")) throw failure("invalid");
@@ -1179,7 +1179,7 @@ export function createRecordings(
           ? { scope: scope.sdkScope, selector }
           : null;
       if (playbackEnabled() && selection) preempt();
-      return clips.prepare(args.cameraId, args.eventId, selection);
+      return clips.prepare(args.cameraId, args.eventId, selection, source);
     },
     clipStatus(args) {
       fields(args, ["cameraId", "eventId"]);

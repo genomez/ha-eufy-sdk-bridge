@@ -732,6 +732,12 @@ test("failed clip exposes only finite receipt evidence and cumulative counts", a
     stationStatusCounts: [],
     stationStatusOverflow: 0,
     startAcknowledged: false,
+    retainedVideoSpanMs: 0,
+    maxVideoGapMs: 0,
+    retainedVideoFrames: 0,
+    completenessFailure: "unknown",
+    startedAtMs: 100000,
+    finishedAtMs: 100000,
     ingressVideoFrames: 3,
     ingressAudioFrames: 2,
     rejectedByReason: { metadata: 2, "zstd-window": 1 },
@@ -1079,4 +1085,83 @@ test("clip diagnostics retain bounded count-only poison evidence", async (t) => 
   assert.ok(diagnostics.playbackObservation.poisonCounts.length <= 32);
   assert.deepEqual(diagnostics.playbackObservation.poisonCounts[0], poison);
   assert.ok(!JSON.stringify(diagnostics).includes("discard"));
+});
+
+test("new jobs log exactly one bounded queue/terminal pair including deduplication and cancellation", async (t) => {
+  const records = [],
+    gate = deferred();
+  const f = await fixture(t, {
+    log: (r) => records.push(r),
+    pull: async (_, o) => {
+      o.beforeDispatch();
+      await gate.promise;
+      o.video(Buffer.from("first"));
+      o.video(Buffer.from("last"));
+      return {
+        ...clean,
+        retainedVideoSpanMs: 11900,
+        maxVideoGapMs: 2500,
+        retainedVideoFrames: 120,
+        completenessFailure: "none",
+      };
+    },
+  });
+  const source = { connection: 7, locality: "remote", client: "ha-integration", private: "synthetic-private" };
+  f.jobs.prepare("camera", "a", selection, source);
+  f.jobs.prepare("camera", "a", selection, source);
+  await until(() => state(f, "a").state === "pulling");
+  f.jobs.prepare("camera", "b", selection, {
+    connection: -1,
+    locality: "synthetic-private",
+    client: "synthetic-private",
+  });
+  await f.jobs.cancel("camera", "b");
+  f.advance(5000);
+  gate.resolve();
+  await until(() => state(f, "a").state === "ready");
+  await f.jobs.cancel("camera", "a");
+  assert.equal(records.length, 4);
+  assert.deepEqual(records[0], {
+    event: "recordings.clip_queued",
+    ts: new Date(100000).toISOString(),
+    jobOrdinal: 1,
+    state: "queued",
+    reason: "none",
+    durationBucket: "lt15s",
+    source: { connection: 7, locality: "remote", client: "ha-integration" },
+  });
+  assert.deepEqual(records[1].source, { connection: 0, locality: "unknown", client: "unknown" });
+  assert.equal(records[2].state, "cancelled");
+  assert.equal(records[3].state, "ready");
+  assert.equal(records[3].jobOrdinal, 1);
+  assert.equal(JSON.stringify(records).includes("synthetic-private"), false);
+  assert.equal(JSON.stringify(records).includes("camera"), false);
+  assert.equal(f.jobs.diagnostics().lastJob.startedAtMs, 100000);
+  assert.equal(f.jobs.diagnostics().lastJob.finishedAtMs, 105000);
+  assert.equal(f.jobs.diagnostics().lastJob.maxVideoGapMs, 2500);
+  assert.equal(f.jobs.diagnostics().lastJob.retainedVideoSpanMs, 11900);
+  assert.equal(f.jobs.diagnostics().lastJob.retainedVideoFrames, 120);
+  assert.equal(f.jobs.diagnostics().lastJob.completenessFailure, "none");
+});
+
+test("completeness diagnostics discard arbitrary text and invalid counts", async (t) => {
+  const f = await fixture(t, {
+    log() {},
+    pull: async () => ({
+      ...clean,
+      boundedMediaObserved: false,
+      completenessFailure: "synthetic-private",
+      retainedVideoSpanMs: Infinity,
+      maxVideoGapMs: -1,
+      retainedVideoFrames: "secret",
+    }),
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => state(f, "a").state === "failed");
+  const d = f.jobs.diagnostics().lastJob;
+  assert.equal(d.completenessFailure, "unknown");
+  assert.equal(d.retainedVideoSpanMs, 0);
+  assert.equal(d.maxVideoGapMs, 0);
+  assert.equal(d.retainedVideoFrames, 0);
+  assert.equal(JSON.stringify(d).includes("synthetic-private"), false);
 });

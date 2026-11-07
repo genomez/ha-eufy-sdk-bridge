@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { pilotRecordEvent } from "../src/pilot-log.mjs";
+import { pilotRecordEvent, pilotClipRecord } from "../src/pilot-log.mjs";
 
 const launcher = fileURLToPath(new URL("../bin/pilot-process.mjs", import.meta.url));
 const ts = "2026-11-05T03:30:00.123Z";
@@ -26,10 +26,10 @@ test("the launcher filter accepts an event alone or with a strict UTC ts, and no
     assert.equal(pilotRecordEvent(line), undefined, line);
 });
 
-function runLauncher(env) {
+function runLauncher(env, extra = []) {
   const dir = mkdtempSync(path.join(tmpdir(), "pilot-process-"));
   try {
-    const lines = [{ event: "server_1", ts }, { event: "server_1" }, { event: "server_1", detail: "leak" }];
+    const lines = [{ event: "server_1", ts }, { event: "server_1" }, { event: "server_1", detail: "leak" }, ...extra];
     writeFileSync(
       path.join(dir, "server.mjs"),
       lines.map((line) => `process.stdout.write(${JSON.stringify(JSON.stringify(line) + "\n")});`).join("\n"),
@@ -61,4 +61,33 @@ test("timestamped child records still reach the launcher output", () => {
 
 test("with timestamps off the launcher output stays one-field", () => {
   assert.deepEqual(runLauncher({}), [{ event: "server_1" }, { event: "server_1" }]);
+});
+
+const clipRecord = {
+  event: "recordings.clip_terminal",
+  ts,
+  jobOrdinal: 23,
+  state: "ready",
+  reason: "none",
+  durationBucket: "lt15s",
+  source: { connection: 7, locality: "remote", client: "ha-integration" },
+};
+test("launcher preserves only fixed-schema clip traces even with optional timestamps off", () => {
+  const invalid = [
+    { ...clipRecord, detail: "synthetic-private" },
+    { ...clipRecord, ts: "private" },
+    { ...clipRecord, jobOrdinal: -1 },
+    { ...clipRecord, jobOrdinal: Infinity },
+    { ...clipRecord, event: "unexpected" },
+    { ...clipRecord, state: "pulling" },
+    { ...clipRecord, reason: "private" },
+    { ...clipRecord, durationBucket: "private" },
+    { ...clipRecord, source: { ...clipRecord.source, address: "private" } },
+    { ...clipRecord, source: { ...clipRecord.source, client: "private" } },
+    { ...clipRecord, source: { ...clipRecord.source, locality: "private" } },
+    { ...clipRecord, source: { ...clipRecord.source, connection: -1 } },
+  ];
+  for (const record of invalid) assert.equal(pilotClipRecord(JSON.stringify(record)), undefined);
+  const queued = { ...clipRecord, event: "recordings.clip_queued", state: "queued" };
+  assert.deepEqual(runLauncher({}, [queued, clipRecord, ...invalid]).slice(2), [queued, clipRecord]);
 });

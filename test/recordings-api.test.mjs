@@ -12,7 +12,7 @@ import { recordingEnrollment } from "../src/recordings-policy.mjs";
 import { createRecordingsStore } from "../src/recordings-store.mjs";
 import { createRecordings } from "../src/recordings.mjs";
 
-async function socket(t, h, allowCommand) {
+async function socket(t, h, allowCommand, request) {
   const server = http.createServer();
   const control = createWsServer(h.ctx, server, { allowCommand });
   const previous = h.ctx.broadcast;
@@ -26,7 +26,7 @@ async function socket(t, h, allowCommand) {
   ws.send = (raw) => replies.push(JSON.parse(raw));
   ws.close = () => ws.emit("close");
   ws.terminate = () => ws.close();
-  control.wss.emit("connection", ws);
+  control.wss.emit("connection", ws, request);
   t.after(async () => {
     ws.close();
     await control.closeWebSocketServer();
@@ -493,4 +493,22 @@ test("diagnostics HTTP and optional WS RPC are sanitized cache-only reads", asyn
   assert.equal(h.calls.catalog.length, 0);
   assert.equal(h.calls.cover.length, 0);
   assert.equal((await s.rpc({ id: 8, cmd: "recordings.diagnostics", start_id: 1 })).ok, false);
+});
+
+test("WebSocket clip source is connection-owned, bounded and backward compatible", async (t) => {
+  const records = [];
+  const h = await harness(t, { clipOptions: { log: (r) => records.push(r) } });
+  await seed(h);
+  const eventId = row(h.scope).eventId;
+  const request = { socket: { remoteAddress: "127.0.0.1" }, headers: { "x-eufy-client": "ha-integration" } };
+  const identified = await socket(t, h, undefined, request);
+  await identified.rpc({ id: 1, cmd: "recordings.clip_prepare", cameraId: h.cameraId, eventId });
+  await until(() => records.length === 2);
+  assert.deepEqual(records[0].source, { connection: 1, locality: "local", client: "ha-integration" });
+  assert.equal(JSON.stringify(records).includes(request.socket.remoteAddress), false);
+  const legacy = await socket(t, h);
+  await legacy.rpc({ id: 2, cmd: "recordings.clip_prepare", cameraId: h.cameraId, eventId });
+  await until(() => records.length === 4);
+  assert.equal(records[2].source.client, "unknown");
+  assert.equal(records[2].source.connection, 1);
 });

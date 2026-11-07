@@ -539,3 +539,11 @@ Offline synthetic validation only; installation acceptance remains false.
 - Validated locally with synthetic fixtures; no installation or device acceptance is claimed.
 
 - Playback 3p6r, 2026-11-06: pin the local c7913bf SDK distribution and runtime with the refusal-invalidation latch fix; offline packaging only.
+
+### Playback 3p7 diagnostics and tracing, 2026-11-06
+
+- Pass through bounded retained-video completeness counts and the failed-check enum.
+- Emit one structured queue and terminal stdout record per new clip job, including UTC timestamp, process-local job/connection ordinals, state/reason, duration bucket and allowlisted client/locality. Deduplicated viewers and transient admission retries do not create new trace pairs. No addresses or media selectors enter the log. Client names are self-reported, not authentication.
+- Retain queue and terminal timestamps in lastJob. WebSocket connections can optionally identify as ha-integration with X-Eufy-Client; absent or unrecognized names remain unknown. Older clients remain compatible.
+- Rebuild and pin the paired local 3p7 SDK package; no runtime installation or device acceptance is claimed.
+- The launcher forwards clip traces through a strict fixed-schema validator and a 512-character line bound, preserving UTC timestamps independently of optional generic log timestamps.

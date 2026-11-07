@@ -58,7 +58,16 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
   let effectsCache = null;
 
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
-  wss.on("connection", (ws) => {
+  let connectionOrdinal = 0;
+  const requestSources = new WeakMap();
+  wss.on("connection", (ws, request) => {
+    const address = request?.socket?.remoteAddress ?? "";
+    const source = Object.freeze({
+      connection: (connectionOrdinal = (connectionOrdinal % Number.MAX_SAFE_INTEGER) + 1),
+      locality: address === "::1" || /^(?:::ffff:)?127\./.test(address) ? "local" : "remote",
+      client: request?.headers?.["x-eufy-client"] === "ha-integration" ? "ha-integration" : "unknown",
+    });
+    requestSources.set(ws, source);
     clients.add(ws);
     // On connect, tell the client the schema AND the current auth state, so a frontend knows immediately
     // whether it must drive a 2FA/captcha step before anything else works.
@@ -149,7 +158,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
             recordings = ctx.recordings.catalog(ws, msg);
             break;
           case "recordings.clip_prepare":
-            recordings = ctx.recordings.clipPrepare(msg);
+            recordings = ctx.recordings.clipPrepare(msg, requestSources.get(ws));
             break;
           case "recordings.clip_status":
             recordings = ctx.recordings.clipStatus(msg);
