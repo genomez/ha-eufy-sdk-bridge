@@ -184,3 +184,16 @@ test("an 11ms regression fails; a 10ms regression retains the 1ms jitter clamp",
     else assert.throws(() => mux.frame(frame, { nativeTimestamp: 189 }), { reason: "convert_failed" });
   }
 });
+
+test("native duration allows whole-second catalog rounding but still rejects real truncation", () => {
+  const long = createRecordingTiming({ expectedMs: 12000 });
+  for (let i = 0; i < 188; i++) long.frame(frame, { nativeTimestamp: Math.round((i * 1000) / 15) });
+  assert.ok(Math.abs(long.timing.durationMs - 12533.3) < 1);
+  assert.ok(validNativeDuration(long.timing, 12000, long.timing.durationMs));
+  const short = createRecordingTiming({ expectedMs: 12000 });
+  for (let i = 0; i < 160; i++) short.frame(frame, { nativeTimestamp: Math.round((i * 1000) / 15) });
+  assert.ok(!validNativeDuration(short.timing, 12000, short.timing.durationMs), "10.7 s against a 12 s catalog");
+  const below = createRecordingTiming({ expectedMs: 12000 });
+  for (let i = 0; i < 166; i++) below.frame(frame, { nativeTimestamp: Math.round((i * 1000) / 15) });
+  assert.ok(validNativeDuration(below.timing, 12000, below.timing.durationMs), "11.07 s rounds up to 12 s");
+});

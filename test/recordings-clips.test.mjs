@@ -2001,3 +2001,46 @@ test("armed refusal consumes one dispatch and never automatically retries", asyn
   assert.equal(calls, 1);
   assert.deepEqual(f.jobs.diagnostics().lastJob.experiment, experiment);
 });
+
+test("short progressive capture starts its encoder from the EOF flush and completes delivery", async (t) => {
+  let committed = 0,
+    finished = false,
+    calls = 0,
+    input;
+  const f = await fixture(t, {
+    progressiveFps: 15,
+    progressiveEncoder: (options) => {
+      calls++;
+      input = options.input;
+      assert.equal(options.nativeTiming.native, false, "a three-frame capture never qualifies");
+      fs.mkdirSync(options.directory);
+      return {
+        commit: (bytes) => {
+          committed += bytes;
+        },
+        snapshot: () => ({ delivery: finished ? "complete" : "warming", segments: [] }),
+        finish: async ({ frames }) => {
+          assert.equal(frames, 3);
+          finished = true;
+        },
+        finalizeMp4: async (output) => fs.writeFileSync(output, "converted"),
+        abort: async () => {},
+        dispose() {},
+      };
+    },
+    pull: async (_, opts) => {
+      opts.beforeDispatch();
+      for (const nativeTimestamp of [0, 67, 133]) opts.video(Buffer.from("frame"), { nativeTimestamp });
+      assert.equal(calls, 0, "encoder waits for qualification");
+      return { ...clean, mediaDurationMs: 200 };
+    },
+    convert: async () => assert.fail("progressive conversion must use its encoder"),
+  });
+  f.jobs.prepare("camera", "short-progressive", { selector: { expectedMs: 1000 } }, { progressive: true });
+  await until(() => !f.jobs.busy());
+  assert.equal(calls, 1);
+  assert.equal(committed, 15);
+  assert.equal(committed, "frameframeframe".length);
+  assert.ok(finished);
+  assert.equal(state(f, "short-progressive").state, "ready");
+});

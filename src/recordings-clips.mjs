@@ -748,6 +748,45 @@ export function createClipJobs({
       room();
       const name = randomUUID();
       let writeFailed = false;
+      // Feed committed spool bytes to the progressive encoder, starting it on the first bytes.
+      // Also used at EOF: a short capture's bytes may only be released by the timing flush.
+      const feedProgressive = (bytes) => {
+        if (
+          bytes.length &&
+          j.progressiveRequested &&
+          progressiveFps === 15 &&
+          !experiment &&
+          j.expectedMs <= 3_600_000
+        ) {
+          if (!j.encoder) {
+            j.directory = path.join(root, `hls-${name}`);
+            j.encoder = progressiveEncoder({
+              directory: j.directory,
+              input: j.input,
+              fps: progressiveFps,
+              playableMs: progressivePlayableMs,
+              expectedMs: j.expectedMs,
+              nativeTiming: recordingTiming.timing,
+              signal: j.controller.signal,
+              reserve: room,
+              changed: () => {
+                observeProgressive(j);
+                const snapshot = j.encoder?.snapshot();
+                if (snapshot?.delivery === "unavailable" && !j.controller.signal.aborted) {
+                  j.endReason = endReasons.includes(snapshot.endReason)
+                    ? snapshot.endReason
+                    : "conversion_validation_failed";
+                  j.processDetail = snapshot.process ?? null;
+                  abort(j, "convert_failed");
+                }
+                changed(j.cameraId, j.eventId);
+              },
+            });
+            observeProgressive(j);
+            j.encoder.commit(fs.statSync(j.input).size);
+          } else j.encoder.commit(bytes.length);
+        }
+      };
       const pullOptions = {
         timelineOriginMs: start,
         signal: j.controller.signal,
@@ -764,41 +803,7 @@ export function createClipJobs({
             first ??= monotonic();
             latest = monotonic();
             frames++;
-            if (
-              bytes.length &&
-              j.progressiveRequested &&
-              progressiveFps === 15 &&
-              !experiment &&
-              j.expectedMs <= 3_600_000
-            ) {
-              if (!j.encoder) {
-                j.directory = path.join(root, `hls-${name}`);
-                j.encoder = progressiveEncoder({
-                  directory: j.directory,
-                  input: j.input,
-                  fps: progressiveFps,
-                  playableMs: progressivePlayableMs,
-                  expectedMs: j.expectedMs,
-                  nativeTiming: recordingTiming.timing,
-                  signal: j.controller.signal,
-                  reserve: room,
-                  changed: () => {
-                    observeProgressive(j);
-                    const snapshot = j.encoder?.snapshot();
-                    if (snapshot?.delivery === "unavailable" && !j.controller.signal.aborted) {
-                      j.endReason = endReasons.includes(snapshot.endReason)
-                        ? snapshot.endReason
-                        : "conversion_validation_failed";
-                      j.processDetail = snapshot.process ?? null;
-                      abort(j, "convert_failed");
-                    }
-                    changed(j.cameraId, j.eventId);
-                  },
-                });
-                observeProgressive(j);
-                j.encoder.commit(fs.statSync(j.input).size);
-              } else j.encoder.commit(bytes.length);
-            }
+            feedProgressive(bytes);
             j.pulledMs = Math.min(
               j.expectedMs,
               Math.round((latest - first) * (experiment?.playSpeed ?? pullOptions.transferSpeed)),
@@ -971,7 +976,7 @@ export function createClipJobs({
           if (tail.length) {
             room(tail.length);
             writeAll(fd, tail);
-            j.encoder?.commit(tail.length);
+            feedProgressive(tail);
           }
         } catch (error) {
           throw clipReasons.includes(error?.reason) ? error : fault("storage");

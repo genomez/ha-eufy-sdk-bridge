@@ -27,9 +27,12 @@ function pts(value) {
  * selecting TS; otherwise retain raw fixed-rate input. Missing later words advance one
  * 15fps period. Only duplicate/regression jitter up to 10ms is clamped to 1ms.
  */
+/** Catalog durations are whole seconds, so the true span may differ from expectedMs by up to one second. */
+export const catalogSlackMs = 1000;
+
 export function createRecordingTiming({ expectedMs }) {
   const timing = { native: false, frames: 0, spanMs: 0, durationMs: 0 };
-  const maxSpanMs = Number.isSafeInteger(expectedMs) && expectedMs > 0 ? expectedMs + 1000 : 0;
+  const maxSpanMs = Number.isSafeInteger(expectedMs) && expectedMs > 0 ? expectedMs + catalogSlackMs : 0;
   const validWord = (word) => Number.isInteger(word) && word >= 0 && word <= 0xffffffff;
   let pending = [],
     pendingBytes = 0,
@@ -146,11 +149,15 @@ export function createRecordingTiming({ expectedMs }) {
 /** Quantize native PTS to 15fps, holding across gaps and retaining the last decoded frame at EOF. */
 export const nativeVideoFilter = "fps=fps=15:round=near:eof_action=pass,scale=w='trunc(min(1920,iw)/2)*2':h=-2";
 
-/** One final frame period and at most two CFR ticks of quantization, never a proportional allowance. */
+/**
+ * Native span against the whole-second catalog duration (catalog precision), then output against
+ * native span: one final frame period and at most two CFR ticks, never a proportional allowance.
+ */
 export function validNativeDuration(timing, expectedMs, durationMs) {
   return (
     timing.frames >= 2 &&
-    Math.abs(timing.durationMs - expectedMs) <= 200 &&
+    timing.durationMs >= expectedMs - catalogSlackMs &&
+    timing.durationMs <= expectedMs + catalogSlackMs + 1000 / 15 &&
     Math.abs(durationMs - timing.durationMs) <= (1000 / 15) * 2
   );
 }
