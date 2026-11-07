@@ -1,4 +1,5 @@
 import { validateExperiments } from "./recordings-experiments.mjs";
+import { createDownloadSpool, downloadEvidence } from "./recordings-download.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -82,6 +83,7 @@ export const clipReasons = [
   "convert_failed",
   "station_error",
   "cleanup_uncertain",
+  "experiment_only",
   "disabled",
 ];
 const fault = (reason) => Object.assign(new Error(reason), { reason });
@@ -250,6 +252,8 @@ function clipEvidence(receipt = {}) {
   ];
   return {
     ...experimentEvidence(receipt),
+    mode: receipt.mode === "download" || receipt.experiment?.mode === "download" ? "download" : "playback",
+    ...(receipt.download && { download: downloadEvidence(receipt.download) }),
     ...boundedPlaybackDiagnostics(receipt),
     admissionGate: finite(receipt.admissionGateName ?? admissionGates[receipt.admissionGate], admissionGates),
     captureOutcome: finite(receipt.captureOutcome, [
@@ -544,7 +548,7 @@ export function createClipJobs({
       evidence = clipEvidence();
     const start = monotonic();
     const bridgeTimeline = {};
-    let experiment;
+    let experiment, spool;
     const timing = () => ({
       ...evidence,
       ...(experiment && { experiment }),
@@ -557,18 +561,21 @@ export function createClipJobs({
       if (!loaded || storageFailed) throw fault("storage");
       room();
       const name = randomUUID();
-      j.input = path.join(root, `${name}.hevc`);
-      j.output = path.join(root, `${name}.mp4`);
-      fd = fs.openSync(j.input, "wx", 0o600);
       let writeFailed = false;
       const pullOptions = {
         timelineOriginMs: start,
         signal: j.controller.signal,
         beforeDispatch: () => state(j, "pulling"),
         video(data) {
+          if (experiment?.mode === "download") throw fault("experiment_only");
           if (j.controller.signal.aborted) throw fault("station_error");
           if (j.state !== "pulling") state(j, "pulling");
           try {
+            if (fd === undefined) {
+              j.input = path.join(root, `${name}.hevc`);
+              j.output = path.join(root, `${name}.mp4`);
+              fd = fs.openSync(j.input, "wx", 0o600);
+            }
             room(data.length);
             writeAll(fd, data);
             first ??= monotonic();
@@ -592,6 +599,7 @@ export function createClipJobs({
         try {
           const media = Promise.withResolvers();
           pullOptions.mediaReady = (value) => {
+            if (experiment?.mode === "download" || value?.mode === "download") return;
             if (value?.captureOutcome === "eof" && value.boundedMediaObserved && value.randomAccess && frames >= 2) {
               mediaReceipt = value;
               j.mediaComplete = true;
@@ -601,6 +609,22 @@ export function createClipJobs({
           pendingPull = Promise.resolve().then(() => {
             experiment ??= validateExperiments(experiments?.take()) ?? undefined;
             if (experiment) pullOptions.experiment = experiment;
+            if (experiment?.mode === "download") {
+              try {
+                spool ??= createDownloadSpool(path.dirname(root));
+              } catch {
+                throw fault("storage");
+              }
+              pullOptions.file = (bytes) => {
+                if (j.controller.signal.aborted) throw fault("live_view");
+                try {
+                  spool.write(bytes);
+                } catch {
+                  writeFailed = true;
+                  throw fault("storage");
+                }
+              };
+            }
             return pull(j.selection, pullOptions);
           });
           j.stationSettled = pendingPull.then(
@@ -664,8 +688,10 @@ export function createClipJobs({
         if (monotonic() >= admissionDeadline) break;
       }
       pullMs = Math.round(monotonic() - start);
-      fs.closeSync(fd);
+      if (fd !== undefined) fs.closeSync(fd);
       fd = undefined;
+      if (experiment?.mode === "download" || receipt.mode === "download")
+        throw fault(writeFailed || receipt.captureOutcome === "storage_failed" ? "storage" : "experiment_only");
       const complete =
         receipt.boundedMediaObserved &&
         ["complete", "eof"].includes(receipt.captureOutcome) &&
@@ -791,6 +817,13 @@ export function createClipJobs({
           }
         } catch {
           if (mediaReceipt) evidence.cleanupOutcome = "failed";
+        }
+      }
+      if (spool) {
+        try {
+          spool.close(evidence);
+        } catch {
+          state(j, "failed", "storage");
         }
       }
       terminal(j);

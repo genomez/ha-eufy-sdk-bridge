@@ -8,11 +8,14 @@ export function validateExperiments(value) {
     !value ||
     typeof value !== "object" ||
     Array.isArray(value) ||
-    Object.keys(value).some((k) => !["playSpeed", "playType", "clientType", "icePolicy", "maxClips"].includes(k))
+    Object.keys(value).some(
+      (k) => !["mode", "playSpeed", "playType", "clientType", "icePolicy", "maxClips"].includes(k),
+    )
   )
     return null;
   const v = { playSpeed: 1, playType: 1, clientType: "WEB", maxClips: 1, ...value };
   if (
+    (v.mode !== undefined && !["playback", "download"].includes(v.mode)) ||
     ![1, 2, 4, 8].includes(v.playSpeed) ||
     v.playType !== 1 ||
     v.clientType !== "WEB" ||
@@ -23,6 +26,7 @@ export function validateExperiments(value) {
   )
     return null;
   return {
+    ...(v.mode === undefined ? {} : { mode: v.mode }),
     playSpeed: v.playSpeed,
     playType: v.playType,
     clientType: v.clientType,

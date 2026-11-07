@@ -959,6 +959,7 @@ test("failed clip exposes only finite receipt evidence and cumulative counts", a
     selectedIceCandidateType: "unknown",
     selectedRemoteIceCandidateType: "unknown",
     durationBasis: "unknown",
+    mode: "playback",
     admissionGate: "none",
     pullMs: d.lastJob.pullMs,
     convertMs: 0,
