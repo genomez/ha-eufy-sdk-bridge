@@ -112,6 +112,9 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess, failed = 
   };
   const watchdog = setTimeout(() => {
     timedOut = true;
+    bad = true;
+    // Latch the timeout before termination so a later viewer release cannot replace it.
+    recordFailure();
     abort();
   }, timeoutMs);
   signal?.addEventListener("abort", abort, { once: true });

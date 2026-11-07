@@ -559,6 +559,33 @@ test("playable threshold controls early delivery and invalid direct options fall
   }
 });
 
+test("encoder watchdog timeout stays a timeout when a viewer releases before close", async (t) => {
+  const root = await temporary(t),
+    directory = path.join(root, "hls"),
+    input = path.join(root, "input.hevc");
+  fs.writeFileSync(input, "source");
+  let child;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const encoder = createProgressiveEncoder({
+    directory,
+    input,
+    fps: 15,
+    expectedMs: 6000,
+    spawnProcess: (...args) => {
+      child = fakeProcess(directory, [])(...args);
+      child.kill = () => true; // a real process exits only later
+      return child;
+    },
+  });
+  t.mock.timers.tick(120000);
+  await Promise.resolve();
+  const released = encoder.abort("viewer_released");
+  child.emit("exit", null, "SIGTERM");
+  child.emit("close", null, "SIGTERM");
+  await released;
+  assert.equal(encoder.snapshot().endReason, "encoder_timeout");
+});
+
 for (const mode of ["exit", "signal", "spawn", "input", "timeout"])
   test(`encoder process ${mode} has a precise fixed terminal classification`, async (t) => {
     const root = await temporary(t),
@@ -1018,6 +1045,10 @@ test("history camera labels redact addresses, MACs and long identity tokens", as
     "Camera aabbccddeeff",
     "Camera 0123456789abcdef",
     "Camera ABC123456789",
+    "Porch_192.168.1.1",
+    "Camera_ABC123456789",
+    "Porch 192.\u0000168.50.111",
+    "Camera_aa:bb:cc:dd:ee:ff",
   ];
   for (const label of labels) {
     const f = await fixture(t);
