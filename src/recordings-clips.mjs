@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createProgressiveEncoder, progressiveUsage } from "./recordings-progressive.mjs";
 import { endReasons, isViewerEnd, playableThreshold, cameraLabel, processFailure } from "./recordings-job-evidence.mjs";
 import { createPlaybackSessions } from "./recordings-playback-sessions.mjs";
+import { createRecordingTiming, nativeVideoFilter, validNativeDuration } from "./recordings-timing.mjs";
 
 const HOUR = 3_600_000;
 const CAP = 2 * 1024 ** 3;
@@ -131,6 +132,7 @@ export function convertClip({
   output,
   frames,
   durationMs,
+  nativeTiming,
   maxBytes,
   signal,
   ffmpeg = "/usr/bin/ffmpeg",
@@ -139,9 +141,14 @@ export function convertClip({
 }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted || !Number.isFinite(durationMs) || durationMs <= 0) return reject(fault("convert_failed"));
+    if (
+      nativeTiming?.native &&
+      (nativeTiming.frames !== frames || !validNativeDuration(nativeTiming, durationMs, durationMs))
+    )
+      return reject(fault("convert_failed"));
     // Station HEVC carries its own VUI frame rate, which overrides -framerate on raw input.
-    // Retime frames explicitly to the retained media duration supplied by capture.
-    const fps = String((frames * 1000) / durationMs);
+    // Only the metadata-free fallback retimes frames uniformly to the retained duration.
+    const fps = nativeTiming?.native ? "15" : String((frames * 1000) / durationMs);
     let stderr = Buffer.alloc(0),
       stderrTruncated = false;
     let failed = false,
@@ -156,15 +163,15 @@ export function convertClip({
         "-loglevel",
         "error",
         "-y",
-        "-framerate",
-        fps,
+        ...(nativeTiming?.native ? ["-xerror", "-copyts"] : []),
+        ...(nativeTiming?.native ? [] : ["-framerate", fps]),
         "-f",
-        "hevc",
+        nativeTiming?.native ? "mpegts" : "hevc",
         "-i",
         input,
         "-an",
         "-t",
-        String(durationMs / 1000),
+        String((nativeTiming?.native ? nativeTiming.durationMs : durationMs) / 1000),
         "-c:v",
         "libx264",
         "-preset",
@@ -172,21 +179,32 @@ export function convertClip({
         "-threads",
         "2",
         "-vf",
-        `setpts=N/(${fps}*TB),scale=w='trunc(min(1920,iw)/2)*2':h=-2`,
+        nativeTiming?.native ? nativeVideoFilter : `setpts=N/(${fps}*TB),scale=w='trunc(min(1920,iw)/2)*2':h=-2`,
+        "-fps_mode",
+        "cfr",
         "-r",
         fps,
         "-pix_fmt",
         "yuv420p",
         "-movflags",
         "+faststart",
+        ...(nativeTiming?.native ? ["-progress", "pipe:1"] : []),
         "-fs",
         String(maxBytes),
         "-f",
         "mp4",
         output,
       ],
-      { shell: false, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+      { shell: false, windowsHide: true, stdio: ["ignore", nativeTiming?.native ? "pipe" : "ignore", "pipe"] },
     );
+    let outputFrames = 0,
+      progress = "";
+    child.stdout?.on("data", (chunk) => {
+      progress += chunk.toString();
+      const lines = progress.split("\n");
+      progress = lines.pop().slice(-1024);
+      for (const line of lines) if (/^frame=\d+\s*$/.test(line)) outputFrames = Number(line.slice(6));
+    });
     child.stderr?.on("data", (data) => {
       const chunk = Buffer.from(data);
       stderrTruncated ||= stderr.length + chunk.length > 2048;
@@ -221,7 +239,9 @@ export function convertClip({
       clearTimeout(watchdog);
       clearTimeout(escalation);
       signal?.removeEventListener("abort", terminate);
-      if (code === 0 && !failed) resolve();
+      const invalidTiming =
+        nativeTiming?.native && Math.abs((outputFrames * 1000) / 15 - nativeTiming.durationMs) > (1000 / 15) * 2;
+      if (code === 0 && !failed && !invalidTiming) resolve();
       else {
         const tail = stderr.toString("utf8");
         const firstNewline = tail.indexOf("\n");
@@ -234,7 +254,9 @@ export function convertClip({
         reject(
           Object.assign(
             fault("convert_failed"),
-            processFailure({ code, signal: closeSignal, spawned: spawnFailed, timeout: timedOut }),
+            code === 0 && invalidTiming
+              ? { endReason: "conversion_validation_failed", exitCode: code, signal: closeSignal ?? null }
+              : processFailure({ code, signal: closeSignal, spawned: spawnFailed, timeout: timedOut }),
           ),
         );
       }
@@ -711,6 +733,7 @@ export function createClipJobs({
     const start = monotonic();
     const bridgeTimeline = {};
     let experiment, spool;
+    let recordingTiming = createRecordingTiming();
     const timing = () => ({
       ...evidence,
       transferSpeed: evidence.transferSpeed ?? j.transferSpeed,
@@ -730,13 +753,14 @@ export function createClipJobs({
         signal: j.controller.signal,
         transferSpeed: 2,
         beforeDispatch: () => state(j, "pulling"),
-        video(data) {
+        video(data, metadata) {
           if (experiment?.mode === "download") throw fault("experiment_only");
           if (j.controller.signal.aborted) throw fault("station_error");
           if (j.state !== "pulling") state(j, "pulling");
           try {
-            room(data.length);
-            writeAll(fd, data);
+            const bytes = recordingTiming.frame(data, metadata);
+            room(bytes.length);
+            writeAll(fd, bytes);
             first ??= monotonic();
             latest = monotonic();
             frames++;
@@ -749,6 +773,7 @@ export function createClipJobs({
                   fps: progressiveFps,
                   playableMs: progressivePlayableMs,
                   expectedMs: j.expectedMs,
+                  nativeTiming: recordingTiming.timing,
                   signal: j.controller.signal,
                   reserve: room,
                   changed: () => {
@@ -766,7 +791,7 @@ export function createClipJobs({
                 });
                 observeProgressive(j);
                 j.encoder.commit(fs.statSync(j.input).size);
-              } else j.encoder.commit(data.length);
+              } else j.encoder.commit(bytes.length);
             }
             j.pulledMs = Math.min(
               j.expectedMs,
@@ -903,6 +928,7 @@ export function createClipJobs({
           if (monotonic() >= admissionDeadline) break;
           pullOptions.transferSpeed = 1;
           frames = 0;
+          recordingTiming = createRecordingTiming();
           first = latest = undefined;
           j.pulledMs = 0;
           if (fd !== undefined) {
@@ -971,6 +997,11 @@ export function createClipJobs({
       if (!Number.isSafeInteger(j.expectedMs) || j.expectedMs <= 0) throw fault("station_error");
       j.durationMs = receipt.mediaDurationMs;
       if (!Number.isSafeInteger(j.durationMs) || j.durationMs <= 0) throw fault("station_error");
+      if (recordingTiming.timing.native) {
+        if (!validNativeDuration(recordingTiming.timing, j.expectedMs, recordingTiming.timing.durationMs))
+          throw fault("convert_failed");
+        j.durationMs = Math.round(recordingTiming.timing.durationMs);
+      }
       const reserve = Math.min(cap, Math.max(16 * 1024 ** 2, fs.statSync(j.input).size * 2));
       const maxBytes = room(reserve) - 8 * 1024 ** 2;
       if (maxBytes <= 0) throw fault("storage");
@@ -989,6 +1020,7 @@ export function createClipJobs({
             output: j.output,
             frames,
             durationMs: j.durationMs,
+            nativeTiming: recordingTiming.timing,
             maxBytes,
             signal: j.controller.signal,
             log,

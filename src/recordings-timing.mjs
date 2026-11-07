@@ -1,0 +1,111 @@
+/** MPEG-2 section CRC (non-reflected, polynomial 0x04c11db7). */
+function section(data) {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc ^= byte << 24;
+    for (let bit = 0; bit < 8; bit++) crc = (crc << 1) ^ (crc & 0x80000000 ? 0x04c11db7 : 0);
+  }
+  const tail = Buffer.alloc(4);
+  tail.writeUInt32BE(crc >>> 0);
+  return Buffer.concat([Buffer.from([0]), data, tail]);
+}
+
+/** Encode a 33-bit 90kHz PES presentation timestamp. */
+function pts(value) {
+  return Buffer.from([
+    0x21 | ((Math.floor(value / 2 ** 30) & 7) << 1),
+    Math.floor(value / 2 ** 22) & 255,
+    ((Math.floor(value / 2 ** 15) & 127) << 1) | 1,
+    Math.floor(value / 2 ** 7) & 255,
+    ((value & 127) << 1) | 1,
+  ]);
+}
+
+/**
+ * Single-stream HEVC transport spool. Native header words are interpreted as milliseconds;
+ * arrival time and transfer speed never enter this clock. Missing initial metadata selects
+ * the legacy raw path; a missing later word advances one 15fps period. Regressions and
+ * duplicates advance by 1ms, including across the unsigned 32-bit header rollover.
+ */
+export function createRecordingTiming() {
+  const timing = { native: false, frames: 0, spanMs: 0, durationMs: 0 };
+  const continuity = new Map();
+  let previous,
+    nativePosition = 0;
+  const packetize = (pid, bytes, clock) => {
+    const packets = [];
+    let offset = 0;
+    while (offset < bytes.length) {
+      const first = offset === 0;
+      const pcr = first && clock !== undefined;
+      const size = Math.min(pcr ? 176 : 184, bytes.length - offset);
+      const packet = Buffer.alloc(188, 0xff);
+      packet[0] = 0x47;
+      packet[1] = (pid >> 8) | (first ? 0x40 : 0);
+      packet[2] = pid & 255;
+      const adaptation = size < 184;
+      packet[3] = (adaptation ? 0x30 : 0x10) | (continuity.get(pid) ?? 0);
+      continuity.set(pid, ((continuity.get(pid) ?? 0) + 1) & 15);
+      const start = 188 - size;
+      if (adaptation) {
+        packet[4] = start - 5;
+        if (packet[4]) packet[5] = pcr ? 0x10 : 0;
+        if (pcr) {
+          packet[6] = Math.floor(clock / 2 ** 25) & 255;
+          packet[7] = Math.floor(clock / 2 ** 17) & 255;
+          packet[8] = Math.floor(clock / 2 ** 9) & 255;
+          packet[9] = Math.floor(clock / 2) & 255;
+          packet[10] = ((clock & 1) << 7) | 0x7e;
+          packet[11] = 0;
+        }
+      }
+      bytes.copy(packet, start, offset, offset + size);
+      packets.push(packet);
+      offset += size;
+    }
+    return packets;
+  };
+  return {
+    timing,
+    frame(data, metadata) {
+      const word = metadata?.nativeTimestamp;
+      const valid = Number.isInteger(word) && word >= 0 && word <= 0xffffffff;
+      if (!timing.frames) {
+        timing.native = valid;
+        previous = valid ? word : undefined;
+      }
+      if (!timing.native) {
+        timing.frames++;
+        return data;
+      }
+      if (timing.frames) {
+        if (valid) {
+          // Preserve the original origin after a regression; do not accumulate drift.
+          nativePosition += (word - previous) | 0;
+          timing.spanMs = Math.max(timing.spanMs + 1, nativePosition);
+          previous = word;
+        } else timing.spanMs += 1000 / 15;
+      }
+      if (timing.spanMs > 3_600_000) throw new Error("Recording clock exceeds one hour");
+      timing.frames++;
+      timing.durationMs = timing.spanMs + 1000 / 15;
+      const clock = Math.round(timing.spanMs * 90);
+      const pat = section(Buffer.from([0x00, 0xb0, 0x0d, 0, 1, 0xc1, 0, 0, 0, 1, 0xf0, 0]));
+      const pmt = section(Buffer.from([0x02, 0xb0, 0x12, 0, 1, 0xc1, 0, 0, 0xe1, 0, 0xf0, 0, 0x24, 0xe1, 0, 0xf0, 0]));
+      const pes = Buffer.concat([Buffer.from([0, 0, 1, 0xe0, 0, 0, 0x80, 0x80, 5]), pts(clock), data]);
+      return Buffer.concat([...packetize(0, pat), ...packetize(0x1000, pmt), ...packetize(0x100, pes, clock)]);
+    },
+  };
+}
+
+/** Quantize native PTS to 15fps, holding across gaps and retaining the last decoded frame at EOF. */
+export const nativeVideoFilter = "fps=fps=15:round=near:eof_action=pass,scale=w='trunc(min(1920,iw)/2)*2':h=-2";
+
+/** One final frame period and at most two CFR ticks of quantization, never a proportional allowance. */
+export function validNativeDuration(timing, expectedMs, durationMs) {
+  return (
+    timing.frames >= 2 &&
+    Math.abs(timing.durationMs - expectedMs) <= 200 &&
+    Math.abs(durationMs - timing.durationMs) <= (1000 / 15) * 2
+  );
+}

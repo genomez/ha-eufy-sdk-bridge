@@ -1,19 +1,37 @@
 # Progressive event recording transport
 
-This backend candidate adds HLS EVENT delivery without changing SDK packages or
-the finished MP4 API. It is disabled by default. `RECORDINGS_PROGRESSIVE_FPS=15`
+This backend candidate adds HLS EVENT delivery alongside the finished MP4 API.
+It is disabled by default. `RECORDINGS_PROGRESSIVE_FPS=15`
 advertises the additive `progressivePlayback` capability together with the effective
 `progressivePlayableMs` value. Enable it only for a
-source population qualified as constant 15 media frames/second; approximately
+source population qualified for the 15 fps output profile; approximately
 30 arriving frames/second at 2x is not that qualification. Unknown/long catalog
 durations remain on the completed-file HA path. The HLS limit is one hour.
 
 ## Pipeline
 
-The existing playback frame callback commits HEVC to its private spool. A
-backpressure-aware pump supplies ffmpeg while capture continues. Explicit frame
-retiming uses 15 media frames/second at both transfer speeds, independently of
-arrival time. Output is video-only H.264, closed one-second GOPs, no B frames,
+The playback callback accepts optional `{ nativeTimestamp }` metadata from the SDK's
+22-byte video header (the same word used by `nativeFrameTiming` diagnostics).
+This requires the companion SDK callback change; the previously pinned SDK tarball
+does not provide it. No package artifact is replaced by this source change.
+
+With metadata on the first frame, the private spool contains single-stream HEVC
+MPEG-TS, with PTS/PCR from native milliseconds relative to the first frame. Its
+private `.hevc` filename is retained; ffmpeg's explicit input format selects TS.
+A backpressure-aware pump supplies ffmpeg while capture continues. `-copyts`
+preserves even gaps exceeding the TS demuxer's discontinuity threshold. The shared
+`fps=15:round=near:eof_action=pass` filter rounds to CFR ticks, duplicates the
+previous decoded frame across gaps, and retains the final frame at EOF. Its
+validation target is native span plus one 15 fps frame period. Native time is
+experimental for this source population; transport arrival and transfer multipliers
+never supply presentation timestamps.
+
+Duplicate/backward words clamp forward by 1 ms; 32-bit rollover is unwrapped.
+A missing middle timestamp advances by one 15 fps period without moving the native
+origin. Missing initial metadata selects the existing raw/fixed-rate path for the
+whole capture. Timing state resets on the existing settled retry. Native spans
+over one hour are refused before CFR expansion. Standalone MP4 uses the same TS
+clock and filter. Output is video-only H.264, closed one-second GOPs, no B frames,
 one-second TS segments, an EVENT history starting at zero, and a fixed two-second
 target duration. Only closed, atomically renamed muxer files enter the inventory.
 The private muxer manifest never reaches a browser.
@@ -24,8 +42,12 @@ media milliseconds. The setting accepts decimal integer strings from 1000 throug
 verified finish. The effective value is also reported as
 `recordings.clips.progressive.playableThresholdMs` in `/diagnostics`. Segment inventory, individual byte counts,
 input lag, storage and subprocess lifetime are bounded. The encoder's decoded
-output count and muxed duration must match the retained frame count and capture
-receipt within 200 ms before delivery becomes complete. Authoritative playback
+output count and muxed duration must match native span plus one frame period within
+two CFR ticks (133.34 ms), and that native duration must agree with the catalog
+within 200 ms, before delivery becomes complete. Duplicate output frames are
+expected. Standalone native MP4 also validates its encoded frame count against
+native duration. The metadata-free fallback retains its frame-count/receipt checks.
+Authoritative playback
 EOF is required. A normal child exit or pipe close alone never completes media.
 MP4 finalization copies the encoded H.264 timeline with faststart, without another
 HEVC encode. A remux-only failure leaves verified HLS complete and the MP4 absent.

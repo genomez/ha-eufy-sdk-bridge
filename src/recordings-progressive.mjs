@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { nativeVideoFilter, validNativeDuration } from "./recordings-timing.mjs";
 
 import {
   conversionFailure as failure,
@@ -145,6 +146,7 @@ export function createProgressiveEncoder({
   input,
   fps,
   expectedMs,
+  nativeTiming,
   playableMs = 6000,
   signal,
   changed = () => {},
@@ -170,17 +172,20 @@ export function createProgressiveEncoder({
     "-loglevel",
     "error",
     "-y",
+    ...(nativeTiming?.native ? ["-xerror", "-copyts"] : []),
     "-probesize",
     "32768",
     "-analyzeduration",
     "0",
     "-f",
-    "hevc",
+    nativeTiming?.native ? "mpegts" : "hevc",
     "-i",
     "pipe:0",
     "-an",
     "-vf",
-    `setpts=N/(${fps}*TB),scale=w='trunc(min(1920,iw)/2)*2':h=-2`,
+    nativeTiming?.native ? nativeVideoFilter : `setpts=N/(${fps}*TB),scale=w='trunc(min(1920,iw)/2)*2':h=-2`,
+    "-fps_mode",
+    "cfr",
     "-r",
     String(fps),
     "-c:v",
@@ -341,9 +346,13 @@ export function createProgressiveEncoder({
         failed ||
         signal?.aborted ||
         !segments.length ||
-        outputFrames !== frames ||
-        Math.abs(duration - durationMs) > Math.max(200, (1000 / fps) * 2) ||
-        Math.abs((frames * 1000) / fps - durationMs) > 200
+        (nativeTiming?.native
+          ? nativeTiming.frames !== frames ||
+            !validNativeDuration(nativeTiming, expectedMs, duration) ||
+            Math.abs(outputFrames - (nativeTiming.durationMs * fps) / 1000) > 2
+          : outputFrames !== frames ||
+            Math.abs(duration - durationMs) > Math.max(200, (1000 / fps) * 2) ||
+            Math.abs((frames * 1000) / fps - durationMs) > 200)
       )
         throw failure();
       complete = true;

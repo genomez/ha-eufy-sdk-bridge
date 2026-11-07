@@ -39,17 +39,72 @@ const deferred = () => {
 test("MP4 preserves native per-frame PTS instead of uniformly retiming 120 frames to 12s", async () => {
   let seen;
   const child = new EventEmitter();
+  child.stdout = new EventEmitter();
   child.kill = () => {};
-  const conversion = convertClip({ input: "synthetic.ts", output: "synthetic.mp4", frames: 120,
-    durationMs: 12000, maxBytes: 1024,
+  const conversion = convertClip({
+    input: "synthetic.ts",
+    output: "synthetic.mp4",
+    frames: 120,
+    durationMs: 12000,
+    maxBytes: 1024,
     nativeTiming: { native: true, frames: 120, spanMs: 11935, durationMs: 11935 + 1000 / 15 },
-    spawnProcess: (_program, args) => { seen = args; return child; },
+    spawnProcess: (_program, args) => {
+      seen = args;
+      return child;
+    },
   });
+  child.stdout.emit("data", "frame=180\n");
   child.emit("close", 0);
   await conversion;
   assert.equal(seen[seen.indexOf("-f") + 1], "mpegts");
   assert.equal(seen[seen.indexOf("-r") + 1], "15");
   assert.ok(!seen.join(" ").includes("setpts=N"));
+});
+
+test("native MP4 rejects an 8s prefix even when ffmpeg exits successfully", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  const conversion = convertClip({
+    input: "synthetic.ts",
+    output: "synthetic.mp4",
+    frames: 120,
+    durationMs: 12000,
+    maxBytes: 1024,
+    log() {},
+    nativeTiming: { native: true, frames: 120, spanMs: 11935, durationMs: 11935 + 1000 / 15 },
+    spawnProcess: () => child,
+  });
+  child.stdout.emit("data", "frame=120\n");
+  child.emit("close", 0);
+  await assert.rejects(conversion, { endReason: "conversion_validation_failed" });
+});
+
+test("capture spools native PTS and converts from that clock rather than receipt or arrival duration", async (t) => {
+  let converted = false;
+  const f = await fixture(t, {
+    pull: async (_, opts) => {
+      opts.beforeDispatch();
+      for (let i = 0; i < 120; i++) {
+        const timestamp = Math.round(((i - (i >= 60 ? 1 : 0)) * 7866) / 118) + (i >= 60 ? 4069 : 0);
+        opts.video(Buffer.from([0, 0, 0, 1, 0x26, 1, 0x80]), { nativeTimestamp: 100000 + timestamp });
+      }
+      return { ...clean, mediaDurationMs: 8000, transferSpeed: 2 };
+    },
+    convert: async ({ input, output, frames, durationMs, nativeTiming }) => {
+      converted = true;
+      assert.equal(frames, 120);
+      assert.equal(durationMs, 12002);
+      assert.equal(nativeTiming.spanMs, 11935);
+      const spool = fs.readFileSync(input);
+      assert.equal(spool[0], 0x47);
+      assert.equal(spool.length % 188, 0);
+      fs.writeFileSync(output, "converted");
+    },
+  });
+  f.jobs.prepare("camera", "native", { selector: { expectedMs: 12000 } });
+  await until(() => !f.jobs.busy());
+  assert.equal(state(f, "native").state, "ready");
+  assert.ok(converted);
 });
 
 for (const failure of ["start_refused", "eof"])
