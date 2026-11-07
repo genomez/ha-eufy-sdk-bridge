@@ -723,6 +723,9 @@ test("failed clip exposes only finite receipt evidence and cumulative counts", a
   const d = f.jobs.diagnostics();
   assert.equal(state(f, "a").reason, "cleanup_uncertain");
   assert.deepEqual(d.lastJob, {
+    jobOrdinal: 2,
+    state: "failed",
+    reason: "cleanup_uncertain",
     admissionGate: "none",
     pullMs: d.lastJob.pullMs,
     convertMs: 0,
@@ -735,6 +738,7 @@ test("failed clip exposes only finite receipt evidence and cumulative counts", a
     retainedVideoSpanMs: 0,
     maxVideoGapMs: 0,
     retainedVideoFrames: 0,
+    droppedAfterCutoff: 0,
     completenessFailure: "unknown",
     startedAtMs: 100000,
     finishedAtMs: 100000,
@@ -1154,6 +1158,7 @@ test("completeness diagnostics discard arbitrary text and invalid counts", async
       retainedVideoSpanMs: Infinity,
       maxVideoGapMs: -1,
       retainedVideoFrames: "secret",
+      droppedAfterCutoff: -1,
     }),
   });
   f.jobs.prepare("camera", "a", selection);
@@ -1163,5 +1168,57 @@ test("completeness diagnostics discard arbitrary text and invalid counts", async
   assert.equal(d.retainedVideoSpanMs, 0);
   assert.equal(d.maxVideoGapMs, 0);
   assert.equal(d.retainedVideoFrames, 0);
+  assert.equal(d.droppedAfterCutoff, 0);
   assert.equal(JSON.stringify(d).includes("synthetic-private"), false);
+});
+
+test("truncated capture evidence survives queued cancellation and immediate refusal", async (t) => {
+  const gate = deferred();
+  let calls = 0;
+  const f = await fixture(t, {
+    log() {},
+    pull: async (_, options) => {
+      options.beforeDispatch();
+      if (++calls > 1) await gate.promise;
+      return {
+        ...clean,
+        boundedMediaObserved: false,
+        retainedVideoFrames: 70,
+        droppedAfterCutoff: 230,
+        completenessFailure: "truncated",
+      };
+    },
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => state(f, "a").state === "failed");
+  const captured = f.jobs.diagnostics().lastJob;
+  assert.equal(captured.completenessFailure, "truncated");
+  assert.equal(captured.droppedAfterCutoff, 230);
+  assert.deepEqual(f.jobs.diagnostics().lastCaptureJob, captured);
+  f.jobs.prepare("camera", "b", selection);
+  await until(() => state(f, "b").state === "pulling");
+  f.jobs.prepare("camera", "c", selection);
+  await f.jobs.cancel("camera", "c");
+  let d = f.jobs.diagnostics();
+  assert.equal(d.lastJob.state, "cancelled");
+  assert.equal(d.lastJob.jobOrdinal, 3);
+  assert.deepEqual(d.lastCaptureJob, captured);
+  f.enabled(false);
+  f.jobs.prepare("camera", "d", selection);
+  d = f.jobs.diagnostics();
+  assert.equal(d.lastJob.state, "refused");
+  assert.equal(d.lastJob.reason, "disabled");
+  assert.equal(d.lastJob.jobOrdinal, 4);
+  assert.deepEqual(d.lastCaptureJob, captured);
+  d.lastCaptureJob.droppedAfterCutoff = 0;
+  assert.equal(f.jobs.diagnostics().lastCaptureJob.droppedAfterCutoff, 230);
+  gate.resolve();
+  await until(() => state(f, "b").state === "failed");
+});
+
+test("discarded tail counts are bounded", async (t) => {
+  const f = await fixture(t, { log() {}, pull: async () => ({ ...clean, droppedAfterCutoff: 100000 }) });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => state(f, "a").state === "failed");
+  assert.equal(f.jobs.diagnostics().lastJob.droppedAfterCutoff, 65535);
 });

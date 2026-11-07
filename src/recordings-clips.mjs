@@ -241,6 +241,7 @@ function clipEvidence(receipt = {}) {
     retainedVideoSpanMs: count(receipt.retainedVideoSpanMs),
     maxVideoGapMs: count(receipt.maxVideoGapMs),
     retainedVideoFrames: count(receipt.retainedVideoFrames),
+    droppedAfterCutoff: Math.min(65535, count(receipt.droppedAfterCutoff)),
     completenessFailure: finite(receipt.completenessFailure, [
       "none",
       "random_access",
@@ -248,6 +249,7 @@ function clipEvidence(receipt = {}) {
       "span",
       "gap",
       "density",
+      "truncated",
     ]),
     ingressVideoFrames: count(receipt.ingressVideoFrames),
     ingressAudioFrames: count(receipt.ingressAudioFrames),
@@ -354,6 +356,7 @@ export function createClipJobs({
     loaded = false,
     storageFailed = false,
     last = null,
+    lastCapture = null,
     jobOrdinal = 0;
   const counters = {
     jobs: 0,
@@ -393,7 +396,13 @@ export function createClipJobs({
     if (!["ready", "failed", "refused", "cancelled"].includes(j.state) || j.finishedAtMs !== null) return;
     j.finishedAtMs = now();
     trace(j, "recordings.clip_terminal");
-    last = { startedAtMs: j.startedAtMs, finishedAtMs: j.finishedAtMs };
+    last = {
+      jobOrdinal: j.jobOrdinal,
+      state: j.state,
+      reason: j.reason,
+      startedAtMs: j.startedAtMs,
+      finishedAtMs: j.finishedAtMs,
+    };
   }
   function state(j, next, reason = "none") {
     j.state = next;
@@ -432,6 +441,7 @@ export function createClipJobs({
       pullMs = 0,
       convertMs = 0,
       frames = 0,
+      captureAttempted = false,
       first,
       latest,
       evidence = clipEvidence();
@@ -480,6 +490,7 @@ export function createClipJobs({
           receipt = { captureOutcome: "not_admitted", ...error, startAttempted: false };
         }
         evidence = clipEvidence(receipt);
+        captureAttempted ||= receipt.startAttempted === true || frames > 0;
         if (evidence.admissionGate !== "none" && evidence.admissionGate !== "unknown")
           counters.admissionGates[evidence.admissionGate] = (counters.admissionGates[evidence.admissionGate] ?? 0) + 1;
         pullMs = Math.round(monotonic() - start);
@@ -598,6 +609,9 @@ export function createClipJobs({
     } finally {
       terminal(j);
       last = {
+        jobOrdinal: j.jobOrdinal,
+        state: j.state,
+        reason: j.reason,
         startedAtMs: j.startedAtMs,
         finishedAtMs: j.finishedAtMs,
         pullMs,
@@ -606,6 +620,7 @@ export function createClipJobs({
         audioIncluded: false,
         ...evidence,
       };
+      if (captureAttempted) lastCapture = last;
       counters.jobs++;
       for (const name of ["startAcknowledged", "ingressVideoFrames", "ingressAudioFrames", "reconnectDurationMs"])
         counters[name] = Math.min(Number.MAX_SAFE_INTEGER, counters[name] + Number(evidence[name]));
@@ -796,6 +811,7 @@ export function createClipJobs({
           clipReasons.map((r) => [r, [...jobs.values()].filter((j) => j.reason === r).length]),
         ),
         lastJob: last && structuredClone(last),
+        lastCaptureJob: lastCapture && structuredClone(lastCapture),
         counters: structuredClone(counters),
         audioIncluded: false,
       };

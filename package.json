@@ -18,7 +18,7 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
-    "@mega-yfue/eufy-sdk": "file:../artifacts/playback-3p7-package/genomez-eufy-sdk-0.2.1-s1.experimental.12-playback-3p7-ea32775.tgz",
+    "@mega-yfue/eufy-sdk": "file:../artifacts/playback-3p7r-package/genomez-eufy-sdk-0.2.1-s1.experimental.12-playback-3p7r-8911d5b.tgz",
     "ws": "^8.18.0"
   },
   "devDependencies": {

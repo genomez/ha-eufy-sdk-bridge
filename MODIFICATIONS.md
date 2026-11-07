@@ -547,3 +547,8 @@ Offline synthetic validation only; installation acceptance remains false.
 - Retain queue and terminal timestamps in lastJob. WebSocket connections can optionally identify as ha-integration with X-Eufy-Client; absent or unrecognized names remain unknown. Older clients remain compatible.
 - Rebuild and pin the paired local 3p7 SDK package; no runtime installation or device acceptance is claimed.
 - The launcher forwards clip traces through a strict fixed-schema validator and a 512-character line bound, preserving UTC timestamps independently of optional generic log timestamps.
+
+### Playback 3p7r capture diagnostics, 2026-11-06
+
+- Pass through the bounded discarded-tail count and truncated completeness reason. Preserve the last attempted capture evidence separately as lastCaptureJob when later queued cancellations or immediate refusals update lastJob with their own ordinal, state, reason and timestamps.
+- Pin the rebuilt local 3p7r SDK tarball and installed runtime independently. Local synthetic validation only; latch, reconnect and refusal policy are unchanged.
