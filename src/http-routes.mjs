@@ -106,6 +106,57 @@ export function createHttpHandler(ctx) {
     const [, kind, sn] = url.pathname.split("/");
 
     if (kind === "recordings") {
+      const assetMatch = /^\/recordings\/v1\/playback\/(p_[A-Za-z0-9_-]{22})\/([a-f0-9-]{36})\/([0-9]{1,4})\.ts$/.exec(
+        url.pathname,
+      );
+      if (assetMatch && !url.search) {
+        if (!["GET", "HEAD"].includes(req.method)) return json(res, 405, { error: "Recordings unavailable" });
+        if ((ctx.recordingsSegmentActive ?? 0) >= 4) return json(res, 429, { error: "Recordings unavailable" });
+        let asset, stream;
+        ctx.recordingsSegmentActive = (ctx.recordingsSegmentActive ?? 0) + 1;
+        let released = false;
+        const release = () => {
+          if (released) return;
+          released = true;
+          stream?.destroy();
+          asset?.release();
+          ctx.recordingsSegmentActive--;
+        };
+        res.once("finish", release);
+        res.once("close", release);
+        try {
+          asset = ctx.recordings?.playbackAsset(assetMatch[1], assetMatch[2], Number(assetMatch[3]));
+          if (!asset) {
+            release();
+            return json(res, 410, { error: "Recordings unavailable" });
+          }
+          if (req.aborted || res.destroyed) {
+            release();
+            return;
+          }
+          res.writeHead(200, {
+            "Content-Type": "video/mp2t",
+            "Content-Length": asset.bytes,
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+          });
+          if (req.method === "HEAD") {
+            release();
+            return res.end();
+          }
+          stream = fs.createReadStream(asset.path);
+          stream.once("error", () => {
+            release();
+            res.destroy();
+          });
+          stream.pipe(res);
+          return;
+        } catch {
+          release();
+          if (res.headersSent) return res.destroy();
+          return json(res, 410, { error: "Recordings unavailable" });
+        }
+      }
       // The service's host policy wrapper runs before this route. No station calls, even offline.
       const clipMatch = /^\/recordings\/v1\/clips\/(c_[A-Za-z0-9_-]{22})\/(e_[A-Za-z0-9_-]{22})\.mp4$/.exec(
         url.pathname,

@@ -160,6 +160,18 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           case "recordings.clip_prepare":
             recordings = ctx.recordings.clipPrepare(msg, requestSources.get(ws));
             break;
+          case "recordings.playback_open":
+            recordings = ctx.recordings.playbackOpen(ws, msg, requestSources.get(ws));
+            break;
+          case "recordings.playback_status":
+            recordings = ctx.recordings.playbackStatus(ws, msg);
+            break;
+          case "recordings.playback_renew":
+            recordings = ctx.recordings.playbackStatus(ws, msg, true);
+            break;
+          case "recordings.playback_release":
+            recordings = ctx.recordings.playbackRelease(ws, msg);
+            break;
           case "recordings.clip_status":
             recordings = ctx.recordings.clipStatus(msg);
             break;

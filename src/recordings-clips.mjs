@@ -5,6 +5,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { createProgressiveEncoder, progressiveUsage } from "./recordings-progressive.mjs";
+import { createPlaybackSessions } from "./recordings-playback-sessions.mjs";
 
 const HOUR = 3_600_000;
 const CAP = 2 * 1024 ** 3;
@@ -446,6 +448,8 @@ export function createClipJobs({
   pull,
   changed,
   convert = convertClip,
+  progressiveFps = null,
+  progressiveEncoder = createProgressiveEncoder,
   log = (record) => process.stdout.write(JSON.stringify(record) + "\n"),
   now = Date.now,
   monotonic = () => performance.now(),
@@ -456,6 +460,16 @@ export function createClipJobs({
 }) {
   root = path.resolve(root);
   const jobs = new Map();
+  const sessions = createPlaybackSessions({
+    now,
+    empty(j) {
+      if (!j.legacyInterest && !j.mediaComplete && ["queued", "pulling"].includes(j.state)) abort(j);
+      if (j.hlsComplete && !j.deletePending) j.hlsRetireAt = now() + 30_000;
+      if (j.deletePending && !j.readers && j !== active) remove(j);
+    },
+  });
+  const sessionTimer = setInterval(() => sessions.expire(), 1000);
+  sessionTimer.unref();
   let active,
     pending = [],
     stopped = false,
@@ -518,13 +532,20 @@ export function createClipJobs({
     changed(j.cameraId, j.eventId);
   }
   function remove(j) {
+    if (j.readers || sessions.count(j)) {
+      j.deletePending = true;
+      return;
+    }
     for (const name of [j.input, j.output]) if (name) fs.rmSync(name, { force: true });
+    if (j.directory && fs.existsSync(j.directory)) progressiveUsage(j.directory, true);
+    j.directory = null;
     j.bytes = 0;
     j.expiresAtMs = null;
   }
   function usage() {
     return fs.readdirSync(root).reduce((n, name) => {
       const stat = fs.lstatSync(path.join(root, name));
+      if (stat.isDirectory() && /^hls-[a-f0-9-]{36}$/.test(name)) return n + progressiveUsage(path.join(root, name));
       if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1) throw fault("storage");
       return n + stat.size;
     }, 0);
@@ -532,7 +553,7 @@ export function createClipJobs({
   function room(bytes = 0) {
     let used = usage();
     for (const j of [...jobs.values()]
-      .filter((j) => j.state === "ready" && !j.readers)
+      .filter((j) => j.state === "ready" && !j.readers && !sessions.count(j))
       .sort((a, b) => a.access - b.access)) {
       if (used + bytes <= cap && now() < j.expiresAtMs) continue;
       const size = j.bytes;
@@ -586,6 +607,25 @@ export function createClipJobs({
             first ??= monotonic();
             latest = monotonic();
             frames++;
+            if (j.progressiveRequested && progressiveFps === 15 && !experiment && j.expectedMs <= 3_600_000) {
+              if (!j.encoder) {
+                j.directory = path.join(root, `hls-${name}`);
+                j.encoder = progressiveEncoder({
+                  directory: j.directory,
+                  input: j.input,
+                  fps: progressiveFps,
+                  expectedMs: j.expectedMs,
+                  signal: j.controller.signal,
+                  reserve: room,
+                  changed: () => {
+                    if (j.encoder?.snapshot().delivery === "unavailable" && !j.controller.signal.aborted)
+                      abort(j, "convert_failed");
+                    changed(j.cameraId, j.eventId);
+                  },
+                });
+                j.encoder.commit(fs.statSync(j.input).size);
+              } else j.encoder.commit(data.length);
+            }
             j.pulledMs = Math.min(
               j.expectedMs,
               Math.round((latest - first) * (experiment?.playSpeed ?? pullOptions.transferSpeed)),
@@ -693,7 +733,8 @@ export function createClipJobs({
           speedFailure &&
           released &&
           !writeFailed &&
-          !mediaReceipt
+          !mediaReceipt &&
+          !j.encoder
         ) {
           await pendingPull;
           if (monotonic() >= admissionDeadline) break;
@@ -783,6 +824,8 @@ export function createClipJobs({
       )
         throw fault("station_error");
       if (!complete) throw fault("too_long");
+      if (j.encoder && receipt.captureOutcome !== "eof") throw fault("station_error");
+      j.mediaComplete = true;
       if (!Number.isSafeInteger(j.expectedMs) || j.expectedMs <= 0) throw fault("station_error");
       j.durationMs = receipt.mediaDurationMs;
       if (!Number.isSafeInteger(j.durationMs) || j.durationMs <= 0) throw fault("station_error");
@@ -793,15 +836,21 @@ export function createClipJobs({
       state(j, "converting");
       const converting = monotonic();
       try {
-        await convert({
-          input: j.input,
-          output: j.output,
-          frames,
-          durationMs: j.durationMs,
-          maxBytes,
-          signal: j.controller.signal,
-          log,
-        });
+        if (j.encoder) {
+          await j.encoder.finish({ frames, durationMs: j.durationMs });
+          j.hlsComplete = true;
+          if (!sessions.count(j)) j.hlsRetireAt = now() + 30_000;
+          await j.encoder.finalizeMp4(j.output, maxBytes);
+        } else
+          await convert({
+            input: j.input,
+            output: j.output,
+            frames,
+            durationMs: j.durationMs,
+            maxBytes,
+            signal: j.controller.signal,
+            log,
+          });
       } finally {
         convertMs = Math.round(monotonic() - converting);
         bridgeTimeline.convertEndMs = Math.max(0, Math.round(monotonic() - start));
@@ -836,6 +885,7 @@ export function createClipJobs({
       };
       if (captureAttempted) lastCapture = last;
     } catch (e) {
+      const externallyCancelled = j.controller.signal.aborted;
       const reason =
         j.controller.signal.aborted && e.reason !== "cleanup_uncertain"
           ? (j.cancelReason ?? "none")
@@ -846,6 +896,8 @@ export function createClipJobs({
         fs.closeSync(fd);
         fd = undefined;
       }
+      if (j.encoder && !j.hlsComplete) await j.encoder.abort(reason);
+      if (!j.mediaComplete && pendingPull && !j.controller.signal.aborted) j.controller.abort();
       try {
         remove(j);
       } catch {
@@ -853,7 +905,7 @@ export function createClipJobs({
       }
       state(
         j,
-        j.controller.signal.aborted && reason !== "cleanup_uncertain"
+        externallyCancelled && reason !== "cleanup_uncertain"
           ? "cancelled"
           : ["live_view", "disabled", "owner_unavailable", "too_long"].includes(reason)
             ? "refused"
@@ -864,6 +916,14 @@ export function createClipJobs({
       if (pendingPull) {
         try {
           const settled = await pendingPull;
+          j.cleanup =
+            !settled.startAttempted ||
+            settled.reconnectOutcome === "connected" ||
+            (settled.releaseOutcome === "release_confirmed" &&
+              settled.latchCleared &&
+              settled.cessationOutcome === "ceased")
+              ? "settled"
+              : "uncertain";
           if (mediaReceipt) {
             evidence = clipEvidence({ ...settled, captureOutcome: mediaReceipt.captureOutcome });
             evidence.cleanupOutcome = finite(settled.reconnectOutcome, [
@@ -874,6 +934,7 @@ export function createClipJobs({
             ]);
           }
         } catch {
+          j.cleanup = captureAttempted ? "uncertain" : "settled";
           if (mediaReceipt) evidence.cleanupOutcome = "failed";
         }
       }
@@ -884,6 +945,7 @@ export function createClipJobs({
           state(j, "failed", "storage");
         }
       }
+      j.encoder?.dispose();
       terminal(j);
       last = {
         jobOrdinal: j.jobOrdinal,
@@ -914,6 +976,7 @@ export function createClipJobs({
           (counters.rejectedByReason[reason] ?? 0) + count,
         );
       active = null;
+      if (j.deletePending && !j.readers && !sessions.count(j)) remove(j);
       kick();
     }
   }
@@ -938,6 +1001,20 @@ export function createClipJobs({
   const timer = setInterval(() => {
     if (loaded && !storageFailed)
       try {
+        for (const j of jobs.values())
+          if (j !== active && j.deletePending && !j.readers && !sessions.count(j)) remove(j);
+        for (const j of jobs.values())
+          if (
+            j !== active &&
+            j.directory &&
+            j.hlsRetireAt !== null &&
+            j.hlsRetireAt <= now() &&
+            !j.readers &&
+            !sessions.count(j)
+          ) {
+            progressiveUsage(j.directory, true);
+            j.directory = null;
+          }
         room();
       } catch {
         storageFailed = true;
@@ -952,6 +1029,10 @@ export function createClipJobs({
         if (!st.isDirectory() || st.isSymbolicLink()) throw fault("storage");
         fs.chmodSync(root, 0o700);
         for (const name of fs.readdirSync(root)) {
+          if (/^hls-[a-f0-9-]{36}$/.test(name)) {
+            progressiveUsage(path.join(root, name), true);
+            continue;
+          }
           if (!/^[a-f0-9-]{36}\.(hevc|mp4)$/.test(name)) throw fault("storage");
           const file = path.join(root, name),
             s = fs.lstatSync(file);
@@ -979,42 +1060,56 @@ export function createClipJobs({
         (previous === active ||
           previous.readers ||
           !["idle", "failed", "refused", "cancelled"].includes(previous.state))
-      )
+      ) {
+        previous.legacyInterest ||= !source.progressive;
+        previous.progressiveRequested ||= source.progressive === true;
         return { clip: view(previous) };
+      }
       if (jobs.size >= 2048) {
         const old = [...jobs].find(([, j]) => !["queued", "pulling", "converting", "ready"].includes(j.state));
         if (old) jobs.delete(old[0]);
         else return { clip: { ...view(), state: "refused", reason: "busy" } };
       }
-      const j = Object.assign(previous ?? {}, {
-        jobOrdinal: (jobOrdinal = (jobOrdinal % Number.MAX_SAFE_INTEGER) + 1),
-        startedAtMs: now(),
-        finishedAtMs: null,
-        source: {
-          connection: count(source.connection),
-          locality: finite(source.locality, ["local", "remote"]),
-          client: finite(source.client, ["ha-integration"]),
+      const j = Object.assign(
+        {},
+        {
+          generation: randomUUID(),
+          progressiveRequested: source.progressive === true,
+          legacyInterest: !source.progressive,
+          encoder: null,
+          directory: null,
+          hlsComplete: false,
+          hlsRetireAt: null,
+          cleanup: "pending",
+          jobOrdinal: (jobOrdinal = (jobOrdinal % Number.MAX_SAFE_INTEGER) + 1),
+          startedAtMs: now(),
+          finishedAtMs: null,
+          source: {
+            connection: count(source.connection),
+            locality: finite(source.locality, ["local", "remote"]),
+            client: finite(source.client, ["ha-integration"]),
+          },
+          input: null,
+          output: null,
+          done: null,
+          bytes: 0,
+          durationMs: null,
+          pulledMs: 0,
+          expiresAtMs: null,
+          cancelReason: null,
+          deletePending: false,
+          cameraId,
+          eventId,
+          selection,
+          expectedMs: selection?.selector?.expectedMs ?? 0,
+          controller: new AbortController(),
+          state: "queued",
+          reason: "none",
+          readers: 0,
+          mediaComplete: false,
+          transferSpeed: null,
         },
-        input: null,
-        output: null,
-        done: null,
-        bytes: 0,
-        durationMs: null,
-        pulledMs: 0,
-        expiresAtMs: null,
-        cancelReason: null,
-        deletePending: false,
-        cameraId,
-        eventId,
-        selection,
-        expectedMs: selection?.selector?.expectedMs ?? 0,
-        controller: new AbortController(),
-        state: "queued",
-        reason: "none",
-        readers: 0,
-        mediaComplete: false,
-        transferSpeed: null,
-      });
+      );
       jobs.set(id, j);
       const reason =
         !enabled() || stopped
@@ -1045,6 +1140,53 @@ export function createClipJobs({
           storageFailed = true;
         }
       return { clip: view(jobs.get(key(c, e))) };
+    },
+    playbackOpen(owner, requestKey, c, e) {
+      const j = jobs.get(key(c, e));
+      if (!j) throw fault("not_found");
+      const s = sessions.open(owner, requestKey, j);
+      return playbackView(s);
+    },
+    playbackExisting(owner, requestKey, c, e) {
+      const s = sessions.find(owner, requestKey);
+      if (!s) return null;
+      if (s.job.cameraId !== c || s.job.eventId !== e) throw fault("not_found");
+      return playbackView(s);
+    },
+    playbackCapacity() {
+      return sessions.available();
+    },
+    playbackStatus(owner, id, generation, renew = false) {
+      const s = renew ? sessions.renew(id, generation, owner) : sessions.get(id, generation, owner);
+      return playbackView(s);
+    },
+    playbackRelease(owner, id, generation, cameraId, eventId) {
+      sessions.release(id, generation, owner, cameraId, eventId);
+      return { version: 1, released: true };
+    },
+    playbackOwnerLost(owner) {
+      sessions.ownerLost(owner);
+    },
+    playbackAsset(id, generation, sequence) {
+      if (!enabled() || stopped) return null;
+      const s = sessions.get(id, generation),
+        j = s.job;
+      const snapshot = playbackView(s).playback;
+      if (!["playable", "complete"].includes(snapshot.delivery)) return null;
+      const asset = snapshot.segments[sequence];
+      if (!asset || asset.sequence !== sequence) return null;
+      j.readers++;
+      let released = false;
+      return {
+        path: path.join(j.directory, `segment${String(sequence).padStart(6, "0")}.ts`),
+        bytes: asset.bytes,
+        release() {
+          if (released) return;
+          released = true;
+          j.readers--;
+          if (j.deletePending && !j.readers && !sessions.count(j) && j !== active) remove(j);
+        },
+      };
     },
     async cancel(c, e) {
       const j = jobs.get(key(c, e));
@@ -1108,10 +1250,42 @@ export function createClipJobs({
     async stop() {
       stopped = true;
       clearInterval(timer);
+      clearInterval(sessionTimer);
+      sessions.clear();
       for (const j of jobs.values()) abort(j);
       await active?.done;
     },
   };
+
+  function playbackView(s) {
+    const j = s.job;
+    const snapshot = j.encoder?.snapshot() ?? { delivery: "warming", reason: "none", segments: [] };
+    const unavailable = !enabled() || stopped || ["failed", "refused", "cancelled", "idle"].includes(j.state);
+    return {
+      version: 1,
+      playback: {
+        sessionId: s.sessionId,
+        generation: j.generation,
+        hardExpiresAtMs: s.hardExpiresAtMs,
+        cameraId: j.cameraId,
+        eventId: j.eventId,
+        capture: j.mediaComplete
+          ? "verified_eof"
+          : j.state === "queued"
+            ? "queued"
+            : unavailable
+              ? "failed"
+              : "pulling",
+        delivery: unavailable && !j.hlsComplete ? "unavailable" : snapshot.delivery,
+        cache:
+          j.state === "ready" ? "ready" : j.state === "converting" ? "finalizing" : unavailable ? "failed" : "absent",
+        cleanup: j === active ? "pending" : j.cleanup,
+        reason: unavailable ? j.reason : snapshot.reason,
+        segments: snapshot.segments,
+        clip: view(j),
+      },
+    };
+  }
 }
 
 /** Single byte range, including open-ended and suffix forms; malformed ranges are unsatisfiable. */

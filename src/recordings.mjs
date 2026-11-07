@@ -112,6 +112,7 @@ export function createRecordings(
     );
   const clips = createClipJobs({
     ...clipOptions,
+    progressiveFps: ctx.cfg.recordings?.progressiveFps ?? clipOptions.progressiveFps,
     root: path.join(ctx.cfg.recordings?.root ?? "/data/recordings", "clips"),
     enabled: playbackEnabled,
     experiments: playbackExperiments(ctx.cfg.recordings?.root),
@@ -135,6 +136,7 @@ export function createRecordings(
     version: 1,
     browseOnly: !playbackEnabled(),
     playback: playbackEnabled(),
+    ...(playbackEnabled() && ctx.cfg.recordings?.progressiveFps === 15 && { progressivePlayback: true }),
     enabled:
       enabled() &&
       adapter.supported() &&
@@ -1190,6 +1192,57 @@ export function createRecordings(
       if (!validId(args.eventId, "e")) throw failure("invalid");
       return clips.status(args.cameraId, args.eventId);
     },
+    playbackOpen(owner, args, source) {
+      fields(args, ["cameraId", "eventId", "requestKey"]);
+      if (
+        !base().progressivePlayback ||
+        typeof args.requestKey !== "string" ||
+        !/^[A-Za-z0-9_-]{16,64}$/.test(args.requestKey)
+      )
+        throw failure("invalid");
+      camera(args.cameraId);
+      if (!validId(args.eventId, "e")) throw failure("invalid");
+      const previous = clips.playbackExisting(owner, args.requestKey, args.cameraId, args.eventId);
+      if (previous) return previous;
+      if (!clips.playbackCapacity()) throw failure("store_unavailable");
+      const prepared = api.clipPrepare(
+        { cameraId: args.cameraId, eventId: args.eventId },
+        { ...source, progressive: true },
+      );
+      if (prepared.clip.state === "refused") throw failure("not_found");
+      return clips.playbackOpen(owner, args.requestKey, args.cameraId, args.eventId);
+    },
+    playbackStatus(owner, args, renew = false) {
+      fields(args, ["cameraId", "eventId", "sessionId", "generation"]);
+      camera(args.cameraId);
+      if (
+        !validId(args.eventId, "e") ||
+        !/^p_[A-Za-z0-9_-]{22}$/.test(args.sessionId) ||
+        !/^[a-f0-9-]{36}$/.test(args.generation)
+      )
+        throw failure("invalid");
+      const reply = clips.playbackStatus(owner, args.sessionId, args.generation);
+      if (reply.playback.cameraId !== args.cameraId || reply.playback.eventId !== args.eventId)
+        throw failure("invalid");
+      return renew ? clips.playbackStatus(owner, args.sessionId, args.generation, true) : reply;
+    },
+    playbackRelease(owner, args) {
+      fields(args, ["cameraId", "eventId", "sessionId", "generation"]);
+      camera(args.cameraId);
+      if (
+        !validId(args.eventId, "e") ||
+        !/^p_[A-Za-z0-9_-]{22}$/.test(args.sessionId) ||
+        !/^[a-f0-9-]{36}$/.test(args.generation)
+      )
+        throw failure("invalid");
+      return clips.playbackRelease(owner, args.sessionId, args.generation, args.cameraId, args.eventId);
+    },
+    playbackAsset(sessionId, generation, sequence) {
+      guard();
+      const status = clips.playbackStatus(undefined, sessionId, generation).playback;
+      camera(status.cameraId);
+      return clips.playbackAsset(sessionId, generation, sequence);
+    },
     async clipCancel(args) {
       fields(args, ["cameraId", "eventId"]);
       camera(args.cameraId);
@@ -1233,6 +1286,7 @@ export function createRecordings(
       flush();
     },
     ownerLost(owner) {
+      clips.playbackOwnerLost(owner);
       catalogCycle?.owners.delete(owner);
       for (const [id, i] of interests) if (i.owner === owner) interests.delete(id);
       queued = queued.filter((j) => j.owner !== owner);

@@ -57,6 +57,101 @@ async function request(h, url, method = "GET") {
   return res;
 }
 
+test("progressive RPCs require capability, bind owners and idempotency, and keep status cache-only", async (t) => {
+  let pulls = 0;
+  const h = await harness(t, {
+    clipOptions: {
+      progressiveFps: 15,
+      progressiveEncoder: () => ({
+        commit() {},
+        snapshot: () => ({ delivery: "warming", reason: "none", segments: [] }),
+        async abort() {},
+        dispose() {},
+      }),
+    },
+  });
+  await seed(h);
+  h.eufy.pullRecordingClip = async (_scope, _selector, options) => {
+    pulls++;
+    options.beforeDispatch();
+    options.video(Buffer.from("synthetic"));
+    await new Promise((resolve) => options.signal.addEventListener("abort", resolve, { once: true }));
+    return { captureOutcome: "preempted" };
+  };
+  const a = await socket(t, h),
+    b = await socket(t, h);
+  const eventId = row(h.scope).eventId;
+  const msg = { cmd: "recordings.playback_open", cameraId: h.cameraId, eventId, requestKey: "synthetic-request-key" };
+  assert.equal((await a.rpc({ ...msg, id: 1 })).ok, false);
+  assert.equal(pulls, 0);
+  h.ctx.cfg.recordings.progressiveFps = 15;
+  const opened = await a.rpc({ ...msg, id: 2 });
+  assert.equal(opened.ok, true);
+  const p = opened.recordings.playback;
+  const again = await a.rpc({ ...msg, id: 3 });
+  assert.equal(again.recordings.playback.sessionId, p.sessionId);
+  const args = { cameraId: h.cameraId, eventId, sessionId: p.sessionId, generation: p.generation };
+  assert.equal(
+    (await a.rpc({ ...args, eventId: "e_" + "Z".repeat(22), cmd: "recordings.playback_release", id: 10 })).ok,
+    false,
+  );
+  assert.equal((await b.rpc({ ...args, cmd: "recordings.playback_renew", id: 4 })).ok, false);
+  assert.equal((await a.rpc({ ...args, generation: "bad", cmd: "recordings.playback_status", id: 5 })).ok, false);
+  assert.equal((await a.rpc({ ...args, cmd: "recordings.playback_status", id: 6 })).ok, true);
+  assert.equal((await a.rpc({ ...msg, eventId: "e_" + "Z".repeat(22), id: 7 })).ok, false);
+  assert.equal(pulls, 1);
+  assert.equal((await a.rpc({ ...args, cmd: "recordings.playback_release", id: 8 })).recordings.released, true);
+  assert.equal((await a.rpc({ ...args, cmd: "recordings.playback_release", id: 9 })).recordings.released, true);
+});
+
+test("progressive HTTP assets validate routes, HEAD, framing and pins without station admission", async (t) => {
+  const h = await harness(t);
+  const session = "p_" + "A".repeat(22),
+    generation = "12345678-1234-1234-1234-123456789abc";
+  const assetPath = `/recordings/v1/playback/${session}/${generation}/0.ts`;
+  const file = path.join(h.root, "synthetic.ts");
+  await fs.writeFile(file, Buffer.alloc(188, 0x47));
+  let reads = 0,
+    releases = 0;
+  h.ctx.recordings.playbackAsset = (s, g, seq) => {
+    reads++;
+    assert.equal(s, session);
+    assert.equal(g, generation);
+    assert.equal(seq, 0);
+    return {
+      path: file,
+      bytes: 188,
+      release() {
+        releases++;
+      },
+    };
+  };
+  const handler = createHttpHandler(h.ctx);
+  const server = http.createServer(handler);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  for (const suffix of ["?url=bad", "/../index.m3u8"])
+    assert.equal((await fetch(origin + assetPath + suffix)).status, 404);
+  assert.equal(reads, 0);
+  const head = await fetch(origin + assetPath, { method: "HEAD" });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get("content-length"), "188");
+  assert.equal((await head.arrayBuffer()).byteLength, 0);
+  const data = await fetch(origin + assetPath);
+  assert.equal(data.headers.get("content-type"), "video/mp2t");
+  assert.equal((await data.arrayBuffer()).byteLength, 188);
+  await until(() => releases === 2);
+  assert.equal(h.ctx.recordingsSegmentActive, 0);
+  h.ctx.recordingsSegmentActive = 4;
+  assert.equal((await fetch(origin + assetPath)).status, 429);
+  assert.equal(reads, 2);
+  h.ctx.recordings.playbackAsset = () => null;
+  h.ctx.recordingsSegmentActive = 0;
+  assert.equal((await fetch(origin + assetPath)).status, 410);
+  assert.equal(h.calls.catalog.length + h.calls.cover.length, 0);
+});
+
 test("clip RPCs retain recordings authorization and expose the exact public clip response", async (t) => {
   const h = await harness(t, {
     clipOptions: { convert: async ({ output }) => fs.writeFile(output, Buffer.alloc(32)) },
