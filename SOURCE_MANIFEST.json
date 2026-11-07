@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.12",
   "status": "local-build-unpublished",
-  "exactInputCommit": "3c2f1d5a4101d30c80ff79d05fc74ab7dca28aaf",
+  "exactInputCommit": "8dc2282bcb82f9e916bc2fbe5263a0769fba93a2",
   "files": {
     ".env.example": {
       "bytes": 3430,
@@ -22,7 +22,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 766,
-      "sha256": "2aea508271066a666dd1291a7c443cb7cc767accf3d09f9e518e3b520d1dddb4"
+      "sha256": "b3e05d1b1e6aed9730071c9bc71d00f14b0385bd2cdcc85c445de884950fcc18"
     },
     "CONTRIBUTING.md": {
       "bytes": 983,
@@ -37,8 +37,8 @@
       "sha256": "95b791c3b452823fe2b67de33893e4d0edc96ef6e2ce548ae78129c0f1a6ced5"
     },
     "MODIFICATIONS.md": {
-      "bytes": 44498,
-      "sha256": "c504144536968c852a751422eeec3082031441f337a5be00995a16d4e282166c"
+      "bytes": 44662,
+      "sha256": "faba8919fb589371046f6f259904434330237de7468e4df65ddf8587895a4551"
     },
     "PUBLICATION.json": {
       "bytes": 675,
@@ -102,11 +102,11 @@
     },
     "package-lock.json": {
       "bytes": 27571,
-      "sha256": "ad74924e92f69f87a6ae25bb36e3ea2175bbec0b573526c47156428c67f2952e"
+      "sha256": "4212c652234634fbc3168f62d861ff945a19fa0ee11d0bd0a11641086ef8647a"
     },
     "package.json": {
       "bytes": 1468,
-      "sha256": "24e585d5f510fafb0b5fef7d1ad3df02551ab224e520d90f1c9bcafeab05fda8"
+      "sha256": "36515352d9a594660e2b6598ad8af1941f660a8862d8e089a93ce4001333fc3b"
     },
     "scripts/devices.mjs": {
       "bytes": 1721,
@@ -194,7 +194,7 @@
     },
     "src/event-playback-probe-pins.mjs": {
       "bytes": 2283,
-      "sha256": "da75586d0c9c8b43197b2f27c7334eb7ed647a5658b6569efe123fb4847e9ca7"
+      "sha256": "0a52e63f327988dbfa6581d0ed7ae8a8be5e48d2566fe39c038849c952557401"
     },
     "src/event-playback-probe.mjs": {
       "bytes": 44158,
