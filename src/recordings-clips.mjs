@@ -652,6 +652,8 @@ export function createClipJobs({
             () => {},
           );
           receipt = await Promise.race([pendingPull, media.promise]);
+          // An expired retry hands back the first attempt's receipt, already counted and recorded.
+          if (receipt === prior) break;
         } catch (error) {
           if (!error?.admissionGateName) throw error;
           receipt = { captureOutcome: "not_admitted", ...error, startAttempted: false };

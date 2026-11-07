@@ -136,6 +136,7 @@ test("speed retry never dispatches after the deadline passes between admission a
       elapsed = 149999;
       return {
         ...clean,
+        admissionGateName: "observation_window",
         boundedMediaObserved: false,
         captureOutcome: "eof",
         completenessFailure: "span",
@@ -147,8 +148,9 @@ test("speed retry never dispatches after the deadline passes between admission a
   f.jobs.prepare("camera", "a", { selector: { begin: 80, expectedMs: 10000 } });
   await until(() => !f.jobs.busy());
   assert.deepEqual(speeds, [2]);
-  assert.equal(state(f, "a").state, "failed");
+  assert.equal(state(f, "a").state, "refused");
   assert.equal(f.jobs.diagnostics().lastJob.captureOutcome, "eof");
+  assert.equal(f.jobs.diagnostics().counters.admissionGates.observation_window, 1);
 });
 
 for (const cleanup of ["connected", "failed", "reject"])
