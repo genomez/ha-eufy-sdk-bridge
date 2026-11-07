@@ -568,3 +568,5 @@ Offline synthetic validation only; installation acceptance remains false.
 - Playback 3s r2, 2026-11-07: pin the local d93a53e SDK tarball and runtime; offline packaging only.
 
 - Playback 3s r3, 2026-11-07: pin the local 453e758 SDK tarball and runtime; offline packaging only.
+
+- playback 3t, 2026-11-07: project bounded ICE establishment evidence and grant timeouts; pin the local 27dda82 SDK tarball and all probe runtime hashes. Offline packaging only.

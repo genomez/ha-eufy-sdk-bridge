@@ -431,6 +431,7 @@ function renewalEvidence(raw) {
     "command_channel_closed",
     "peer_failed",
     "peer_closed",
+    "grant_timeout",
   ].includes(raw.candidateCloseOrigin)
     ? raw.candidateCloseOrigin
     : null;
