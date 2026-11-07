@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 /** Closed schema; only command alternatives already evidenced in source are admitted. */
 export function validateExperiments(value) {
@@ -94,29 +94,42 @@ export function createPlaybackExperiments(root) {
     }
   }
   function persist(a, used) {
+    let temp;
     try {
-      let before;
       try {
-        before = fs.lstatSync(ledger);
-        if (!regular(before)) throw new Error("invalid");
+        if (!regular(fs.lstatSync(ledger))) throw new Error("invalid");
       } catch (e) {
         if (e.code !== "ENOENT") throw e;
       }
-      const flags = fs.constants.O_WRONLY | noFollow | (before ? 0 : fs.constants.O_CREAT | fs.constants.O_EXCL);
-      const fd = fs.openSync(ledger, flags, 0o600);
+      // Write a private temporary file and rename it, so a failed write never truncates the prior ledger.
+      temp = `${ledger}.${randomBytes(6).toString("hex")}.tmp`;
+      const fd = fs.openSync(
+        temp,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
+        0o600,
+      );
       try {
-        const s = fs.fstatSync(fd),
-          l = fs.lstatSync(ledger);
-        if (!regular(s) || !regular(l) || !sameFile(s, l) || (before && !sameFile(before, s)))
-          throw new Error("invalid");
-        fs.ftruncateSync(fd, 0);
         fs.writeFileSync(fd, JSON.stringify({ key: a.key, used }));
         fs.fsyncSync(fd);
       } finally {
         fs.closeSync(fd);
       }
+      fs.renameSync(temp, ledger);
+      temp = undefined;
+      try {
+        const dir = fs.openSync(path.dirname(ledger), "r");
+        try {
+          fs.fsyncSync(dir);
+        } finally {
+          fs.closeSync(dir);
+        }
+      } catch {}
       return { ...a.overrides };
     } catch {
+      if (temp)
+        try {
+          fs.rmSync(temp, { force: true });
+        } catch {}
       // Session creation and dispatch stay disarmed until the owner changes the arming file.
       failedKey = a.key;
       return undefined;

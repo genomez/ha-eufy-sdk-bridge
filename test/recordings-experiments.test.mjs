@@ -197,7 +197,8 @@ for (const code of ["EROFS", "EACCES"])
       const before = fs.readFileSync(ledger, "utf8"),
         open = fs.openSync;
       const mock = t.mock.method(fs, "openSync", (file, flags, ...args) => {
-        if (file === ledger && flags & fs.constants.O_WRONLY) throw Object.assign(new Error(code), { code });
+        if ((file === ledger || String(file).startsWith(ledger + ".")) && flags & fs.constants.O_WRONLY)
+          throw Object.assign(new Error(code), { code });
         return open(file, flags, ...args);
       });
       assert.equal(entry === "session" ? ice() : e.take(), undefined);
@@ -228,3 +229,30 @@ for (const code of ["EROFS", "EACCES"])
       assert.equal(ice(), undefined);
       assert.equal(e.take(), undefined);
     });
+
+test("an interrupted ledger write keeps the prior budget and an owner edit recovers", async (t) => {
+  const root = await temporary(t),
+    ledger = path.join(root, "experiments-state.json");
+  fs.writeFileSync(path.join(root, "experiments.json"), '{"icePolicy":"all","playSpeed":4,"maxClips":3}');
+  const e = playbackExperiments(root),
+    ice = clientSessionIcePolicy(root);
+  assert.equal(e.take().playSpeed, 4);
+  const before = fs.readFileSync(ledger, "utf8");
+  const write = fs.writeFileSync;
+  const mock = t.mock.method(fs, "writeFileSync", (target, ...args) => {
+    if (typeof target === "number") throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+    return write(target, ...args);
+  });
+  assert.equal(e.take(), undefined);
+  assert.equal(ice(), undefined);
+  mock.mock.restore();
+  assert.equal(fs.readFileSync(ledger, "utf8"), before, "the prior ledger is never truncated");
+  assert.deepEqual(
+    fs.readdirSync(root).filter((name) => name.endsWith(".tmp")),
+    [],
+    "no temporary files remain",
+  );
+  fs.writeFileSync(path.join(root, "experiments.json"), '{"icePolicy":"all","playSpeed":8}');
+  assert.equal(ice(), "all");
+  assert.equal(e.take().playSpeed, 8);
+});

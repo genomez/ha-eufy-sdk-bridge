@@ -903,7 +903,8 @@ for (const code of ["EROFS", "EACCES"])
       assert.equal(playbackExperiments(root).take().playSpeed, 4);
       const open = fs.openSync;
       t.mock.method(fs, "openSync", (file, flags, ...args) => {
-        if (file === ledger && flags & fs.constants.O_WRONLY) throw Object.assign(new Error(code), { code });
+        if ((file === ledger || String(file).startsWith(ledger + ".")) && flags & fs.constants.O_WRONLY)
+          throw Object.assign(new Error(code), { code });
         return open(file, flags, ...args);
       });
       if (sessionFirst) assert.equal(ice(), undefined);
