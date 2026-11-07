@@ -560,3 +560,5 @@ Offline synthetic validation only; installation acceptance remains false.
 - Playback 3q, 2026-11-06: pin the local 8836af7 SDK tarball and runtime for EOF media publication before session retirement with the sixty-second diagnostic observation window; offline packaging only.
 
 - Playback 3q2, 2026-11-06: pin the local 3788cf8 SDK tarball and runtime probing fresh RTC sessions before the keepalive interval; offline packaging only.
+
+- Playback 3r, 2026-11-06: pin the local 4459fe5 SDK tarball and runtime; offline packaging only.
