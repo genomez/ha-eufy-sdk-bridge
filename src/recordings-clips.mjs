@@ -600,6 +600,7 @@ export function createClipJobs({
       let receipt;
       const admissionDeadline = monotonic() + 150_000;
       for (;;) {
+        if (receipt && monotonic() >= admissionDeadline) break;
         if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
         if (live()) throw fault("live_view");
         if (!enabled()) throw fault("disabled");
@@ -690,7 +691,7 @@ export function createClipJobs({
           !mediaReceipt
         ) {
           await pendingPull;
-          pullOptions.transferSpeed = 1;
+          if (monotonic() >= admissionDeadline) break;
           const endedAt = j.selection?.selector?.begin * 1000 + j.expectedMs;
           const age = now() - endedAt;
           if (
@@ -711,6 +712,8 @@ export function createClipJobs({
               j.waitingForAdmission = false;
             }
           }
+          if (monotonic() >= admissionDeadline) break;
+          pullOptions.transferSpeed = 1;
           frames = 0;
           first = latest = undefined;
           j.pulledMs = 0;

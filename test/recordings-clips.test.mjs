@@ -67,6 +67,52 @@ for (const failure of ["start_refused", "eof"])
     assert.equal(logs.find((r) => r.event === "recordings.clip_terminal").transferSpeed, 1);
   });
 
+for (const stage of ["first attempt", "refusal wait"])
+  for (const expiredAt of [150000, 150001])
+    test(`speed retry preserves first failure when ${stage} ends at ${expiredAt} ms`, async (t) => {
+      let elapsed = 0;
+      const speeds = [],
+        waits = [];
+      const f = await fixture(t, {
+        monotonic: () => elapsed,
+        now: () => 100000 + elapsed,
+        wait: async (ms) => {
+          waits.push(ms);
+          elapsed = expiredAt;
+        },
+        pull: async (_, opts) => {
+          speeds.push(opts.transferSpeed);
+          opts.beforeDispatch();
+          if (speeds.length > 1) {
+            opts.video(Buffer.from("a"));
+            opts.video(Buffer.from("b"));
+            return clean;
+          }
+          if (stage === "first attempt") elapsed = expiredAt;
+          return {
+            ...clean,
+            boundedMediaObserved: false,
+            randomAccess: false,
+            captureOutcome: stage === "first attempt" ? "eof" : "start_refused",
+            completenessFailure: "span",
+            startAcknowledged: false,
+            stationRefusalConfirmed: stage === "refusal wait",
+            stationStatusCounts: [{ state: 2, code: 18, count: 1 }],
+            transferSpeed: opts.transferSpeed,
+          };
+        },
+        convert: async () => assert.fail("expired retry must not convert"),
+      });
+      f.jobs.prepare("camera", "a", { selector: { begin: 80, expectedMs: 10000 } });
+      await until(() => !f.jobs.busy());
+      assert.deepEqual(speeds, [2]);
+      assert.deepEqual(waits, stage === "refusal wait" ? [50000] : []);
+      assert.equal(state(f, "a").state, "failed");
+      assert.equal(state(f, "a").reason, stage === "first attempt" ? "station_error" : "not_found");
+      assert.equal(f.jobs.diagnostics().lastJob.transferSpeed, 2);
+      assert.equal(f.jobs.diagnostics().lastJob.captureOutcome, stage === "first attempt" ? "eof" : "start_refused");
+    });
+
 for (const cleanup of ["connected", "failed", "reject"])
   test(`EOF publishes before ${cleanup} retirement and live preserves ready media`, async (t) => {
     const cleanupGate = deferred();
