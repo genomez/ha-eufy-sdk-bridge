@@ -146,12 +146,12 @@ test("WS pacing follows recordings command filtering, validates strictly and pas
   assert.equal((await blocked.rpc({ cmd: "recordings.set_pacing", reset: true })).ok, false);
   assert.equal(passed.length, 1);
   assert.equal((await s.rpc({ id: 3, cmd: "recordings.set_pacing", reset: true })).ok, true);
-  assert.equal(passed[1].coverGapMs, 2_000);
+  assert.equal(passed[1].coverGapMs, 500);
   h.eufy.setRecordingPacing = () => {
     throw new Error("PRIVATE_CANARY");
   };
   assert.equal((await s.rpc({ id: 4, cmd: "recordings.set_pacing", coverGap: 0 })).ok, false);
-  assert.equal(h.manager.diagnostics().background.pacing.coverGap, 2_000);
+  assert.equal(h.manager.diagnostics().background.pacing.coverGap, 500);
 });
 test("hello advertises additive browse-only capability without changing schema", async (t) => {
   const h = await harness(t),
@@ -166,7 +166,7 @@ test("hello advertises additive browse-only capability without changing schema",
     timezone: "America/Chicago",
     stationWindow: 20,
     pageSize: 100,
-    coverBudget: 4,
+    coverBudget: 20,
   });
 });
 

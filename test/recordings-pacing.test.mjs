@@ -44,7 +44,7 @@ test("runtime policy retains attempt history across updates and defaults across 
   assert.equal(policy.coverWait(), 0);
   policy.setPacing({ ...DEFAULT_PACING, coverRate: 6 });
   assert.equal(policy.coverWait(), 58_000);
-  assert.equal(policy.snapshot().covers.length, 6);
+  assert.equal(policy.snapshot().covers.length, 20);
 });
 
 test("measurement buckets bound samples, compute percentiles, isolate in-flight completions and sanitize reasons", () => {
@@ -63,7 +63,7 @@ test("measurement buckets bound samples, compute percentiles, isolate in-flight 
   assert.deepEqual(values[0].failures, { reply_capacity: 1 });
   assert.deepEqual(values[1].failures, { busy: 1 });
   values[0].pacing.coverGap = 123;
-  assert.equal(stats.snapshot()[0].pacing.coverGap, 2_000);
+  assert.equal(stats.snapshot()[0].pacing.coverGap, 500);
   assert.ok(!JSON.stringify(values).includes("PRIVATE_CANARY"));
   for (let ms = 0; ms < 600; ms++) stats.begin()(ms, { status: "ok" });
   assert.equal(stats.snapshot()[1].count, 601);
@@ -112,8 +112,8 @@ test("background ramp updates existing timers immediately and records API latenc
 
 test("startup sends default cover pacing to the SDK before any runtime update", async (t) => {
   const h = await harness(t);
-  assert.deepEqual(DEFAULT_PACING, { prefetchGap: 3000, coverGap: 2000, coverRate: 20, coverQuiet: 2000 });
-  assert.deepEqual(h.pacingCalls, [{ coverGapMs: 2000, coverRatePerMinute: 20, coverQuietMs: 2000 }]);
+  assert.deepEqual(DEFAULT_PACING, { prefetchGap: 3000, coverGap: 500, coverRate: 20, coverQuiet: 500 });
+  assert.deepEqual(h.pacingCalls, [{ coverGapMs: 500, coverRatePerMinute: 20, coverQuietMs: 500 }]);
 });
 
 test("zero pacing backs off while not ready and after zero retry hints instead of spinning", async (t) => {

@@ -145,7 +145,7 @@ export function createRecordings(
     timezone: "America/Chicago",
     stationWindow: 20,
     pageSize: 100,
-    coverBudget: 4,
+    coverBudget: LIMITS.folderBudget,
   });
   let lastCapability = JSON.stringify(base());
   function publishCapability() {
@@ -1132,16 +1132,17 @@ export function createRecordings(
           sha256: cached.sha256,
           coverRevision: cached.coverRevision,
         };
+      if (
+        !negativeWait(row) &&
+        (queued.some((j) => j.eventId === row.eventId) ||
+          flight?.job?.eventId === row.eventId ||
+          flight?.eventId === row.eventId)
+      )
+        return { ...result, state: "pending" };
       if (args.mode === "cache_only")
         return { ...result, state: row.cover || row.coverEvicted ? "evicted" : "unavailable" };
       if (!scopeValid) return { ...result, state: "deferred" };
       if (!row.selector || negativeWait(row)) return result;
-      if (
-        queued.some((j) => j.eventId === row.eventId) ||
-        flight?.job?.eventId === row.eventId ||
-        flight?.eventId === row.eventId
-      )
-        return { ...result, state: "pending" };
       expire();
       const browse = interests.get(args.browseId),
         window = policy.window(args.cameraId, []);

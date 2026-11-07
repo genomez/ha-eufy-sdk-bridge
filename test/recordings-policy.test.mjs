@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { recordingEnrollment, createRecordingsPolicy } from "../src/recordings-policy.mjs";
+import { LIMITS, recordingEnrollment, createRecordingsPolicy } from "../src/recordings-policy.mjs";
 import { loadConfig } from "../src/config.mjs";
 import { createRecordingsStore } from "../src/recordings-store.mjs";
 import { createRecordings } from "../src/recordings.mjs";
@@ -16,6 +16,73 @@ test("model enrollment excludes J Safe and rejects ambiguous station ownership",
   ])
     assert.equal(recordingEnrollment(rows), null);
   assert.equal(recordingEnrollment(inventory, [{}]), null);
+});
+
+test("restart retains all twenty cover attempts and camera admissions", () => {
+  const c = clock(),
+    p = createRecordingsPolicy(c),
+    camera = "c_" + "C".repeat(22),
+    events = Array.from({ length: 20 }, (_, i) => "e_" + String(i).padStart(22, "0")),
+    window = p.window(camera, events);
+  for (const event of events) {
+    window.used.add(event);
+    p.admitCover();
+  }
+  const restored = createRecordingsPolicy(c);
+  restored.restore(p.snapshot());
+  assert.equal(restored.coverWait(), 60_000);
+  assert.equal(restored.window(camera, []).ids.size, LIMITS.folderBudget);
+  assert.equal(restored.window(camera, []).used.size, LIMITS.folderBudget);
+});
+
+test("cache-only polls report an existing pending cover without creating demand", async (t) => {
+  const h = await harness(t);
+  await seed(h);
+  h.ctx.state.flags.ready = false;
+  const page = h.catalog("if_due"),
+    args = { cameraId: h.cameraId, eventId: page.events[0].eventId, mode: "cache_only" };
+  assert.equal((await h.manager.cover(h.owner, args)).state, "unavailable");
+  await h.manager.cover(h.owner, { ...args, browseId: page.browseId, mode: "request_if_admitted" });
+  for (let n = 0; n < 3; n++) assert.equal((await h.manager.cover(h.owner, args)).state, "pending");
+  assert.equal(h.manager.diagnostics().coverCache.pending, 1);
+  assert.equal(h.calls.cover.length, 0);
+});
+
+test("disk covers bypass active clips while station cover reads remain blocked", async (t) => {
+  const h = await harness(t);
+  await seed(h, 2);
+  h.ctx.state.flags.ready = false;
+  const page = h.catalog("if_due"),
+    first = page.events[0].eventId;
+  await h.store.putCover(h.scope, h.cameraId, first, jpeg);
+  h.eufy.pullRecordingClip = async (_scope, _selector, { signal, video }) => {
+    video(Buffer.alloc(4));
+    return new Promise((resolve) =>
+      signal.addEventListener("abort", () => resolve({ status: "cancelled" }), { once: true }),
+    );
+  };
+  h.ctx.state.flags.ready = true;
+  h.manager.clipPrepare({ cameraId: h.cameraId, eventId: first });
+  await until(() => h.manager.clipStatus({ cameraId: h.cameraId, eventId: first }).clip.state === "pulling");
+  const cached = await h.manager.cover(h.owner, {
+    cameraId: h.cameraId,
+    eventId: first,
+    mode: "cache_only",
+  });
+  assert.equal(cached.state, "ready");
+  assert.equal(
+    (
+      await h.manager.cover(h.owner, {
+        cameraId: h.cameraId,
+        eventId: page.events[1].eventId,
+        browseId: page.browseId,
+        mode: "request_if_admitted",
+      })
+    ).state,
+    "pending",
+  );
+  await tick();
+  assert.equal(h.calls.cover.length, 0);
 });
 test("enabled flag defaults on with explicit truthy overrides", () => {
   assert.equal(loadConfig({}).cfg.recordings.enabled, true);
@@ -41,18 +108,18 @@ test("catalog attempts use monotonic time including failures and restart restora
   c.advance(120000);
   assert.equal(p.catalogWait(), 0);
 });
-test("station cover gap, six attempts sliding cap and shared camera windows", () => {
+test("station cover gap, twenty attempts sliding cap and shared camera windows", () => {
   const c = clock(),
     p = createRecordingsPolicy(c);
   const w = p.window("camera", ["a", "b", "c", "d", "e"]);
-  assert.equal(w.ids.size, 4);
+  assert.equal(w.ids.size, 5);
   assert.equal(p.window("camera", ["e"]), w);
   p.admitCover();
   p.completeCover();
   assert.equal(p.coverWait(), 5000);
   c.advance(5000);
   assert.equal(p.coverWait(), 0);
-  for (let i = 0; i < 5; i++) p.admitCover();
+  for (let i = 0; i < 19; i++) p.admitCover();
   assert.equal(p.coverWait(), 55000);
   c.advance(60000);
   assert.equal(p.window("camera", ["e"]).ids.size, 1);
@@ -125,12 +192,16 @@ test("cover demand needs interest, deduplicates and cannot use another socket's 
   await tick();
   assert.equal(h.store.snapshot.rows[0].cover, null);
 });
-test("four cover budget is shared across clients and detail browsing", async (t) => {
+test("twenty cover budget is shared across clients and detail browsing", async (t) => {
   const h = await harness(t);
-  await seed(h, 8);
+  await seed(h, 20);
+  await h.store.mergeCatalog(
+    h.scope,
+    Array.from({ length: 4 }, (_, i) => row(h.scope, i + 20)),
+  );
   h.ctx.state.flags.ready = false;
   const page = h.catalog("if_due");
-  assert.equal(page.coverEligibleEventIds.length, 4);
+  assert.equal(page.coverEligibleEventIds.length, 20);
   for (const id of page.coverEligibleEventIds)
     assert.equal(
       (
@@ -145,7 +216,7 @@ test("four cover budget is shared across clients and detail browsing", async (t)
     );
   const detail = h.manager.catalog(
     {},
-    { cameraId: h.cameraId, focusEventId: page.events[5].eventId, refresh: "if_due" },
+    { cameraId: h.cameraId, focusEventId: page.events[21].eventId, refresh: "if_due" },
   );
   assert.deepEqual(detail.coverEligibleEventIds, []);
   assert.equal(
@@ -154,7 +225,7 @@ test("four cover budget is shared across clients and detail browsing", async (t)
         {},
         {
           cameraId: h.cameraId,
-          eventId: page.events[5].eventId,
+          eventId: page.events[21].eventId,
           browseId: detail.browseId,
           mode: "request_if_admitted",
         },
@@ -230,9 +301,9 @@ test("post-cover gap serializes a second queued event without a polling timer", 
       mode: "request_if_admitted",
     });
   await until(() => h.store.snapshot.rows.filter((r) => r.cover).length === 1);
-  await until(() => [...h.clocks.timers.values()].some((e) => e.at === 2000));
+  await until(() => [...h.clocks.timers.values()].some((e) => e.at === 500));
   assert.equal(h.calls.cover.length, 1);
-  h.clocks.advance(1999);
+  h.clocks.advance(499);
   await tick();
   assert.equal(h.calls.cover.length, 1);
   h.clocks.advance(1);
@@ -281,16 +352,16 @@ test("SDK deferrals without hints respect the gap, rate cap and interest expiry"
   });
   for (let attempt = 1; attempt <= 20; attempt++) {
     await until(() => h.calls.cover.length === attempt);
-    await until(() => [...h.clocks.timers.values()].some((e) => e.at === (attempt < 20 ? attempt * 2000 : 60000)));
+    await until(() => [...h.clocks.timers.values()].some((e) => e.at === (attempt < 20 ? attempt * 1000 : 60000)));
     assert.equal(h.calls.cover.length, attempt);
     if (attempt < 20) {
-      h.clocks.advance(1999);
+      h.clocks.advance(999);
       await tick();
       assert.equal(h.calls.cover.length, attempt);
       h.clocks.advance(1);
     }
   }
-  h.clocks.advance(22000);
+  h.clocks.advance(41000);
   await tick();
   assert.equal(h.calls.cover.length, 20);
   assert.equal(h.clocks.timers.size, 0);
@@ -317,7 +388,7 @@ test("deferred retry timers are cancelled on preemption, scope teardown, socket 
       browseId: page.browseId,
       mode: "request_if_admitted",
     });
-    await until(() => [...h.clocks.timers.values()].some((e) => e.at === 2000));
+    await until(() => [...h.clocks.timers.values()].some((e) => e.at === 1000));
     await teardown(h);
     assert.equal(h.clocks.timers.size, 0);
     h.clocks.advance(120000);
@@ -350,12 +421,12 @@ test("ordinary inventory publication and rename do not invalidate a current cata
   resolve({ status: "ok", rows: [row(h.scope)] });
   await until(() => h.store.snapshot.rows.length === 1);
 });
-test("station queue has at most four unsent demands across camera interests", async (t) => {
+test("station queue has at most 32 unsent demands across camera interests", async (t) => {
   const h = await harness(t);
-  const rows = Array.from({ length: 5 }, (_, i) => {
+  const rows = Array.from({ length: 33 }, (_, i) => {
     const r = row(h.scope, i);
-    r.cameraSn = inventory[i + 1].sn;
-    r.cameraId = h.scope.cameras[i].cameraId;
+    r.cameraSn = inventory[(i % 5) + 1].sn;
+    r.cameraId = h.scope.cameras[i % 5].cameraId;
     r.coverSelector.cameraSn = r.cameraSn;
     r.coverSelector.selectorMac = recordingMac(
       h.store.key,
@@ -369,18 +440,19 @@ test("station queue has at most four unsent demands across camera interests", as
     );
     return r;
   });
-  await h.store.mergeCatalog(h.scope, rows);
+  await h.store.mergeCatalog(h.scope, rows.slice(0, 20));
+  await h.store.mergeCatalog(h.scope, rows.slice(20));
   h.ctx.state.flags.ready = false;
-  for (let i = 0; i < 5; i++) {
-    const cameraId = h.scope.cameras[i].cameraId,
+  for (let i = 0; i < 33; i++) {
+    const cameraId = h.scope.cameras[i % 5].cameraId,
       page = h.manager.catalog(h.owner, { cameraId, refresh: "if_due" });
     const reply = await h.manager.cover(h.owner, {
       cameraId,
-      eventId: page.events[0].eventId,
+      eventId: rows[i].eventId,
       browseId: page.browseId,
       mode: "request_if_admitted",
     });
-    assert.equal(reply.state, i < 4 ? "pending" : "deferred");
+    assert.equal(reply.state, i < 32 ? "pending" : "deferred");
   }
   assert.equal(h.calls.cover.length, 0);
 });

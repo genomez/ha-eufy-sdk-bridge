@@ -2,9 +2,9 @@ import { failure, reasonOf } from "./recordings-policy.mjs";
 
 export const DEFAULT_PACING = Object.freeze({
   prefetchGap: 3_000,
-  coverGap: 2_000,
+  coverGap: 500,
   coverRate: 20,
-  coverQuiet: 2_000,
+  coverQuiet: 500,
 });
 
 /** Validate the complete update before changing either scheduler. */

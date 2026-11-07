@@ -2,10 +2,10 @@ export const LIMITS = Object.freeze({
   catalogInterval: 120_000,
   timeout: 8_000,
   interest: 60_000,
-  folderBudget: 4,
-  queue: 4,
+  folderBudget: 20,
+  queue: 32,
   coverGap: 5_000,
-  coverRate: 6,
+  coverRate: 20,
   negative: 300_000,
   page: 100,
   rows: 2_000,
@@ -118,7 +118,7 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
       lastCatalog = restoreTime(history.catalog, LIMITS.catalogInterval);
       lastCover = restoreTime(history.coverCompleted, LIMITS.coverGap);
       attempts = (history.covers ?? [])
-        .slice(-6)
+        .slice(-Math.max(LIMITS.coverRate, pacing.coverRate ?? 0))
         .map((t) => restoreTime(t, 60_000))
         .filter((t) => monotonic() - t < 60_000);
       for (const [camera, entry] of Object.entries(history.windows ?? {}).slice(0, LIMITS.rows)) {
@@ -127,8 +127,8 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
         if (monotonic() - at < 60_000)
           windows.set(camera, {
             at,
-            ids: new Set(entry.ids.filter((id) => validId(id, "e")).slice(0, 4)),
-            used: new Set(entry.used.filter((id) => validId(id, "e")).slice(0, 4)),
+            ids: new Set(entry.ids.filter((id) => validId(id, "e")).slice(0, LIMITS.folderBudget)),
+            used: new Set(entry.used.filter((id) => validId(id, "e")).slice(0, LIMITS.folderBudget)),
           });
       }
     },
@@ -178,7 +178,7 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
       return {
         catalog: wall(lastCatalog),
         coverCompleted: wall(lastCover),
-        covers: attempts.slice(-6).map(wall),
+        covers: attempts.slice(-Math.max(LIMITS.coverRate, pacing.coverRate ?? 0)).map(wall),
         windows: Object.fromEntries(
           [...windows]
             .filter(([, w]) => monotonic() - w.at < 60_000)

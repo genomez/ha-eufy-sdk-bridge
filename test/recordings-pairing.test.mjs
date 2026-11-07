@@ -217,13 +217,13 @@ async function paired(t, roster = inventory) {
 
 test("packed SDK pacing facade changes through WS without touching the synthetic station", async (t) => {
   const h = await paired(t);
-  assert.deepEqual(h.eufy.setRecordingPacing({}), { coverGapMs: 2_000, coverQuietMs: 2_000, coverRatePerMinute: 20 });
+  assert.deepEqual(h.eufy.setRecordingPacing({}), { coverGapMs: 500, coverQuietMs: 500, coverRatePerMinute: 20 });
   const reply = await h.rpc("recordings.set_pacing", { prefetchGap: 0, coverGap: 0, coverQuiet: 0, coverRate: null });
   assert.deepEqual(reply.pacing, { prefetchGap: 0, coverGap: 0, coverQuiet: 0, coverRate: 0 });
   assert.deepEqual(h.eufy.setRecordingPacing({}), { coverGapMs: 0, coverQuietMs: 0, coverRatePerMinute: 0 });
   assert.equal(h.session.sent.length, 0);
   await h.rpc("recordings.set_pacing", { reset: true });
-  assert.deepEqual(h.eufy.setRecordingPacing({}), { coverGapMs: 2_000, coverQuietMs: 2_000, coverRatePerMinute: 20 });
+  assert.deepEqual(h.eufy.setRecordingPacing({}), { coverGapMs: 500, coverQuietMs: 500, coverRatePerMinute: 20 });
 });
 
 test("packed SDK facade pairs RTC catalog and cover with public WS and cache-only HTTP", async (t) => {
