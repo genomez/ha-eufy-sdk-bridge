@@ -8,6 +8,8 @@ import { createProgressiveEncoder, segmentInventory, progressiveUsage } from "..
 import { createClipJobs } from "../src/recordings-clips.mjs";
 import { cameraLabel, endReasons } from "../src/recordings-job-evidence.mjs";
 import { temporary, until } from "./helpers/recordings-fixtures.mjs";
+import { createRecordingTiming, nativeVideoFilter } from "../src/recordings-timing.mjs";
+import { variableCadenceProfiles, variableCadenceStamps } from "./helpers/recordings-variable-cadence.mjs";
 
 function manifest(directory, count, duration = 1) {
   fs.mkdirSync(directory, { recursive: true });
@@ -90,6 +92,51 @@ test("120 native frames spanning 11935ms complete as 12s HLS, including a 4069ms
   assert.equal(calls[0][calls[0].indexOf("-f") + 1], "mpegts");
   assert.ok(!calls[0].join(" ").includes("setpts=N"));
 });
+
+for (const profile of variableCadenceProfiles)
+  for (const prefix of [false, true])
+    test(`low cadence ${profile.expectedMs}ms HLS validates encoded coverage, short output ${prefix}`, async (t) => {
+      const root = await temporary(t),
+        directory = path.join(root, "hls"),
+        input = path.join(root, "input.ts"),
+        mux = createRecordingTiming(profile);
+      const bytes = variableCadenceStamps(profile).map((nativeTimestamp) =>
+        mux.frame(Buffer.from([0, 0, 0, 1, 0x26, 1, 0x80]), { nativeTimestamp }),
+      );
+      fs.writeFileSync(input, Buffer.concat(bytes));
+      const calls = [],
+        seconds = profile.expectedMs / 1000 - (prefix ? 2 : 0);
+      const encoder = createProgressiveEncoder({
+        directory,
+        input,
+        fps: 15,
+        expectedMs: profile.expectedMs,
+        nativeTiming: mux.timing,
+        spawnProcess: fakeProcess(directory, calls, { frames: seconds * 15, segmentCount: seconds }),
+      });
+      t.after(async () => {
+        await encoder.abort();
+        encoder.dispose();
+      });
+      encoder.commit(fs.statSync(input).size);
+      const completion = encoder.finish({ frames: profile.frames, durationMs: Math.round(mux.timing.durationMs) });
+      if (prefix) {
+        await assert.rejects(completion);
+        assert.notEqual(encoder.snapshot().delivery, "complete");
+        await encoder.abort("convert_failed");
+        assert.equal(encoder.snapshot().delivery, "unavailable");
+      } else {
+        await completion;
+        assert.equal(encoder.snapshot().delivery, "complete");
+        assert.equal(
+          encoder.snapshot().segments.reduce((n, s) => n + s.durationMs, 0),
+          profile.expectedMs,
+        );
+      }
+      assert.ok(calls[0].includes(nativeVideoFilter));
+      assert.ok(calls[0].includes("-copyts"));
+      assert.ok(!calls[0].join(" ").includes("setpts=N"));
+    });
 
 test("streaming inventory appears before EOF and MP4 finalization copies the encoded video", async (t) => {
   const root = await temporary(t),

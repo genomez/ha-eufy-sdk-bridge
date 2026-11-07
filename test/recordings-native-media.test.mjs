@@ -1,9 +1,35 @@
 import { test } from "node:test";
 import fs from "node:fs";
 import { checkNativeRecordingMedia } from "../tools/check-native-recording-media.mjs";
+import { variableCadenceProfiles, variableCadenceStamps } from "./helpers/recordings-variable-cadence.mjs";
 
 const ffmpeg = process.env.PROGRESSIVE_FFMPEG ?? "/usr/bin/ffmpeg";
 const ffprobe = process.env.PROGRESSIVE_FFPROBE ?? "/usr/bin/ffprobe";
+for (const profile of variableCadenceProfiles)
+  test(
+    `low cadence synthetic HEVC: ${profile.expectedMs}ms/${profile.frames} frames, HLS and MP4 hold gaps`,
+    {
+      skip:
+        process.env.PROGRESSIVE_MEDIA_REQUIRED !== "1" && (!fs.existsSync(ffmpeg) || !fs.existsSync(ffprobe))
+          ? "local ffmpeg and ffprobe are required"
+          : false,
+      timeout: 30000,
+    },
+    async (t) => {
+      t.diagnostic(
+        JSON.stringify(
+          await checkNativeRecordingMedia({
+            ffmpeg,
+            ffprobe,
+            gapMs: profile.gapMs,
+            gapIndex: 80,
+            timestamps: variableCadenceStamps(profile),
+            catalogMs: profile.expectedMs,
+          }),
+        ),
+      );
+    },
+  );
 for (const [gapMs, gapIndex, timestampCase = "native"] of [
   [4069, 60],
   [0, 60],

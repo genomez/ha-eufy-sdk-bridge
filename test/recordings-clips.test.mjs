@@ -15,6 +15,7 @@ import {
 import { temporary, until, harness, seed, row, tick, inventory } from "./helpers/recordings-fixtures.mjs";
 import { loadConfig } from "../src/config.mjs";
 import { playbackExperiments, playbackSessionIcePolicy } from "../src/recordings-experiments.mjs";
+import { variableCadenceProfiles, variableCadenceStamps } from "./helpers/recordings-variable-cadence.mjs";
 
 const clean = {
   admissionGate: 0,
@@ -219,6 +220,33 @@ test("capture spools native PTS and converts from that clock rather than receipt
   assert.equal(state(f, "native").state, "ready");
   assert.ok(converted);
 });
+
+for (const profile of variableCadenceProfiles)
+  test(`low cadence ${profile.expectedMs}ms job advertises the native media duration`, async (t) => {
+    let converted = false;
+    const f = await fixture(t, {
+      pull: async (_, opts) => {
+        opts.beforeDispatch();
+        for (const nativeTimestamp of variableCadenceStamps(profile))
+          opts.video(Buffer.from([0, 0, 0, 1, 0x26, 1, 0x80]), { nativeTimestamp });
+        return { ...clean, mediaDurationMs: 8000, transferSpeed: 2, durationBasis: "native_header" };
+      },
+      convert: async ({ input, output, frames, durationMs, nativeTiming }) => {
+        converted = true;
+        assert.equal(frames, profile.frames);
+        assert.equal(durationMs, Math.round(profile.spanMs + 1000 / 15));
+        assert.equal(nativeTiming.spanMs, profile.spanMs);
+        assert.ok(nativeTiming.native);
+        assert.equal(fs.readFileSync(input)[0], 0x47);
+        fs.writeFileSync(output, "converted");
+      },
+    });
+    f.jobs.prepare("camera", "variable", { selector: { expectedMs: profile.expectedMs } });
+    await until(() => !f.jobs.busy());
+    assert.equal(state(f, "variable").state, "ready");
+    assert.equal(state(f, "variable").durationMs, Math.round(profile.spanMs + 1000 / 15));
+    assert.ok(converted);
+  });
 
 for (const writeFailure of [false, true])
   test(`short native capture flushes raw prefix at EOF, storage failure ${writeFailure}`, async (t) => {

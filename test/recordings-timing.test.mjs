@@ -1,8 +1,35 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRecordingTiming, validNativeDuration } from "../src/recordings-timing.mjs";
+import { variableCadenceProfiles, variableCadenceStamps } from "./helpers/recordings-variable-cadence.mjs";
 
 const frame = Buffer.from([0, 0, 0, 1, 0x26, 1, 0x80]);
+
+for (const profile of variableCadenceProfiles) {
+  test(`low cadence ${profile.expectedMs}ms preserves native gaps and rejects a truncated prefix`, () => {
+    const mux = createRecordingTiming(profile);
+    const stamps = variableCadenceStamps(profile);
+    const bytes = stamps.map((nativeTimestamp) => mux.frame(frame, { nativeTimestamp }));
+    assert.ok(mux.timing.native);
+    assert.deepEqual(presentation(Buffer.concat(bytes)), stamps);
+    assert.equal(Math.max(...stamps.slice(1).map((stamp, i) => stamp - stamps[i])), profile.gapMs);
+    assert.equal(mux.timing.frames, profile.frames);
+    assert.equal(mux.timing.durationMs, profile.spanMs + 1000 / 15);
+    assert.ok(validNativeDuration(mux.timing, profile.expectedMs, mux.timing.durationMs));
+    assert.ok(!validNativeDuration(mux.timing, profile.expectedMs, (profile.frames * 1000) / 15));
+    const prefix = createRecordingTiming(profile);
+    for (const nativeTimestamp of stamps.slice(0, -20)) prefix.frame(frame, { nativeTimestamp });
+    assert.ok(!validNativeDuration(prefix.timing, profile.expectedMs, prefix.timing.durationMs));
+  });
+}
+
+test("steady 15fps native timestamps retain their original presentation and duration", () => {
+  const mux = createRecordingTiming({ expectedMs: 12000 });
+  const stamps = Array.from({ length: 180 }, (_, i) => Math.round((i * 1000) / 15));
+  const bytes = stamps.map((nativeTimestamp) => mux.frame(frame, { nativeTimestamp }));
+  assert.deepEqual(presentation(Buffer.concat(bytes)), stamps);
+  assert.ok(validNativeDuration(mux.timing, 12000, 12000));
+});
 
 test("review: clip-relative bound rejects a 3599800ms timestamp before committing it", () => {
   const mux = createRecordingTiming({ expectedMs: 12000 });
@@ -147,7 +174,10 @@ test("native qualification buffers at most four frames and leaves input buffers 
 for (const stamps of [
   [0, 1, 2, 3],
   [5, 5, 5, 5],
-  [100, 500, 900, 1300],
+  [100, 90000, 180000, 270000],
+  [0, 0xffffffff, 1, 2],
+  [0, 400, 1000, 989],
+  [0, NaN, 1000, 2000],
 ])
   test(`unqualified clock uses raw input: ${stamps}`, () => {
     const mux = createRecordingTiming({ expectedMs: 8000 });

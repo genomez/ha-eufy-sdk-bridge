@@ -24,8 +24,9 @@ function pts(value) {
 /**
  * Single-stream HEVC transport spool. Native header words are interpreted as milliseconds;
  * arrival time and transfer speed never enter this clock. Qualify four frames before
- * selecting TS; otherwise retain raw fixed-rate input. Missing later words advance one
- * 15fps period. Only duplicate/regression jitter up to 10ms is clamped to 1ms.
+ * selecting TS, allowing slow starts within the catalog bound; otherwise retain raw fixed-rate
+ * input. Missing later words advance one 15fps period. Only duplicate/regression jitter up to
+ * 10ms is clamped to 1ms.
  */
 /** Catalog durations are whole seconds, so the true span may differ from expectedMs by up to one second. */
 export const catalogSlackMs = 1000;
@@ -135,7 +136,8 @@ export function createRecordingTiming({ expectedMs }) {
       return select(
         deltas.every((delta) => delta >= -10) &&
           deltas.filter((delta) => delta > 0).length >= 2 &&
-          deltas.some((delta) => delta >= 10 && delta <= 250),
+          deltas.some((delta) => delta >= 10 && delta <= maxSpanMs) &&
+          deltas.reduce((span, delta) => span + Math.max(1, delta), 0) <= maxSpanMs,
       );
     },
     flush() {

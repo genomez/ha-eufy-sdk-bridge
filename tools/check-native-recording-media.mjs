@@ -15,6 +15,8 @@ export async function checkNativeRecordingMedia({
   gapMs = 4069,
   gapIndex = 60,
   timestampCase = "native",
+  timestamps,
+  catalogMs,
 }) {
   const root = path.resolve(".offline/native-media", randomUUID());
   fs.mkdirSync(root, { recursive: true });
@@ -25,14 +27,18 @@ export async function checkNativeRecordingMedia({
       stdio: ["ignore", "pipe", "pipe"],
     }).toString();
   const fixture = path.join(root, "synthetic.hevc"),
-    input = path.join(root, "spool.ts");
+    input = path.join(root, "spool.ts"),
+    frameCount = timestamps?.length ?? 120,
+    prefixFrames = Math.floor(frameCount * 0.75);
   run(ffmpeg, [
     "-v",
     "error",
     "-f",
     "lavfi",
     "-i",
-    "testsrc2=size=160x96:rate=30:duration=4",
+    `testsrc2=size=160x96:rate=30:duration=${frameCount / 30}`,
+    "-frames:v",
+    String(frameCount),
     "-c:v",
     "libx265",
     "-preset",
@@ -48,10 +54,12 @@ export async function checkNativeRecordingMedia({
   const packets = JSON.parse(
     run(ffprobe, ["-v", "error", "-show_packets", "-show_entries", "packet=pos,size", "-of", "json", fixture]),
   ).packets;
-  assert.equal(packets.length, 120);
+  assert.equal(packets.length, frameCount);
   const raw = fs.readFileSync(fixture);
   const directory = path.join(root, "hls"),
-    expectedMs = timestampCase === "zero" ? 8000 : gapMs ? Math.round((7866 + gapMs + 1000 / 15) / 1000) * 1000 : 8000;
+    expectedMs =
+      catalogMs ??
+      (timestampCase === "zero" ? 8000 : gapMs ? Math.round((7866 + gapMs + 1000 / 15) / 1000) * 1000 : 8000);
   const mux = createRecordingTiming({ expectedMs });
   fs.writeFileSync(input, "");
   const rejectionIndex = timestampCase === "over-bound" ? 60 : timestampCase === "spike-regression" ? 61 : null;
@@ -64,9 +72,11 @@ export async function checkNativeRecordingMedia({
   let earlyCommittedFrames;
   try {
     for (let i = 0; i < packets.length; i++) {
-      const timestamp = gapMs
-        ? Math.round(((i - (i >= gapIndex ? 1 : 0)) * 7866) / 118) + (i >= gapIndex ? gapMs : 0)
-        : Math.round((i * 1000) / 15);
+      const timestamp =
+        timestamps?.[i] ??
+        (gapMs
+          ? Math.round(((i - (i >= gapIndex ? 1 : 0)) * 7866) / 118) + (i >= gapIndex ? gapMs : 0)
+          : Math.round((i * 1000) / 15));
       const { pos, size } = packets[i];
       const word =
         timestampCase === "zero"
@@ -109,28 +119,28 @@ export async function checkNativeRecordingMedia({
         nativeTiming: mux.timing,
       });
       active.commit(bytes.length);
-      // Stop at a sufficient prefix. The remaining 30 frames are not even muxed yet:
+      // Stop at a sufficient prefix. The remaining frames are not even muxed yet:
       // a converter that buffers until all source frames/EOF cannot pass this proof.
-      if (i === 89) {
+      if (i === prefixFrames - 1) {
         for (let n = 0; n < 250 && active.snapshot().delivery === "warming"; n++) await delay(20);
         assert.equal(active.snapshot().delivery, "playable", "segments must become playable while ingress is paused");
         early = true;
         earlyCommittedFrames = mux.timing.frames;
-        assert.equal(earlyCommittedFrames, 90);
+        assert.equal(earlyCommittedFrames, prefixFrames);
         assert.ok(earlyCommittedFrames < packets.length);
       }
       await delay(5);
     }
     assert.equal(rejectionIndex, null, "a corrupt clock must fail before conversion completes");
     assert.ok(early, "segments must be playable before source EOF");
-    await active.finish({ frames: 120, durationMs: expectedMs });
+    await active.finish({ frames: frameCount, durationMs: expectedMs });
     const progressiveOutput = path.join(root, "progressive.mp4"),
       mp4Output = path.join(root, "standalone.mp4");
     await active.finalizeMp4(progressiveOutput, 16 * 1024 ** 2);
     await convertClip({
       input,
       output: mp4Output,
-      frames: 120,
+      frames: frameCount,
       durationMs: expectedMs,
       nativeTiming: mux.timing,
       ffmpeg,
@@ -179,7 +189,7 @@ export async function checkNativeRecordingMedia({
       : [];
     const times = pts.map((p) => Number(p.best_effort_timestamp_time));
     if (mux.timing.native) {
-      assert.equal(pts.length, 120);
+      assert.equal(pts.length, frameCount);
       assert.ok(Math.abs((times.at(-1) - times[0]) * 1000 - mux.timing.spanMs) < 1);
       if (gapMs) assert.ok(Math.abs((times[gapIndex] - times[gapIndex - 1]) * 1000 - gapMs) < 1);
     } else assert.equal(timestampCase, "zero");
@@ -194,7 +204,7 @@ export async function checkNativeRecordingMedia({
     if (gapMs && mux.timing.native) {
       const start = Math.round((times[gapIndex - 1] - times[0]) * 15),
         end = Math.round((times[gapIndex] - times[0]) * 15);
-      assert.ok(end - start >= 60);
+      assert.ok(end - start >= Math.floor((gapMs * 15) / 1000));
       assert.ok(
         timedHashes.slice(start, end).every((hash) => hash === sourceHashes[gapIndex - 1]),
         "the preceding frame must be held throughout the native gap",
@@ -202,7 +212,7 @@ export async function checkNativeRecordingMedia({
       assert.equal(timedHashes[end], sourceHashes[gapIndex]);
     }
     const receipt = {
-      inputFrames: 120,
+      inputFrames: frameCount,
       timestampCase,
       native: mux.timing.native,
       nativeSpanMs: mux.timing.spanMs,
