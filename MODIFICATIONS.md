@@ -556,3 +556,5 @@ Offline synthetic validation only; installation acceptance remains false.
 - Playback 3p7r2, 2026-11-06: pin the local a545c5b SDK tarball and runtime with unsaturated EOF truncation checks and bounded receipt counts; offline packaging only.
 
 - Playback 3p7r3, 2026-11-06: pin the local 4638c5d SDK tarball and runtime accepting fully covered EOF playback despite arrival pauses; offline packaging only.
+
+- Playback 3q, 2026-11-06: pin the local 8836af7 SDK tarball and runtime for EOF media publication before session retirement with the sixty-second diagnostic observation window; offline packaging only.
