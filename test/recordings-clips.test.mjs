@@ -106,16 +106,55 @@ test("live demand during EOF conversion preserves the clip and waits for cleanup
     f.jobs.prepare("camera", "a", selection);
     await until(() => state(f, "a").state === "converting");
     f.live(true);
-    const live = f.jobs.liveStart();
-    converting.resolve();
-    await until(() => state(f, "a").state === "ready");
-    assert.equal(f.jobs.busy(), true);
+    let liveDone = false;
+    const live = f.jobs.liveStart().then(() => {
+      liveDone = true;
+    });
     cleanup.resolve();
+    await until(() => liveDone);
+    assert.equal(state(f, "a").state, "converting");
+    converting.resolve();
     await live;
-    assert.equal(state(f, "a").state, "ready");
+    await until(() => state(f, "a").state === "ready");
   } finally {
     cleanup.resolve();
     converting.resolve();
+  }
+});
+
+test("retry after a failed EOF conversion waits for the running station cleanup", async (t) => {
+  const cleanup = deferred();
+  let attempts = 0;
+  const f = await fixture(t, {
+    pull: async (_, opts) => {
+      attempts++;
+      opts.beforeDispatch();
+      opts.video(Buffer.from("a"));
+      opts.video(Buffer.from("b"));
+      opts.mediaReady(clean);
+      if (attempts === 1) await cleanup.promise;
+      return { ...clean, reconnectOutcome: "connected" };
+    },
+    convert: async ({ output }) => {
+      if (attempts === 1) throw Object.assign(new Error("synthetic"), { reason: "convert_failed" });
+      fs.writeFileSync(output, "converted");
+    },
+  });
+  try {
+    f.jobs.prepare("camera", "a", selection);
+    await until(() => state(f, "a").state === "failed");
+    assert.equal(f.jobs.busy(), true);
+    f.jobs.prepare("camera", "a", selection);
+    await tick();
+    assert.equal(state(f, "a").state, "failed");
+    assert.equal(attempts, 1);
+    cleanup.resolve();
+    await until(() => !f.jobs.busy());
+    f.jobs.prepare("camera", "a", selection);
+    await until(() => state(f, "a").state === "ready");
+    assert.equal(attempts, 2);
+  } finally {
+    cleanup.resolve();
   }
 });
 

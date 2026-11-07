@@ -798,7 +798,13 @@ export function createClipJobs({
           storageFailed = true;
         }
       const previous = jobs.get(id);
-      if (previous && (previous.readers || !["idle", "failed", "refused", "cancelled"].includes(previous.state)))
+      // The running invocation owns its job until station cleanup settles, even after a terminal state.
+      if (
+        previous &&
+        (previous === active ||
+          previous.readers ||
+          !["idle", "failed", "refused", "cancelled"].includes(previous.state))
+      )
         return { clip: view(previous) };
       if (jobs.size >= 2048) {
         const old = [...jobs].find(([, j]) => !["queued", "pulling", "converting", "ready"].includes(j.state));
