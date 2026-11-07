@@ -104,6 +104,21 @@ export function armClipSafety(rtc, _root, enabled, probeMarker) {
   rtc.configurePlaybackSafety?.(false, durable ?? (() => {}), enabled || !!durable);
 }
 
+/** Remove transport identities and credentials before emitting bounded decoder diagnostics. */
+function conversionStderr(value) {
+  return value
+    .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s]+/gi, "[redacted]")
+    .replace(/\b(?:[a-z_]*token|authorization|password|secret|api[_-]?key)\b[^\r\n]*/gi, "[redacted]")
+    .replace(/\bbearer\s+\S+/gi, "[redacted]")
+    .replace(/\bT[0-9A-Z]{7,}\b/gi, "[redacted]")
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, "[redacted]")
+    .replace(/(?<![a-z0-9])(?:[0-9a-f]{0,4}:){2,}[0-9a-f:.%]*/gi, "[redacted]")
+    .replace(/[A-Za-z0-9_+\/=.-]{24,}/g, "[redacted]")
+    .replace(/[\x00-\x1f\x7f-\x9f]+/g, " ")
+    .replace(/[^\x20-\x7e]/g, "?")
+    .slice(-2048);
+}
+
 /** Duration-bound conversion settles only after process close, including cancellation and forced termination. */
 export function convertClip({
   input,
@@ -114,12 +129,15 @@ export function convertClip({
   signal,
   ffmpeg = "/usr/bin/ffmpeg",
   spawnProcess = spawn,
+  log = (record) => process.stdout.write(JSON.stringify(record) + "\n"),
 }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted || !Number.isFinite(durationMs) || durationMs <= 0) return reject(fault("convert_failed"));
     // Station HEVC carries its own VUI frame rate, which overrides -framerate on raw input.
     // Retime frames explicitly to the retained media duration supplied by capture.
     const fps = String((frames * 1000) / durationMs);
+    let stderr = Buffer.alloc(0),
+      stderrTruncated = false;
     let failed = false,
       terminating = false,
       closed = false,
@@ -132,9 +150,6 @@ export function convertClip({
         "-loglevel",
         "error",
         "-y",
-        "-xerror",
-        "-err_detect",
-        "explode",
         "-framerate",
         fps,
         "-f",
@@ -164,8 +179,13 @@ export function convertClip({
         "mp4",
         output,
       ],
-      { shell: false, windowsHide: true, stdio: "ignore" },
+      { shell: false, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
     );
+    child.stderr?.on("data", (data) => {
+      const chunk = Buffer.from(data);
+      stderrTruncated ||= stderr.length + chunk.length > 2048;
+      stderr = Buffer.concat([stderr, chunk.subarray(-2048)]).subarray(-2048);
+    });
     const terminate = () => {
       if (closed || terminating) return;
       terminating = true;
@@ -187,7 +207,17 @@ export function convertClip({
       clearTimeout(escalation);
       signal?.removeEventListener("abort", terminate);
       if (code === 0 && !failed) resolve();
-      else reject(fault("convert_failed"));
+      else {
+        const tail = stderr.toString("utf8");
+        const firstNewline = tail.indexOf("\n");
+        const diagnostic = stderrTruncated ? (firstNewline < 0 ? "" : tail.slice(firstNewline + 1)) : tail;
+        log({
+          event: "recordings.clip_convert_failed",
+          exitCode: Number.isInteger(code) ? code : null,
+          stderr: conversionStderr(diagnostic),
+        });
+        reject(fault("convert_failed"));
+      }
     });
   });
 }
@@ -438,6 +468,8 @@ export function createClipJobs({
   }
   async function run(j) {
     let fd,
+      pendingPull,
+      mediaReceipt,
       pullMs = 0,
       convertMs = 0,
       frames = 0,
@@ -479,12 +511,22 @@ export function createClipJobs({
       };
       let receipt;
       const admissionDeadline = monotonic() + 150_000;
+      let freshRetried = false;
       for (;;) {
         if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
         if (live()) throw fault("live_view");
         if (!enabled()) throw fault("disabled");
         try {
-          receipt = await pull(j.selection, pullOptions);
+          const media = Promise.withResolvers();
+          pullOptions.mediaReady = (value) => {
+            if (value?.captureOutcome === "eof" && value.boundedMediaObserved && value.randomAccess && frames >= 2) {
+              mediaReceipt = value;
+              j.mediaComplete = true;
+              media.resolve(value);
+            }
+          };
+          pendingPull = Promise.resolve().then(() => pull(j.selection, pullOptions));
+          receipt = await Promise.race([pendingPull, media.promise]);
         } catch (error) {
           if (!error?.admissionGateName) throw error;
           receipt = { captureOutcome: "not_admitted", ...error, startAttempted: false };
@@ -503,6 +545,30 @@ export function createClipJobs({
           audioIncluded: false,
           ...evidence,
         };
+        const endedAt = j.selection?.selector?.begin * 1000 + j.expectedMs;
+        const age = now() - endedAt;
+        const freshRefusal =
+          !freshRetried &&
+          receipt.captureOutcome === "start_refused" &&
+          !receipt.startAcknowledged &&
+          !frames &&
+          age >= 0 &&
+          age < 90000 &&
+          receipt.stationStatusCounts?.some((status) => status.state === 2 && status.code === 18);
+        if (freshRefusal) {
+          const pause = Math.max(0, endedAt + 60000 - now());
+          if (pause < admissionDeadline - monotonic()) {
+            freshRetried = true;
+            j.waitingForAdmission = true;
+            state(j, "queued");
+            try {
+              await wait(pause, j.controller.signal);
+            } finally {
+              j.waitingForAdmission = false;
+            }
+            if (monotonic() < admissionDeadline) continue;
+          }
+        }
         if (receipt.startAttempted || frames || !transientAdmission.has(evidence.admissionGate)) break;
         const remaining = admissionDeadline - monotonic();
         if (remaining <= 0) break;
@@ -566,6 +632,7 @@ export function createClipJobs({
         durationMs: j.durationMs,
         maxBytes,
         signal: j.controller.signal,
+        log,
       });
       convertMs = Math.round(monotonic() - converting);
       if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
@@ -581,6 +648,21 @@ export function createClipJobs({
       j.access = now();
       j.expiresAtMs = now() + ttl;
       state(j, "ready");
+      terminal(j);
+      last = {
+        jobOrdinal: j.jobOrdinal,
+        state: j.state,
+        reason: j.reason,
+        startedAtMs: j.startedAtMs,
+        finishedAtMs: j.finishedAtMs,
+        pullMs,
+        convertMs,
+        bytes: j.bytes,
+        audioIncluded: false,
+        ...evidence,
+        ...(mediaReceipt && { cleanupOutcome: "pending" }),
+      };
+      if (captureAttempted) lastCapture = last;
     } catch (e) {
       const reason =
         j.controller.signal.aborted && e.reason !== "cleanup_uncertain"
@@ -607,6 +689,22 @@ export function createClipJobs({
         reason,
       );
     } finally {
+      if (pendingPull) {
+        try {
+          const settled = await pendingPull;
+          if (mediaReceipt) {
+            evidence = clipEvidence({ ...settled, captureOutcome: mediaReceipt.captureOutcome });
+            evidence.cleanupOutcome = finite(settled.reconnectOutcome, [
+              "not_needed",
+              "connected",
+              "failed",
+              "timed_out",
+            ]);
+          }
+        } catch {
+          if (mediaReceipt) evidence.cleanupOutcome = "failed";
+        }
+      }
       terminal(j);
       last = {
         jobOrdinal: j.jobOrdinal,
@@ -729,6 +827,7 @@ export function createClipJobs({
         state: "queued",
         reason: "none",
         readers: 0,
+        mediaComplete: false,
       });
       jobs.set(id, j);
       const reason =
@@ -771,9 +870,9 @@ export function createClipJobs({
     },
     async liveStart() {
       for (const j of [...pending]) abort(j, "live_view");
-      if (active?.state === "pulling" || active?.state === "queued") {
+      if (active) {
         const j = active;
-        abort(j, "live_view");
+        if (!j.mediaComplete && (j.state === "pulling" || j.state === "queued")) abort(j, "live_view");
         await j.done;
       }
     },

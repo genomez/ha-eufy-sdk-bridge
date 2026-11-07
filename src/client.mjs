@@ -3,6 +3,7 @@
 // heavier modules depend on the instance via `ctx.eufy`, not on how it was built. Event wiring that
 // needs other modules (error → session recovery, push liveness) lives in server.mjs, after ctx is whole.
 import { EufyMega, FileSessionStore, FileFcmStore, ConsoleLogger } from "@mega-yfue/eufy-sdk";
+import { recordingTimeZone } from "./config.mjs";
 import { registerRecordingsPolicy } from "./recordings-adapter.mjs";
 
 /**
@@ -38,6 +39,7 @@ export function createEufy({ cfg, DEBUG_P2P }, options = {}) {
       commandTimeoutMs: 14000,
       stateRefreshMs: cfg.rtcStateRefreshMs,
       sessionRefreshMs: cfg.rtcSessionRefreshMs,
+      recordingTimeZone: cfg.recordingTimeZone ?? recordingTimeZone(process.env.TZ),
       commandKeepaliveMs: cfg.rtcCommandKeepaliveMs,
       ...options.rtc,
       recordings,

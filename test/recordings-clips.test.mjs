@@ -34,6 +34,196 @@ const deferred = () => {
   });
   return { promise, resolve };
 };
+
+for (const cleanup of ["connected", "failed", "reject"])
+  test(`EOF publishes before ${cleanup} retirement and live preserves ready media`, async (t) => {
+    const cleanupGate = deferred();
+    let attempts = 0;
+    const f = await fixture(t, {
+      pull: async (_, opts) => {
+        attempts++;
+        opts.beforeDispatch();
+        opts.video(Buffer.from("first"));
+        opts.video(Buffer.from("last"));
+        opts.mediaReady({
+          ...clean,
+          releaseOutcome: "stop_unconfirmed",
+          cessationOutcome: "cessation_unknown",
+          latchCleared: false,
+        });
+        await cleanupGate.promise;
+        if (cleanup === "reject") throw new Error("synthetic cleanup failure");
+        return { ...clean, releaseOutcome: "stop_unconfirmed", reconnectOutcome: cleanup, reconnectDurationMs: 250 };
+      },
+    });
+    try {
+      await ready(f, "a");
+      assert.equal(f.jobs.busy(), true);
+      assert.equal(f.jobs.diagnostics().lastJob.cleanupOutcome, "pending");
+      f.jobs.prepare("camera", "b", selection);
+      assert.equal(attempts, 1);
+      f.live(true);
+      let handedOff = false;
+      const live = f.jobs.liveStart().then(() => {
+        handedOff = true;
+      });
+      await tick();
+      assert.equal(handedOff, false);
+      assert.equal(state(f, "a").state, "ready");
+      cleanupGate.resolve();
+      await live;
+      assert.equal(handedOff, true);
+      assert.equal(attempts, 1);
+      assert.equal(state(f, "a").state, "ready");
+      assert.equal(f.jobs.diagnostics().lastJob.cleanupOutcome, cleanup === "connected" ? "connected" : "failed");
+      const asset = f.jobs.ready("camera", "a");
+      assert.ok(asset && fs.existsSync(asset.path));
+      asset.release();
+    } finally {
+      cleanupGate.resolve();
+    }
+  });
+
+test("live demand during EOF conversion preserves the clip and waits for cleanup", async (t) => {
+  const cleanup = deferred(),
+    converting = deferred();
+  const f = await fixture(t, {
+    pull: async (_, opts) => {
+      opts.beforeDispatch();
+      opts.video(Buffer.from("a"));
+      opts.video(Buffer.from("b"));
+      opts.mediaReady(clean);
+      await cleanup.promise;
+      return { ...clean, reconnectOutcome: "connected" };
+    },
+    convert: async ({ output, signal }) => {
+      await converting.promise;
+      assert.equal(signal.aborted, false);
+      fs.writeFileSync(output, "converted");
+    },
+  });
+  try {
+    f.jobs.prepare("camera", "a", selection);
+    await until(() => state(f, "a").state === "converting");
+    f.live(true);
+    const live = f.jobs.liveStart();
+    converting.resolve();
+    await until(() => state(f, "a").state === "ready");
+    assert.equal(f.jobs.busy(), true);
+    cleanup.resolve();
+    await live;
+    assert.equal(state(f, "a").state, "ready");
+  } finally {
+    cleanup.resolve();
+    converting.resolve();
+  }
+});
+
+test("conversion tolerates warnings and logs bounded sanitized failure stderr", async () => {
+  for (const exitCode of [0, 1]) {
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    const logs = [];
+    const conversion = convertClip({
+      input: "synthetic.hevc",
+      output: "synthetic.mp4",
+      frames: 2,
+      durationMs: 500,
+      maxBytes: 1024,
+      log: (line) => logs.push(line),
+      spawnProcess: (_, args, opts) => {
+        assert.equal(args.includes("-xerror"), false);
+        assert.equal(args.includes("-err_detect"), false);
+        assert.deepEqual(opts.stdio, ["ignore", "ignore", "pipe"]);
+        return child;
+      },
+    });
+    child.stderr.emit("data", Buffer.from("discarded-prefix" + "x".repeat(4096)));
+    child.stderr.emit(
+      "data",
+      Buffer.from(
+        "\nT9000SYNTHETIC 192.0.2.1 https://example.invalid/path 2001:db8::1 token=synthetic-credential\nHEVC decode warning",
+      ),
+    );
+    const done = exitCode ? assert.rejects(conversion, { reason: "convert_failed" }) : conversion;
+    child.emit("close", exitCode);
+    await done;
+    assert.equal(logs.length, exitCode ? 1 : 0);
+    if (exitCode) {
+      assert.equal(logs[0].exitCode, 1);
+      assert.ok(Buffer.byteLength(logs[0].stderr) <= 2048);
+      assert.match(logs[0].stderr, /HEVC decode warning/);
+      assert.doesNotMatch(
+        logs[0].stderr,
+        /discarded-prefix|T9000SYNTHETIC|192\.0\.2|example\.invalid|2001:db8|synthetic-credential/,
+      );
+    }
+  }
+});
+
+for (const age of [10000, 65000, 90000])
+  test(`fresh refusal retries once within admission deadline at age ${age}`, async (t) => {
+    let elapsed = 0,
+      attempts = 0;
+    const waits = [];
+    let f;
+    f = await fixture(t, {
+      now: () => 100000 + elapsed,
+      monotonic: () => elapsed,
+      wait: async (ms) => {
+        waits.push(ms);
+        assert.equal(f.jobs.busy(), false);
+        elapsed += ms;
+      },
+      pull: async (_, opts) => {
+        if (++attempts === 1)
+          return {
+            ...clean,
+            boundedMediaObserved: false,
+            randomAccess: false,
+            captureOutcome: "start_refused",
+            stationRefusalConfirmed: true,
+            stationStatusCounts: [{ state: 2, code: 18, count: 1 }],
+          };
+        opts.video(Buffer.from("a"));
+        opts.video(Buffer.from("b"));
+        return clean;
+      },
+    });
+    f.jobs.prepare("camera", "a", { selector: { expectedMs: 10000, begin: (100000 - age - 10000) / 1000 } });
+    await until(() => ["ready", "failed"].includes(state(f, "a").state));
+    assert.equal(attempts, age < 90000 ? 2 : 1);
+    assert.deepEqual(waits, age < 90000 ? [Math.max(0, 60000 - age)] : []);
+    assert.equal(state(f, "a").state, age < 90000 ? "ready" : "failed");
+  });
+
+test("a fresh event gets only one refused-start retry", async (t) => {
+  let attempts = 0,
+    elapsed = 0;
+  const f = await fixture(t, {
+    now: () => 100000 + elapsed,
+    monotonic: () => elapsed,
+    wait: async (ms) => {
+      elapsed += ms;
+    },
+    pull: async () => {
+      attempts++;
+      return {
+        ...clean,
+        boundedMediaObserved: false,
+        captureOutcome: "start_refused",
+        stationRefusalConfirmed: true,
+        stationStatusCounts: [{ state: 2, code: 18, count: 1 }],
+      };
+    },
+  });
+  f.jobs.prepare("camera", "a", { selector: { begin: 80, expectedMs: 10000 } });
+  await until(() => state(f, "a").state === "failed");
+  assert.equal(attempts, 2);
+  assert.equal(elapsed, 50000);
+  assert.equal(state(f, "a").reason, "not_found");
+});
 async function fixture(t, options = {}) {
   const base = await temporary(t),
     root = path.join(base, "clips"),

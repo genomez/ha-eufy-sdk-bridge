@@ -4,6 +4,17 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { loadConfig } from "../src/config.mjs";
 
+test("recording timestamps use valid host IANA TZ and otherwise Chicago", () => {
+  for (const [TZ, expected] of [
+    ["America/New_York", "America/New_York"],
+    ["UTC", "UTC"],
+    ["invalid/zone", "America/Chicago"],
+    [undefined, "America/Chicago"],
+    ["+05:00", "America/Chicago"],
+  ])
+    assert.equal(loadConfig({ TZ }).cfg.recordingTimeZone, expected);
+});
+
 const base = { EUFY_EMAIL: "x@y.z", EUFY_PASSWORD: "pw" };
 
 test("native WebRTC relay is OFF by default", () => {

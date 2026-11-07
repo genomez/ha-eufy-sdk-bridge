@@ -30,6 +30,12 @@ test("command keepalive config is passed to the SDK without enabling it by defau
   }
 });
 
+test("the configured recording zone reaches the SDK client", () => {
+  const config = loadConfig({ TZ: "America/New_York", EUFY_EMAIL: "x@y.z", EUFY_PASSWORD: "pw" });
+  const client = createEufy(config, { store: { load: () => undefined }, pushStore: { load: () => undefined } });
+  assert.equal(client.opts.rtc.recordingTimeZone, "America/New_York");
+});
+
 test("cached diagnostics copy only the keepalive counters without opening any connection", () => {
   const raw = { ...counts, stationSn: "private-station", payload: "private-bytes" };
   let reads = 0;

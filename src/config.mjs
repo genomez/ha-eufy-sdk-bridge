@@ -13,6 +13,16 @@ const positiveInt = (v) => {
   return v != null && v !== "" && Number.isSafeInteger(n) && n > 0 ? n : undefined;
 };
 
+/** Invalid or absent host zones retain the station timestamp compatibility default. */
+export function recordingTimeZone(value) {
+  if (typeof value !== "string" || !value || /^[+-]/.test(value)) return "America/Chicago";
+  try {
+    return new Intl.DateTimeFormat("en", { timeZone: value }).resolvedOptions().timeZone;
+  } catch {
+    return "America/Chicago";
+  }
+}
+
 /** The SDK event names broadcast to every connected WS client. */
 export const FORWARDED_EVENTS = [
   "propertyChanged",
@@ -89,6 +99,7 @@ export function loadConfig(env = process.env) {
     // T9000 (HomeBase Professional) control channel: the mega shard the RTC signalling signs on when the
     // SDK cannot derive it (e.g. `ie-pr`), and the ICE policy (`relay` default; never host-only).
     rtcShard: env.BRIDGE_RTC_SHARD || undefined,
+    recordingTimeZone: recordingTimeZone(env.TZ),
     rtcIcePolicy: env.BRIDGE_RTC_ICE_POLICY || undefined,
     rtcSessionRefreshMs: env.BRIDGE_RTC_SESSION_REFRESH_MS ? Number(env.BRIDGE_RTC_SESSION_REFRESH_MS) : undefined,
     rtcCommandKeepaliveMs: env.BRIDGE_RTC_COMMAND_KEEPALIVE_MS
