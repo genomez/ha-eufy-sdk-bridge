@@ -614,8 +614,11 @@ export function createClipJobs({
               media.resolve(value);
             }
           };
+          const prior = receipt;
           pendingPull = Promise.resolve().then(() => {
             experiment ??= validateExperiments(experiments?.take()) ?? undefined;
+            // A retry admitted just before the deadline must not dispatch after it; the first failure stands.
+            if (prior && monotonic() >= admissionDeadline) return prior;
             if (experiment) pullOptions.experiment = experiment;
             j.transferSpeed = experiment?.playSpeed ?? pullOptions.transferSpeed;
             if (experiment?.mode === "download") {

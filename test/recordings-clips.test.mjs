@@ -113,6 +113,44 @@ for (const stage of ["first attempt", "refusal wait"])
       assert.equal(f.jobs.diagnostics().lastJob.captureOutcome, stage === "first attempt" ? "eof" : "start_refused");
     });
 
+test("speed retry never dispatches after the deadline passes between admission and dispatch", async (t) => {
+  let elapsed = 0;
+  const speeds = [];
+  const f = await fixture(t, {
+    monotonic: () => elapsed,
+    now: () => 100000 + elapsed,
+    experiments: {
+      take: () => {
+        if (speeds.length === 1) elapsed = 150001;
+        return null;
+      },
+    },
+    pull: async (_, opts) => {
+      speeds.push(opts.transferSpeed);
+      opts.beforeDispatch();
+      if (speeds.length > 1) {
+        opts.video(Buffer.from("a"));
+        opts.video(Buffer.from("b"));
+        return clean;
+      }
+      elapsed = 149999;
+      return {
+        ...clean,
+        boundedMediaObserved: false,
+        captureOutcome: "eof",
+        completenessFailure: "span",
+        transferSpeed: opts.transferSpeed,
+      };
+    },
+    convert: async () => assert.fail("expired retry must not convert"),
+  });
+  f.jobs.prepare("camera", "a", { selector: { begin: 80, expectedMs: 10000 } });
+  await until(() => !f.jobs.busy());
+  assert.deepEqual(speeds, [2]);
+  assert.equal(state(f, "a").state, "failed");
+  assert.equal(f.jobs.diagnostics().lastJob.captureOutcome, "eof");
+});
+
 for (const cleanup of ["connected", "failed", "reject"])
   test(`EOF publishes before ${cleanup} retirement and live preserves ready media`, async (t) => {
     const cleanupGate = deferred();
