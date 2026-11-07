@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.12",
   "status": "local-build-unpublished",
-  "exactInputCommit": "dd922bf6dd064516e3f037cc0903128949dad41f",
+  "exactInputCommit": "f4cbac3ea10352fce20d8279932ed7fe62ac1c6c",
   "files": {
     ".env.example": {
       "bytes": 3966,
@@ -22,7 +22,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 749,
-      "sha256": "39f89d3a3805d5d9749c4232405ba6e74e7914b5c7ba02f2f03b0f1321cc4c39"
+      "sha256": "0dcc2133479cd692e2b06260b9bcfd2779f04b85bb17524c098ac531269da1d3"
     },
     "CONTRIBUTING.md": {
       "bytes": 983,
@@ -257,8 +257,8 @@
       "sha256": "1eaae1890c71b2dd77cce77adc0f274c068bccf059ba047c65f435ab8c227bec"
     },
     "src/recordings-clips.mjs": {
-      "bytes": 60575,
-      "sha256": "5db3fb043c0cf027011f009b989fe7a0444b048fd8dd8d3f64be1e9252dc4621"
+      "bytes": 59691,
+      "sha256": "0b2f7ed3d65077aeaff5fb22d0913e3b6e50dc3df5666d6b6f3a8a85f91e26d9"
     },
     "src/recordings-download.mjs": {
       "bytes": 8435,
@@ -657,8 +657,8 @@
       "sha256": "5bb6d73f2c74ebc531a1cae07e556d161f6412da5aecbee18566755c1a5938fc"
     },
     "src/recordings-progressive.mjs": {
-      "bytes": 13034,
-      "sha256": "0519756c0a92ccaf52c9bc26803c6e1e39ed1dc200ede793dc0acb42c77cc2d2"
+      "bytes": 13403,
+      "sha256": "5a1540a0a2e08d89a8f6e3c5694e4aa9c469b369814c7110cb0094b567af207c"
     },
     "test/ice-establishment-evidence.test.mjs": {
       "bytes": 8663,
@@ -673,36 +673,36 @@
       "sha256": "2f47c7c941e3f44a3f5e22bb739fefb938d923fbb755296584000a762e5efcad"
     },
     "test/recordings-progressive.test.mjs": {
-      "bytes": 42614,
-      "sha256": "d946579f5a8f661c07450ce1209e1765aba5902fbe4fe1f0c54aedc4765ede01"
+      "bytes": 43155,
+      "sha256": "28c7889ce042e3a2501e383e59ca8aebb70d96ecb072c9630d958874982ace0f"
     },
     "tools/check-progressive-media.mjs": {
       "bytes": 5168,
       "sha256": "d7896ce027087e77489b39a24358b39195578a295e6f19b4b86f3d47b37410f9"
     },
     "src/recordings-job-evidence.mjs": {
-      "bytes": 2267,
-      "sha256": "2f38e699f710067afe7de52059d72d52b75c7ad9ada27c7f03915e1ce84f8c62"
+      "bytes": 3615,
+      "sha256": "6f889d2b9b5a56f015dcbe5a639915a7e2c53b90a022af56c38160f9c6907f34"
     },
     "docs/recordings-native-timing-validation.md": {
       "bytes": 11707,
       "sha256": "16d152b6bc9a885635ea20844ef54f0f7bc5491391039dcefc484ec44c823471"
     },
     "src/recordings-timing.mjs": {
-      "bytes": 7518,
-      "sha256": "294696c220e6a88e9017eba36bf5a9bf374dc3234e2322d3933cd377fb786a61"
+      "bytes": 7273,
+      "sha256": "6dbd22715a5f017cb19773c6746ccd146e26cff19c709459e29f1b204ca4f3bf"
     },
     "test/recordings-native-media.test.mjs": {
-      "bytes": 3592,
-      "sha256": "bae1f0a3b8bad5674e4bd2957b78d6d8021cd91d4c53c56bd2051702e346fcfe"
+      "bytes": 3605,
+      "sha256": "e13fcdf03137f8abade97648b99e3aa16f8829f31a14f1d5147a6390cf92c7a8"
     },
     "test/recordings-timing.test.mjs": {
       "bytes": 13658,
       "sha256": "e999f25e711ac5e9d94964facdd9c51e7b7b31484c739cbdd133a47b7b24da38"
     },
     "tools/check-native-recording-media.mjs": {
-      "bytes": 10503,
-      "sha256": "eeb3da4cef1083ae9f29bccbd9d200916c40282f11f10b26fb150b484c585acc"
+      "bytes": 10065,
+      "sha256": "fc74867e9231904c48899e3ad0b9f898867f6dea00a67c907107d81ee01f4d44"
     },
     "docs/runtime-logging.md": {
       "bytes": 2649,
@@ -747,6 +747,18 @@
     "test/recordings-live-catalog.test.mjs": {
       "bytes": 6609,
       "sha256": "fb370c7ad31587127f35a2b90b52c8a57bb183fb91b60c64d7902e8632058109"
+    },
+    "docs/progressive-pipe-20261107.md": {
+      "bytes": 4236,
+      "sha256": "91783faddb185b0d2146362105260683e6f7421bf685172dc042d16efa0412df"
+    },
+    "test/recordings-progressive-pipe-media.test.mjs": {
+      "bytes": 1102,
+      "sha256": "06dcb99e950d942bbe6d83a4b348aded8f39f03d4fd0c23a426b59e637aff526"
+    },
+    "tools/check-progressive-pipe-media.mjs": {
+      "bytes": 10529,
+      "sha256": "7210a6d95ce0dac0be91e46f90bf4c96d6f11a428f985c58c5e2dd312cf591ef"
     }
   }
 }
