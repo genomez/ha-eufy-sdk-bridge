@@ -55,3 +55,23 @@ test("disconnect grace, limits and stale generation cannot affect replacement", 
   sessions.clear();
   assert.throws(() => sessions.get(b.sessionId, "next", "a"));
 });
+
+test("verified HLS completion retains the lease across idle and owner loss until its hard deadline", () => {
+  let now = 0;
+  const emptied = [];
+  const sessions = createPlaybackSessions({ now: () => now, empty: (job) => emptied.push(job) });
+  const job = { generation: "complete", expectedMs: 10000, hlsComplete: false };
+  const session = sessions.open("viewer", "request", job);
+  sessions.renew(session.sessionId, job.generation, "viewer");
+  job.hlsComplete = true;
+  sessions.ownerLost("viewer");
+  now = 120000;
+  sessions.expire();
+  assert.equal(sessions.get(session.sessionId, job.generation, "viewer"), session);
+  sessions.renew(session.sessionId, job.generation, "viewer");
+  now = session.hardExpiresAtMs - 1;
+  assert.equal(sessions.count(job), 1);
+  now++;
+  assert.throws(() => sessions.get(session.sessionId, job.generation, "viewer"));
+  assert.deepEqual(emptied, [job]);
+});

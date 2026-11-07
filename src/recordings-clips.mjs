@@ -556,7 +556,7 @@ export function createClipJobs({
       .filter((j) => j.state === "ready" && !j.readers && !sessions.count(j))
       .sort((a, b) => a.access - b.access)) {
       if (used + bytes <= cap && now() < j.expiresAtMs) continue;
-      const size = j.bytes;
+      const size = j.bytes + (j.directory ? progressiveUsage(j.directory) : 0);
       remove(j);
       state(j, "idle");
       used -= size;

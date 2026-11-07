@@ -238,6 +238,68 @@ test("cache replay uses the ready MP4 without another pull and generation stays 
   assert.equal(f.jobs.status("camera", "event").clip.state, "ready");
 });
 
+test("completed segment history survives a buffered pause without a new pull", async (t) => {
+  let now = 0;
+  const f = await fixture(t, { now: () => now });
+  f.finish();
+  await until(() => !f.jobs.busy());
+  f.jobs.playbackStatus("a", f.a.sessionId, f.a.generation, true);
+  now = 120000;
+  assert.equal(f.jobs.playbackStatus("a", f.a.sessionId, f.a.generation, true).playback.delivery, "complete");
+  const segment = f.jobs.playbackAsset(f.a.sessionId, f.a.generation, 0);
+  assert.ok(fs.existsSync(segment.path));
+  segment.release();
+  assert.equal(f.pulls(), 1);
+});
+
+test("quota admission credits both MP4 and HLS bytes removed by eviction", async (t) => {
+  const root = await temporary(t);
+  const jobs = createClipJobs({
+    root,
+    enabled: () => true,
+    live: () => false,
+    changed() {},
+    log() {},
+    cap: 24 * 1024 ** 2,
+    progressiveFps: 15,
+    progressiveEncoder: ({ directory }) => {
+      manifest(directory, 6);
+      return {
+        commit() {},
+        snapshot: () => ({ delivery: "complete", segments: segmentInventory(directory) }),
+        async finish() {},
+        async finalizeMp4(output) {
+          fs.writeFileSync(output, "mp4");
+        },
+        dispose() {},
+      };
+    },
+    pull: async (_selection, options) => {
+      options.beforeDispatch();
+      options.video(Buffer.from("frame"));
+      options.video(Buffer.from("tail"));
+      return clean;
+    },
+    convert: async ({ output }) => fs.writeFileSync(output, "mp4"),
+  });
+  jobs.load();
+  t.after(() => jobs.stop());
+  const selection = { selector: { expectedMs: 10000 } };
+  jobs.prepare("camera", "event", selection, { progressive: true });
+  await until(() => !jobs.busy());
+  assert.equal(jobs.status("camera", "event").clip.state, "ready");
+  const directory = path.join(
+    root,
+    fs.readdirSync(root).find((name) => name.startsWith("hls-")),
+  );
+  fs.writeFileSync(path.join(directory, "segment000000.ts"), Buffer.alloc(9 * 1024 ** 2));
+  jobs.prepare("camera", "next", selection);
+  await until(() => !jobs.busy());
+  assert.equal(jobs.status("camera", "next").clip.state, "ready");
+  assert.equal(jobs.status("camera", "event").clip.state, "idle");
+  assert.equal(fs.existsSync(directory), false);
+});
+
 test("live preemption of a playable job withdraws delivery and retains cleanup barrier", async (t) => {
   const f = await fixture(t);
   f.snapshot.delivery = "playable";

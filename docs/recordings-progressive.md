@@ -38,10 +38,18 @@ Version-1 `recordings.playback_open`, `playback_status`, `playback_renew` and
 a caller request key. Status/renew/release bind the WS owner, session, camera,
 event and job generation. Different viewers share the existing station job;
 only the last release cancels incomplete work, and legacy MP4 waiters retain their
-interest. Startup grace is 180 seconds; renewed idle expiry is 30 seconds; the
-hard lifetime is at least 15 minutes or expected duration plus 450 seconds.
-WS loss shortens outstanding leases to at most 30 seconds. A bridge timer expires
+interest. Startup grace is 180 seconds; unfinished work has a renewed idle expiry
+of 30 seconds. Verified HLS completion retains the original lease and all segments
+until the hard lifetime: at least 15 minutes or expected duration plus 450 seconds
+from open. This also covers MP4 remux failure and completion between HTTP reads.
+WS loss shortens unfinished leases to at most 30 seconds. A bridge timer expires
 leases even if HA is gone; expired identities cannot revive or start work.
+
+HA uses the same completion lifetime after ENDLIST. Keeping the signed HLS
+history supports buffered playback and paused seeks in Android WebView and
+desktop hls.js without asking either client to interpret an MP4 redirect as a TS
+segment. Hard expiry still requires a fresh resolve, which uses the completed
+MP4 cache when available. Client acceptance remains outstanding.
 
 The private fixed-origin segment endpoint inherits the service host policy. It
 accepts only existing session/generation/sequence membership, GET/HEAD and no
@@ -69,11 +77,15 @@ burst and 3.5-second paused delivery) against the deployment ffmpeg; qualify the
 15 fps profile; then accept actual Android companion and desktop playback.
 
 Run `node tools/check-progressive-media.mjs <local-ffmpeg> <local-ffprobe>` to
-generate synthetic HEVC with a deliberately different VUI cadence, feed it at 2x
-with a 3.5-second pause, require early publication and independently decode every
+generate synthetic HEVC with a deliberately different VUI cadence, feed it at 1x
+and at 2x with a 3.5-second pause, require early publication and independently decode every
 TS segment plus the remuxed MP4. Media and receipts remain in `.offline/`.
 The full suite includes this check when both local executables exist (override
 with `PROGRESSIVE_FFMPEG` and `PROGRESSIVE_FFPROBE`); otherwise it explicitly skips.
+The header of `test/recordings-progressive-media.test.mjs` contains the exact
+offline Linux container command using an already-built add-on image and mounted
+bridge copy. It needs no dependencies or network and requires both media tests
+to execute (`PROGRESSIVE_MEDIA_REQUIRED=1` makes missing binaries a failure).
 
 The stock HA dialog has bounded idle cancellation and generic playback errors.
 Exact close cancellation, guaranteed start-zero/no-live-catch-up controls and

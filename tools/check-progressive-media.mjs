@@ -8,7 +8,9 @@ import assert from "node:assert/strict";
 import { createProgressiveEncoder } from "../src/recordings-progressive.mjs";
 
 /** Generate only synthetic video; preserve all media and scalar receipts locally. */
-export async function checkProgressiveMedia({ ffmpeg, ffprobe, pauseMs = 3500 }) {
+export async function checkProgressiveMedia({ ffmpeg, ffprobe, transferSpeed = 2, pauseMs = 3500 }) {
+  assert.ok([1, 2].includes(transferSpeed));
+  assert.ok(Number.isFinite(pauseMs) && pauseMs >= 0);
   const root = path.resolve(".offline", "progressive-media", randomUUID());
   fs.mkdirSync(root, { recursive: true });
   const run = (program, args) =>
@@ -82,7 +84,7 @@ export async function checkProgressiveMedia({ ffmpeg, ffprobe, pauseMs = 3500 })
       );
       fs.appendFileSync(input, raw.subarray(position, position + size));
       encoder.commit(size);
-      await delay(1000 / 30);
+      await delay(1000 / (15 * transferSpeed));
       if (index === 59) await delay(pauseMs);
       if (encoder.snapshot().delivery === "playable") firstPlayableMs ??= Math.round(performance.now() - start);
     }
@@ -138,6 +140,7 @@ export async function checkProgressiveMedia({ ffmpeg, ffprobe, pauseMs = 3500 })
       frames: 120,
       durationMs: 8000,
       segments: snapshot.segments.length,
+      transferSpeed,
       arrivalPauseMs: pauseMs,
       codec: stream.codec_name,
     };
@@ -153,5 +156,11 @@ export async function checkProgressiveMedia({ ffmpeg, ffprobe, pauseMs = 3500 })
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [ffmpeg, ffprobe] = process.argv.slice(2);
   if (!ffmpeg || !ffprobe) throw new Error("Supply local ffmpeg and ffprobe executable paths");
-  process.stdout.write(JSON.stringify(await checkProgressiveMedia({ ffmpeg, ffprobe })) + "\n");
+  for (const [transferSpeed, pauseMs] of [
+    [1, 0],
+    [2, 3500],
+  ])
+    process.stdout.write(
+      JSON.stringify(await checkProgressiveMedia({ ffmpeg, ffprobe, transferSpeed, pauseMs })) + "\n",
+    );
 }

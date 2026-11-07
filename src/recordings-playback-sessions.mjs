@@ -11,7 +11,8 @@ export function createPlaybackSessions({ now = Date.now, empty = () => {}, limit
     if (![...sessions.values()].some((v) => v.job === s.job)) empty(s.job);
   }
   function expire() {
-    for (const s of sessions.values()) if (now() >= Math.min(s.expires, s.hardExpiresAtMs)) retire(s);
+    for (const s of sessions.values())
+      if (now() >= (s.job.hlsComplete ? s.hardExpiresAtMs : Math.min(s.expires, s.hardExpiresAtMs))) retire(s);
   }
   function get(sessionId, generation, owner) {
     expire();
@@ -50,7 +51,7 @@ export function createPlaybackSessions({ now = Date.now, empty = () => {}, limit
     get,
     renew(sessionId, generation, owner) {
       const s = get(sessionId, generation, owner);
-      s.expires = Math.min(now() + 30_000, s.hardExpiresAtMs);
+      s.expires = s.job.hlsComplete ? s.hardExpiresAtMs : Math.min(now() + 30_000, s.hardExpiresAtMs);
       return s;
     },
     release(sessionId, generation, owner, cameraId, eventId) {
