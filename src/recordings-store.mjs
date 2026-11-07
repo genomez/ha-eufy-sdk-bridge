@@ -75,6 +75,19 @@ export function validRecordingJpeg(b) {
   return false;
 }
 
+function recordingAvailable(row) {
+  // Playback selectors identify event-table rows, including events with no stored video.
+  // Retained path fingerprints keep real recordings visible after selector loss.
+  return (
+    (row.pathKeys?.length ?? 0) > 0 ||
+    !!row.selector ||
+    (typeof row.durationSeconds === "number" &&
+      Number.isFinite(row.durationSeconds) &&
+      row.durationSeconds > 3 &&
+      row.durationSeconds <= 86400)
+  );
+}
+
 export function publicRecording(row, coverState = "not_requested", playbackAllowed = false) {
   const timeStatus = ["valid", "unknown_format", "ambiguous", "invalid"].includes(row.timeStatus)
     ? row.timeStatus
@@ -107,6 +120,7 @@ export function publicRecording(row, coverState = "not_requested", playbackAllow
     coverState,
     coverRevision: hex(row.cover?.sha256) ? row.cover.sha256.slice(0, 22) : null,
     playable: playbackAllowed && !!row.playbackSelector,
+    recordingAvailable: recordingAvailable(row),
   };
 }
 const newest = (a, b) =>
@@ -499,11 +513,14 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
         await commit(next, isCurrent);
       });
     },
-    listPage(cameraId, focusEventId) {
+    listPage(cameraId, focusEventId, { recordingsOnly = false } = {}) {
       const rows = data.rows
         .filter(
           (r) =>
-            r.cameraId === cameraId && clock() - r.firstObservedAtMs < LIMITS.ttl && clock() >= r.firstObservedAtMs,
+            r.cameraId === cameraId &&
+            clock() - r.firstObservedAtMs < LIMITS.ttl &&
+            clock() >= r.firstObservedAtMs &&
+            (!recordingsOnly || recordingAvailable(r)),
         )
         .sort(newest);
       return {

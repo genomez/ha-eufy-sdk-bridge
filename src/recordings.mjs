@@ -1056,7 +1056,7 @@ export function createRecordings(
         (args.focusEventId !== undefined && !validId(args.focusEventId, "e"))
       )
         throw failure("invalid");
-      const { rows, truncated } = store.listPage(args.cameraId, args.focusEventId);
+      const { rows, truncated } = store.listPage(args.cameraId, args.focusEventId, { recordingsOnly: true });
       if (args.focusEventId && !rows.length) throw failure("not_found");
       const candidates = rows.filter((r) => r.selector && !r.cover && !negativeWait(r)).map((r) => r.eventId);
       const browse = args.refresh === "if_due" ? interest(owner, args.cameraId, candidates) : null;
