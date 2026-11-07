@@ -564,3 +564,5 @@ Offline synthetic validation only; installation acceptance remains false.
 - Playback 3r, 2026-11-06: pin the local 4459fe5 SDK tarball and runtime; offline packaging only.
 
 - Playback 3s, 2026-11-07: pin the local d78f0fc SDK tarball and runtime; offline packaging only.
+
+- Playback 3s r2, 2026-11-07: pin the local d93a53e SDK tarball and runtime; offline packaging only.
