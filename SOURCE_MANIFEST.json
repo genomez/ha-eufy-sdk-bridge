@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.12",
   "status": "local-build-unpublished",
-  "exactInputCommit": "526514f57145e10ebdef0938145e401c0f22344b",
+  "exactInputCommit": "b3ecc7265a63065382366e374a0f47e075991e25",
   "files": {
     ".env.example": {
       "bytes": 3763,
@@ -22,7 +22,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 749,
-      "sha256": "5ac1db2e77b2de40a26addf1a14d71d705ba4ad753be429e877aafc07d69753c"
+      "sha256": "6585cd0988675afaf82409ab4356f67e90a77ed71abc57281b5f8c39d6c0d3d3"
     },
     "CONTRIBUTING.md": {
       "bytes": 983,
@@ -37,8 +37,8 @@
       "sha256": "95b791c3b452823fe2b67de33893e4d0edc96ef6e2ce548ae78129c0f1a6ced5"
     },
     "MODIFICATIONS.md": {
-      "bytes": 46531,
-      "sha256": "a0548953bef52480c31daeec684c3a268f0803f17c3dba2cb6b6752b2e84b58d"
+      "bytes": 48385,
+      "sha256": "83c18416c6c7a4cb72342e422d54bc584e4d16cef90bee748c0f7a2fbe8393a2"
     },
     "PUBLICATION.json": {
       "bytes": 675,
@@ -257,8 +257,8 @@
       "sha256": "1eaae1890c71b2dd77cce77adc0f274c068bccf059ba047c65f435ab8c227bec"
     },
     "src/recordings-clips.mjs": {
-      "bytes": 54030,
-      "sha256": "494356a217ab9a372d14ee7c8495fc56d5e50547a1cb679c286fc92a96cfba9a"
+      "bytes": 54734,
+      "sha256": "14997ac5362c6125ce2c7dd0c6a8f5fa4fefb76d136db86a54b3ad6f9e6eb639"
     },
     "src/recordings-download.mjs": {
       "bytes": 8435,
@@ -649,16 +649,16 @@
       "sha256": "113f0690310e492db1d596cd9a3c5b744ef8d41c1fc153d6028064ae6d0f44d1"
     },
     "docs/recordings-progressive.md": {
-      "bytes": 10423,
-      "sha256": "1a1dde6c5c73ad9ba1bb4411ca89d77b848f522014bc4b54040d9ba845e352cb"
+      "bytes": 10955,
+      "sha256": "175f5a6f3c5b02b8ee7f84ed0e21569f0dce2b6ddf9fbf536b79514b0867158a"
     },
     "src/recordings-playback-sessions.mjs": {
       "bytes": 3273,
       "sha256": "5bb6d73f2c74ebc531a1cae07e556d161f6412da5aecbee18566755c1a5938fc"
     },
     "src/recordings-progressive.mjs": {
-      "bytes": 11327,
-      "sha256": "d1ac15a436f0fcf0373f37bf3e7ed289ab052a120bd9433a6c3f7dd1b6e7137c"
+      "bytes": 12403,
+      "sha256": "5014d7c4792ae6e654dd356993ad3cf020328626e4b7a1c2b055c8c24f620335"
     },
     "test/ice-establishment-evidence.test.mjs": {
       "bytes": 8663,
@@ -673,16 +673,16 @@
       "sha256": "2f47c7c941e3f44a3f5e22bb739fefb938d923fbb755296584000a762e5efcad"
     },
     "test/recordings-progressive.test.mjs": {
-      "bytes": 29656,
-      "sha256": "205962ca23a5799f995ff4447296c7b57b3051b06f2d91271dd495a5eea8e3ce"
+      "bytes": 38416,
+      "sha256": "348675b4596d1b9c978f8f145de14616d0d75c5b88298bc05e09e50b10de1fd5"
     },
     "tools/check-progressive-media.mjs": {
       "bytes": 5168,
       "sha256": "d7896ce027087e77489b39a24358b39195578a295e6f19b4b86f3d47b37410f9"
     },
     "src/recordings-job-evidence.mjs": {
-      "bytes": 1888,
-      "sha256": "d4a313fe04574547c9da947de3d5d71b061b4e54f8661d2aeb48423668f8d1af"
+      "bytes": 2125,
+      "sha256": "d2ea81288cd76750dfe81f55b5f3f2ca9dec76406b546baf60d85f19c655d08f"
     }
   }
 }
