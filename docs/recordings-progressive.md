@@ -206,6 +206,10 @@ package is changed, and no native/network connection is opened.
 
 ## Per-clip runtime policy
 
+Camera eligibility is controlled independently by the live
+[`playback-models.json` allowlist](../README.md). It is read for catalog flags and
+new playback admission; progressive settings do not bypass that model check.
+
 Use `<RECORDINGS_ROOT>/progressive.json` (normally `/data/recordings/progressive.json`).
 It is independent of `experiments.json` and never consumes or rearms an experiment
 budget. The closed version-1 JSON object requires `version: 1` and accepts only:

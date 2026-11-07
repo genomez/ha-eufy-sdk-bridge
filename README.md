@@ -171,10 +171,40 @@ Please open source issues in this fork, using a redacted description or syntheti
 
 This replaces the earlier review.7 candidate with review.9 input `681efd9` (implementation `d4335b9`, on review.8 `f6a59d9`). Runtime source is unchanged. Includes bounded pending acceptance for eligible correlated floodlight late replies with authoritative correction, supported S1 camera sirens, standard doorbell ring events and faster demand-only live-view admission, alongside the battery stream fix and native relay. The add-on relay option defaults to false; command keepalive remains 29000 independently. Package versions are SDK `0.2.1-s1.experimental.6` and bridge `0.3.1-s1.experimental.6`. Earlier candidate status statements above are historical. Original licenses and attribution remain. This is local packaging; publication and final device/soak qualification are pending.
 
-Recordings playback is limited to camera models T8425, T8426 and T8170 by default. Set
-`RECORDINGS_PLAYBACK_MODELS` to a comma-separated model list to override this policy;
-an explicitly empty value disables playback for every model. Unsupported models
-remain browsable, report `playable: false`, and clip preparation returns `not_found`.
+Recordings playback allows camera models T8425, T8426, T8170, T8171, T8214, T8416
+and T8134 by default. `RECORDINGS_PLAYBACK_MODELS` sets the startup fallback as a
+comma-separated list; an explicitly empty value disables playback for every model.
+For live changes without an add-on restart, atomically replace
+`<RECORDINGS_ROOT>/playback-models.json` (normally `/data/recordings/playback-models.json`):
+
+```json
+{ "version": 1, "models": ["T8425", "T8426", "T8170", "T8171", "T8214", "T8416", "T8134"] }
+```
+
+The file replaces the entire list. Strings are trimmed, uppercased and deduplicated;
+each must match `^T\d{4}[A-Z0-9]*$`. An empty array disables all models. Missing files
+use the environment or built-in default. Malformed JSON, unknown versions, bad
+entries, unknown fields, linked, changing or unreadable files are rejected as a
+whole and use that same fallback; no partial list or previous valid file is retained.
+Precedence is active `recordings.test_playback_models` override, valid live file,
+startup environment, built-in default. The test override keeps its existing expiry;
+the live file has no timer, expiry or new limits.
+
+Catalog flags and playback admission re-read the file on the next request, even
+without a catalog refresh. Removing a model after browsing blocks a new playback
+job; existing jobs are not cancelled. Playback still requires a stored valid selector.
+Disallowed models remain browsable, report `playable: false`, and clip preparation
+returns `not_found`. Home Assistant uses these flags and needs no integration change.
+`config.get` returns `recordings.playbackModelPolicy`; the same policy appears in
+recordings capability, `recordings.diagnostics`, and `/diagnostics.recordings`.
+It includes `models`, `source` (`file`, `env`, `default`, or `test_override`),
+`rejection` (null when accepted/absent), and a policy `revision`. An underlying
+file rejection stays visible while a test override is active.
+
+Environment changes still require an add-on restart. The live controls
+`playback-models.json`, [`progressive.json`](docs/recordings-progressive.md#per-clip-runtime-policy)
+and [`background-paging.json`](docs/ws-protocol.md) take effect on their next read.
+
 Clip cleanup uncertainty triggers a bounded in-memory station reconnect. Existing
 `playback-safety.json` files are ignored and left untouched. Clip diagnostics expose
 finite capture, cessation, release and reconnect outcomes, ingress media counts,

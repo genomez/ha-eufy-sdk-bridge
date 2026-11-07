@@ -1390,7 +1390,15 @@ test("test playback model override is validated, applies, and switches off", asy
 });
 
 test("playback model environment default, override and explicit empty list", () => {
-  assert.deepEqual(loadConfig({}).cfg.recordings.playbackModels, ["T8425", "T8426", "T8170"]);
+  assert.deepEqual(loadConfig({}).cfg.recordings.playbackModels, [
+    "T8425",
+    "T8426",
+    "T8170",
+    "T8171",
+    "T8214",
+    "T8416",
+    "T8134",
+  ]);
   assert.deepEqual(loadConfig({ RECORDINGS_PLAYBACK_MODELS: " t8170, T8426 ,," }).cfg.recordings.playbackModels, [
     "T8170",
     "T8426",

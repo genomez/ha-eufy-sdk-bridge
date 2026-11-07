@@ -478,7 +478,11 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
         }
         case "config.get":
           // Current effective cloud poll interval (ms). 0 means polling is disabled.
-          return reply({ pollMs: eufy.pollIntervalMs, ...(ctx.logging && { logging: ctx.logging.snapshot() }) });
+          return reply({
+            pollMs: eufy.pollIntervalMs,
+            ...(ctx.logging && { logging: ctx.logging.snapshot() }),
+            ...(ctx.recordings && { recordings: { playbackModelPolicy: ctx.recordings.playbackModelPolicy() } }),
+          });
         case "config.set": {
           const loggingFields = ["debug", "event_log", "expires_ms"];
           const hasLogging = loggingFields.some((key) => Object.hasOwn(msg, key));

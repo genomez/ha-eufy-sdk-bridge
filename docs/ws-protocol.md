@@ -193,6 +193,22 @@ malformed, oversized, linked or unreadable files disable paging. Replace the
 small regular file atomically when changing it. Re-enabling permits future
 overflow cycles, without resuming a stopped cycle or clearing the unsupported latch.
 
+The playback model allowlist has a separate live file,
+`<RECORDINGS_ROOT>/playback-models.json`: `{"version":1,"models":["T8425","T8171"]}`.
+It replaces the list at each catalog request and new playback admission without
+background refresh or restart. Models are trimmed, uppercased and deduplicated,
+and must match `^T\d{4}[A-Z0-9]*$`; `[]` disables all models. The built-in list is
+T8425, T8426, T8170, T8171, T8214, T8416, T8134. Precedence is active
+`recordings.test_playback_models`, valid file, startup `RECORDINGS_PLAYBACK_MODELS`,
+then built-in default. Missing files use the fallback. Malformed JSON, unknown
+versions/fields, invalid entries, linked, changing or unreadable files reject
+the entire file and use the fallback, with `rejection` in policy readback.
+Replace a regular file atomically. Existing jobs may finish; a removed model
+cannot admit a new job. The file has no timer, expiry or new limits.
+The test RPC retains its existing `{enabled, models, minutes}` semantics (30-minute
+default, maximum 240); it overrides the file while active.
+See the [README](../README.md) for the complete live model policy.
+
 After latest or deeper merges, uncached covers with a validated selector and a
 known start within the last 24 hours are eligible for background prefetch, newest
 first. Future and unknown starts are excluded. Background reads are serialized
@@ -524,6 +540,13 @@ re-reads device state from the cloud. `0` disables polling. Unset at startup →
 
 Faster polling means fresher state but more cloud traffic; the cloud itself only refreshes these
 values on the order of minutes, so intervals below ~1 min mostly add load without adding freshness.
+
+When recordings is available, `config.get` also returns
+`recordings.playbackModelPolicy`: `{version, models, source, rejection, revision}`.
+`source` is `file`, `env`, `default`, or `test_override`; `rejection` describes an
+ignored live file, including during a test override. The same current policy is
+included in recordings capability, `recordings.diagnostics`, and the `recordings`
+section of `/diagnostics`. Reads do not require a restart or background refresh.
 
 ### `stream.start`
 

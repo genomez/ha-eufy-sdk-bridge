@@ -256,6 +256,7 @@ test("hello advertises additive browse-only capability without changing schema",
     version: 1,
     browseOnly: true,
     playback: false,
+    playbackModelPolicy: h.manager.playbackModelPolicy(),
     progressivePolicy: h.manager.capability().progressivePolicy,
     enabled: true,
     scopeId: h.scope.scopeId,
@@ -264,6 +265,43 @@ test("hello advertises additive browse-only capability without changing schema",
     pageSize: 100,
     coverBudget: 20,
   });
+});
+
+test("config.get and diagnostics read back live playback models and file rejections", async (t) => {
+  const h = await harness(t),
+    s = await socket(t, h);
+  const file = path.join(h.root, "playback-models.json");
+  for (const [raw, source, rejection, models] of [
+    ['{"version":1,"models":[" t8171 "]}', "file", null, ["T8171"]],
+    ["{", "default", "malformed", ["T8425", "T8426", "T8170", "T8171", "T8214", "T8416", "T8134"]],
+    [
+      '{"version":2,"models":[]}',
+      "default",
+      "version",
+      ["T8425", "T8426", "T8170", "T8171", "T8214", "T8416", "T8134"],
+    ],
+    [
+      '{"version":1,"models":["bad"]}',
+      "default",
+      "models",
+      ["T8425", "T8426", "T8170", "T8171", "T8214", "T8416", "T8134"],
+    ],
+  ]) {
+    await fs.writeFile(file, raw);
+    const result = await s.rpc({ id: 1, cmd: "config.get" });
+    assert.equal(result.ok, true);
+    const p = result.recordings.playbackModelPolicy;
+    assert.equal(p.source, source);
+    assert.equal(p.rejection, rejection);
+    assert.deepEqual(p.models, models);
+    assert.deepEqual((await s.rpc({ id: 2, cmd: "recordings.diagnostics" })).recordings.playbackModelPolicy, p);
+    assert.deepEqual(JSON.parse((await request(h, "/diagnostics")).body).recordings.playbackModelPolicy, p);
+  }
+  await s.rpc({ id: 3, cmd: "recordings.test_playback_models", enabled: true, models: ["T8134"] });
+  const p = (await s.rpc({ id: 4, cmd: "config.get" })).recordings.playbackModelPolicy;
+  assert.equal(p.source, "test_override");
+  assert.deepEqual(p.models, ["T8134"]);
+  assert.equal(p.rejection, "models", "underlying file rejection remains visible during a test override");
 });
 
 test("early clients receive enrollment, invalidation and replacement capabilities without reconnecting", async (t) => {

@@ -1,6 +1,7 @@
 /** Modified for genomez S1 experimental source preview, 2026-10-16. */
 import { pilotLog } from "./pilot-log.mjs";
 import { createLoggingControl } from "./logging-control.mjs";
+import { DEFAULT_PLAYBACK_MODELS } from "./recordings-playback-models.mjs";
 // Environment → the immutable config + constants the whole bridge reads. Side-effect free (no mkdir,
 // no process.exit) so it can be imported from tests; server.mjs owns the startup guards.
 import path from "node:path";
@@ -117,10 +118,15 @@ export function loadConfig(env = process.env) {
           ? Number(env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS)
           : 6000,
       progressiveFps: env.RECORDINGS_PROGRESSIVE_FPS === "15" ? 15 : null,
-      playbackModels: (env.RECORDINGS_PLAYBACK_MODELS ?? "T8425,T8426,T8170")
-        .split(",")
-        .map((v) => v.trim().toUpperCase())
-        .filter(Boolean),
+      playbackModelsSource: env.RECORDINGS_PLAYBACK_MODELS == null ? "default" : "env",
+      playbackModels: [
+        ...new Set(
+          (env.RECORDINGS_PLAYBACK_MODELS ?? DEFAULT_PLAYBACK_MODELS.join(","))
+            .split(",")
+            .map((v) => v.trim().toUpperCase())
+            .filter(Boolean),
+        ),
+      ],
       background: env.RECORDINGS_BACKGROUND == null ? true : truthy(env.RECORDINGS_BACKGROUND),
       backgroundPaging: env.RECORDINGS_BACKGROUND_PAGING == null ? true : truthy(env.RECORDINGS_BACKGROUND_PAGING),
       root: env.RECORDINGS_ROOT || "/data/recordings",

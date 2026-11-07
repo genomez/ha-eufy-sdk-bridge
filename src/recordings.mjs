@@ -2,6 +2,7 @@ import path from "node:path";
 import { playbackExperiments } from "./recordings-experiments.mjs";
 import { readProgressiveSettings } from "./recordings-progressive-settings.mjs";
 import { backgroundPagingEnabled } from "./recordings-background-paging.mjs";
+import { readPlaybackModels } from "./recordings-playback-models.mjs";
 import { playableThreshold } from "./recordings-job-evidence.mjs";
 import { createClipJobs, armClipSafety } from "./recordings-clips.mjs";
 import { randomBytes } from "node:crypto";
@@ -113,11 +114,14 @@ export function createRecordings(
   const playbackEnabled = () =>
     enabled() && ctx.cfg.recordings?.playback !== false && typeof ctx.eufy.pullRecordingClip === "function";
   const testModelsActive = () => mono() < testModels.untilMono;
-  const playbackAllowed = (cameraId) =>
-    (testModelsActive()
-      ? testModels.models
-      : (ctx.cfg.recordings?.playbackModels ?? ["T8425", "T8426", "T8170"])
-    ).includes(
+  const playbackModelPolicy = () =>
+    readPlaybackModels(ctx.cfg.recordings?.root ?? "/data/recordings", {
+      models: ctx.cfg.recordings?.playbackModels,
+      source: ctx.cfg.recordings?.playbackModelsSource,
+      ...(testModelsActive() ? { overrideModels: testModels.models } : {}),
+    });
+  const playbackAllowed = (cameraId, models = playbackModelPolicy().models) =>
+    models.includes(
       String(scope?.cameras.find((c) => c.cameraId === cameraId)?.model ?? "")
         .trim()
         .toUpperCase(),
@@ -155,6 +159,7 @@ export function createRecordings(
       version: 1,
       browseOnly: !playbackEnabled(),
       playback: playbackEnabled(),
+      playbackModelPolicy: playbackModelPolicy(),
       progressivePolicy: { ...effective },
       ...(playbackEnabled() &&
         effective.fps === 15 && { progressivePlayback: true, progressivePlayableMs: effective.playableMs }),
@@ -988,6 +993,7 @@ export function createRecordings(
   }
   const api = {
     capability: base,
+    playbackModelPolicy,
     setPacing(args) {
       fields(args, ["reset", ...Object.keys(DEFAULT_PACING)]);
       guard();
@@ -1054,6 +1060,7 @@ export function createRecordings(
       const cameras = scope && adapter.account() === account ? scope.cameras : [];
       return {
         clips: clips.diagnostics(),
+        playbackModelPolicy: playbackModelPolicy(),
         rowsKeptPerCamera: cameras.map((c) => ({
           name: c.name,
           rows: rows.filter((r) => r.cameraId === c.cameraId).length,
@@ -1185,6 +1192,7 @@ export function createRecordings(
         requestCatalog();
       }
       const state = store.snapshot;
+      const models = playbackModelPolicy().models;
       const result = {
         version: 1,
         scopeId: scope.scopeId,
@@ -1204,7 +1212,7 @@ export function createRecordings(
                   : r.coverEvicted
                     ? "evicted"
                     : "not_requested",
-            playbackAllowed(r.cameraId),
+            playbackAllowed(r.cameraId, models),
           ),
         ),
         truncated,
