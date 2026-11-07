@@ -3,6 +3,36 @@ import assert from "node:assert/strict";
 import { createRecordingTiming, validNativeDuration } from "../src/recordings-timing.mjs";
 
 const frame = Buffer.from([0, 0, 0, 1, 0x26, 1, 0x80]);
+
+test("review: clip-relative bound rejects a 3599800ms timestamp before committing it", () => {
+  const mux = createRecordingTiming({ expectedMs: 12000 });
+  for (let i = 0; i < 60; i++) mux.frame(frame, { nativeTimestamp: Math.round(i * 1000 / 15) });
+  const before = { ...mux.timing };
+  assert.throws(() => mux.frame(frame, { nativeTimestamp: 3599800 }), {
+    reason: "convert_failed", endReason: "conversion_validation_failed",
+  });
+  assert.deepEqual(mux.timing, before);
+});
+
+test("review: native spike followed by regression fails rather than collapsing frames", () => {
+  const mux = createRecordingTiming({ expectedMs: 12000 });
+  for (let i = 0; i < 60; i++) mux.frame(frame, { nativeTimestamp: Math.round(i * 1000 / 15) });
+  mux.frame(frame, { nativeTimestamp: 11000 });
+  const before = { ...mux.timing };
+  assert.throws(() => mux.frame(frame, { nativeTimestamp: 4067 }), {
+    reason: "convert_failed", endReason: "conversion_validation_failed",
+  });
+  assert.deepEqual(mux.timing, before);
+});
+
+test("review: constant zero timestamps select the raw fixed-rate fallback", () => {
+  const mux = createRecordingTiming({ expectedMs: 8000 });
+  const bytes = [];
+  for (let i = 0; i < 120; i++) bytes.push(mux.frame(frame, { nativeTimestamp: 0 }));
+  assert.equal(mux.timing.native, false);
+  assert.equal(mux.timing.frames, 120);
+  assert.deepEqual(Buffer.concat(bytes), Buffer.concat(Array(120).fill(frame)));
+});
 function presentation(data) {
   const times = [];
   for (let i = 0; i < data.length; i += 188) {

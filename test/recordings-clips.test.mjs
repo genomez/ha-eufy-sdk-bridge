@@ -28,6 +28,40 @@ const clean = {
   latchCleared: true,
 };
 const selection = { selector: { expectedMs: 10000 } };
+
+for (const issue of ["over-bound", "spike-regression", "zero-clock"])
+  test(`review: capture handles ${issue} as conversion failure or fixed-rate fallback`, async (t) => {
+    let converted = false;
+    const zero = issue === "zero-clock";
+    const f = await fixture(t, {
+      pull: async (_, opts) => {
+        opts.beforeDispatch();
+        for (let i = 0; i < (zero ? 120 : 180); i++) {
+          const timestamp = zero ? 0 : i === 60 ? (issue === "over-bound" ? 3599800 : 11000) : Math.round(i * 1000 / 15);
+          opts.video(Buffer.from("frame"), { nativeTimestamp: timestamp });
+        }
+        return { ...clean, mediaDurationMs: zero ? 8000 : 12000 };
+      },
+      convert: async ({ input, output, nativeTiming, frames, durationMs }) => {
+        converted = true;
+        assert.ok(zero, "corrupt native timing must never reach MP4 conversion");
+        assert.equal(nativeTiming.native, false);
+        assert.equal(frames, 120);
+        assert.equal(durationMs, 8000);
+        assert.equal(fs.readFileSync(input).length, 120 * 5);
+        fs.writeFileSync(output, "converted");
+      },
+    });
+    f.jobs.prepare("camera", issue, { selector: { expectedMs: zero ? 8000 : 12000 } });
+    await until(() => !f.jobs.busy());
+    assert.equal(state(f, issue).state, zero ? "ready" : "failed");
+    assert.equal(state(f, issue).reason, zero ? "none" : "convert_failed");
+    assert.equal(converted, zero);
+    if (!zero) {
+      assert.equal(f.jobs.diagnostics().history.at(-1).endReason, "conversion_validation_failed");
+      assert.deepEqual(fs.readdirSync(f.root), []);
+    }
+  });
 const deferred = () => {
   let resolve;
   const promise = new Promise((r) => {
