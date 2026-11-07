@@ -54,6 +54,7 @@ async function older(h, count = 3) {
   h.clocks.advance(1);
   await until(() => h.calls.catalog.length === count);
   await until(() => h.store.snapshot.history.coverCompleted === h.clocks.now());
+  await until(() => h.catalog().refresh.state === "idle");
   await tick();
 }
 

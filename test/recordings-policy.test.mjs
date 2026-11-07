@@ -18,16 +18,16 @@ test("model enrollment excludes J Safe and rejects ambiguous station ownership",
   assert.equal(recordingEnrollment(inventory, [{}]), null);
 });
 
-test("restart retains all twenty cover attempts and camera admissions", () => {
+test("restart retains twenty cover attempts and one hundred camera admissions", () => {
   const c = clock(),
     p = createRecordingsPolicy(c),
     camera = "c_" + "C".repeat(22),
-    events = Array.from({ length: 20 }, (_, i) => "e_" + String(i).padStart(22, "0")),
+    events = Array.from({ length: 100 }, (_, i) => "e_" + String(i).padStart(22, "0")),
     window = p.window(camera, events);
   for (const event of events) {
     window.used.add(event);
-    p.admitCover();
   }
+  for (let n = 0; n < 20; n++) p.admitCover();
   const restored = createRecordingsPolicy(c);
   restored.restore(p.snapshot());
   assert.equal(restored.coverWait(), 60_000);
@@ -96,16 +96,18 @@ test("catalog attempts use monotonic time including failures and restart restora
     p = createRecordingsPolicy(c);
   assert.equal(p.catalogWait(), 0);
   p.admitCatalog();
-  assert.equal(p.catalogWait(), 120000);
+  assert.equal(p.catalogWait(), 60000);
   c.wallJump(-1_000_000);
-  assert.equal(p.catalogWait(), 120000);
+  assert.equal(p.catalogWait(), 60000);
   const snapshot = p.snapshot(),
     c2 = clock(),
     p2 = createRecordingsPolicy(c2);
   c2.wallJump(-2_000_000);
   p2.restore(snapshot);
-  assert.equal(p2.catalogWait(), 120000);
-  c.advance(120000);
+  assert.equal(p2.catalogWait(), 60000);
+  c.advance(59999);
+  assert.equal(p.catalogWait(), 1);
+  c.advance(1);
   assert.equal(p.catalogWait(), 0);
 });
 test("station cover gap, twenty attempts sliding cap and shared camera windows", () => {
@@ -123,6 +125,40 @@ test("station cover gap, twenty attempts sliding cap and shared camera windows",
   assert.equal(p.coverWait(), 55000);
   c.advance(60000);
   assert.equal(p.window("camera", ["e"]).ids.size, 1);
+});
+
+test("a completed cover does not embargo fresh metadata or change cover pacing", async (t) => {
+  const h = await harness(t);
+  await seed(h);
+  h.ctx.state.flags.ready = false;
+  const page = h.catalog("if_due");
+  h.ctx.state.flags.ready = true;
+  await h.manager.cover(h.owner, {
+    cameraId: h.cameraId,
+    eventId: page.events[0].eventId,
+    browseId: page.browseId,
+    mode: "request_if_admitted",
+  });
+  await until(() => h.store.snapshot.rows[0].cover && h.manager.diagnostics().coverCache.pending === 0);
+  await tick();
+  assert.equal(h.clocks.monotonic(), 0);
+  assert.equal(h.catalog("if_due").refresh.state, "scheduled");
+  await until(() => h.calls.catalog.length === 1);
+  const policy = createRecordingsPolicy(h.clocks);
+  policy.completeCover();
+  assert.equal(policy.coverWait(), 5_000);
+});
+
+test("a failed catalog admits a fresh attempt at sixty seconds", async (t) => {
+  const h = await harness(t, { catalog: () => ({ status: "unavailable", reason: "timeout" }) });
+  h.catalog("if_due");
+  await until(() => h.catalog().refresh.state === "failed");
+  h.clocks.advance(59_999);
+  assert.equal(h.catalog("if_due").refresh.retryAfterMs, 1);
+  assert.equal(h.calls.catalog.length, 1);
+  h.clocks.advance(1);
+  assert.equal(h.catalog("if_due").refresh.state, "scheduled");
+  await until(() => h.calls.catalog.length === 2);
 });
 test("startup root browsing cache reads and detection pushes make zero facade calls", async (t) => {
   const h = await harness(t);
@@ -192,17 +228,22 @@ test("cover demand needs interest, deduplicates and cannot use another socket's 
   await tick();
   assert.equal(h.store.snapshot.rows[0].cover, null);
 });
-test("twenty cover budget is shared across clients and detail browsing", async (t) => {
+test("one hundred cover eligibility is shared across clients while the queue stays at thirty-two", async (t) => {
   const h = await harness(t);
-  await seed(h, 20);
+  for (let offset = 0; offset < 100; offset += 20)
+    await h.store.mergeCatalog(
+      h.scope,
+      Array.from({ length: 20 }, (_, i) => row(h.scope, offset + i)),
+    );
   await h.store.mergeCatalog(
     h.scope,
-    Array.from({ length: 4 }, (_, i) => row(h.scope, i + 20)),
+    Array.from({ length: 4 }, (_, i) => row(h.scope, i + 100)),
   );
   h.ctx.state.flags.ready = false;
   const page = h.catalog("if_due");
-  assert.equal(page.coverEligibleEventIds.length, 20);
-  for (const id of page.coverEligibleEventIds)
+  assert.equal(page.events.length, 100);
+  assert.equal(page.coverEligibleEventIds.length, 100);
+  for (const id of [page.coverEligibleEventIds[99], ...page.coverEligibleEventIds.slice(0, 31)])
     assert.equal(
       (
         await h.manager.cover(h.owner, {
@@ -214,10 +255,20 @@ test("twenty cover budget is shared across clients and detail browsing", async (
       ).state,
       "pending",
     );
-  const detail = h.manager.catalog(
-    {},
-    { cameraId: h.cameraId, focusEventId: page.events[21].eventId, refresh: "if_due" },
+  assert.equal(
+    (
+      await h.manager.cover(h.owner, {
+        cameraId: h.cameraId,
+        eventId: page.coverEligibleEventIds[31],
+        browseId: page.browseId,
+        mode: "request_if_admitted",
+      })
+    ).state,
+    "deferred",
   );
+  assert.equal(h.manager.diagnostics().coverCache.pending, 32);
+  const outside = h.store.snapshot.rows.find((r) => !page.coverEligibleEventIds.includes(r.eventId)).eventId;
+  const detail = h.manager.catalog({}, { cameraId: h.cameraId, focusEventId: outside, refresh: "if_due" });
   assert.deepEqual(detail.coverEligibleEventIds, []);
   assert.equal(
     (
@@ -225,7 +276,7 @@ test("twenty cover budget is shared across clients and detail browsing", async (
         {},
         {
           cameraId: h.cameraId,
-          eventId: page.events[21].eventId,
+          eventId: outside,
           browseId: detail.browseId,
           mode: "request_if_admitted",
         },

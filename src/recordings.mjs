@@ -524,7 +524,7 @@ export function createRecordings(
         background.retries++;
         const admitted = requestCatalog(cycle.background && backgroundEnabled() ? "background" : "browse", true);
         if (!admitted) {
-          cycle.retryAt = mono() + Math.max(5_000, policy.catalogWait(), policy.featureWait());
+          cycle.retryAt = mono() + Math.max(5_000, policy.catalogWait());
           armCatalogRetry(cycle);
         }
       },
@@ -672,8 +672,8 @@ export function createRecordings(
       pendingPage = null;
       return;
     }
-    if (flight || queued.length || !available() || policy.featureWait() > 0) {
-      pageTimer = schedule(readOlder, Math.max(1_000, policy.featureWait()));
+    if (flight || queued.length || !available()) {
+      pageTimer = schedule(readOlder, 1_000);
       pageTimer?.unref?.();
       return;
     }
@@ -773,7 +773,7 @@ export function createRecordings(
       };
       return;
     }
-    const wait = Math.max(policy.catalogWait(), policy.featureWait());
+    const wait = policy.catalogWait();
     if (wait > 0) {
       refresh = { state: "rate_limited", reason: "rate_limited", retryAfterMs: Math.ceil(wait) };
       return;

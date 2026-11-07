@@ -7,7 +7,7 @@ Authenticated `config.set` supports a narrow process-local verbosity override:
 ```
 
 `debug` and `event_log` are optional strict JSON booleans; at least one is
-required. Optional `expires_ms` is an integer from 1 through 3600000 (one hour).
+required. Optional `expires_ms` is a positive integer with no upper ceiling.
 Without expiry, the supplied flags last until overwritten or process restart.
 Each supplied flag gets its own deadline; omitted flags retain their prior state.
 Expiry restores that flag's startup ENV default (`BRIDGE_DEBUG`, default false;

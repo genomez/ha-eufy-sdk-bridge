@@ -42,7 +42,10 @@ for (const invalid of [
   { clientType: "ANDROID" },
   { icePolicy: "host-only" },
   { maxClips: 0 },
-  { maxClips: 6 },
+  { maxClips: -1 },
+  { maxClips: "6" },
+  { maxClips: null },
+  { maxClips: Number.MAX_SAFE_INTEGER + 1 },
   { maxClips: 1.5 },
   { extra: "secret" },
 ])
@@ -55,7 +58,7 @@ test("absent, malformed, oversized and non-file arming inputs stay inert", async
   assert.equal(e.peek(), undefined);
   assert.equal(e.take(), undefined);
   assert.equal(fs.existsSync(path.join(root, "experiments-state.json")), false);
-  for (const data of ["{", " ".repeat(4097), '{"maxClips":6}']) {
+  for (const data of ["{", " ".repeat(4097), '{"maxClips":0}']) {
     fs.writeFileSync(file, data);
     assert.equal(e.take(), undefined);
   }
@@ -81,6 +84,28 @@ test("maxClips persists across controller restart and leaves owner file intact",
   fs.writeFileSync(file, '{"playSpeed":2}');
   assert.equal(a.take().playSpeed, 2);
 });
+
+for (const maxClips of [6, 100, Number.MAX_SAFE_INTEGER])
+  test(`positive safe clip budget ${maxClips} is accepted`, () => {
+    assert.equal(validateExperiments({ maxClips }).maxClips, maxClips);
+  });
+
+for (const mode of ["playback", "download"])
+  test(`${mode} explicit budget beyond five persists across restart and stops at exhaustion`, async (t) => {
+    const root = await temporary(t),
+      file = path.join(root, "experiments.json");
+    const original = JSON.stringify({ mode, maxClips: 8 });
+    fs.writeFileSync(file, original);
+    for (let used = 1; used <= 8; used++) {
+      const controller = createPlaybackExperiments(root);
+      assert.equal(controller.peek()?.maxClips, 8);
+      assert.equal(controller.take()?.maxClips, 8);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(root, "experiments-state.json"))).used, used);
+    }
+    assert.equal(createPlaybackExperiments(root).peek(), undefined);
+    assert.equal(createPlaybackExperiments(root).take(), undefined);
+    assert.equal(fs.readFileSync(file, "utf8"), original);
+  });
 
 test("corrupt durable budget refuses experiments", async (t) => {
   const root = await temporary(t);

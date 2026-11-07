@@ -270,7 +270,7 @@ test("hello advertises additive browse-only capability without changing schema",
     timezone: "America/Chicago",
     stationWindow: 20,
     pageSize: 100,
-    coverBudget: 20,
+    coverBudget: 100,
     catalogSettings: h.manager.capability().catalogSettings,
   });
 });

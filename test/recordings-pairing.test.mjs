@@ -375,7 +375,7 @@ test("real SDK catalog abort releases local work and suppresses late synthetic r
   assert.equal(h.eufy.rtc.sessions.get(inventory[0].sn).leases, 0);
 });
 
-test("real SDK fresh-owner observing deferral recovers after the full observation gate", async (t) => {
+test("real SDK fresh-owner observing deferral recovers on renewed browse after sixty seconds", async (t) => {
   const h = await paired(t);
   const owner = h.eufy.rtc.sessions.get(inventory[0].sn);
   owner.connectedAtMonotonicMs = performance.now();
@@ -387,10 +387,14 @@ test("real SDK fresh-owner observing deferral recovers after the full observatio
   h.advance(60_000);
   assert.equal(h.manager.diagnostics().background.retries, 0);
   assert.equal(h.session.queries(1306).length, 0);
+  assert.equal(
+    (await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" })).refresh.state,
+    "scheduled",
+  );
   h.advance(1_001);
   await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
   assert.equal(h.session.queries(1306).length, 1);
-  assert.equal(h.manager.diagnostics().background.retries, 1);
+  assert.equal(h.manager.diagnostics().background.retries, 0);
 });
 
 test("real SDK background catalog and prefetch use the healthy existing station session", async (t) => {

@@ -1,8 +1,8 @@
 export const LIMITS = Object.freeze({
-  catalogInterval: 120_000,
+  catalogInterval: 60_000,
   timeout: 8_000,
   interest: 60_000,
-  folderBudget: 20,
+  folderBudget: 100,
   queue: 32,
   coverGap: 5_000,
   coverRate: 20,
@@ -133,7 +133,6 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
       }
     },
     catalogWait: () => Math.max(0, LIMITS.catalogInterval - (monotonic() - lastCatalog)),
-    featureWait: () => Math.max(0, LIMITS.coverGap - (monotonic() - lastCover)),
     setPacing(next) {
       pacing = next;
     },

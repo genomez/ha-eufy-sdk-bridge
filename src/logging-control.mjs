@@ -28,8 +28,7 @@ export function createLoggingControl(defaults, { now = Date.now, monotonic = () 
         Object.keys(value).some((key) => ![...keys, "expires_ms"].includes(key)) ||
         !keys.some((key) => Object.hasOwn(value, key)) ||
         keys.some((key) => Object.hasOwn(value, key) && typeof value[key] !== "boolean") ||
-        (Object.hasOwn(value, "expires_ms") &&
-          (!Number.isInteger(value.expires_ms) || value.expires_ms < 1 || value.expires_ms > 3600000))
+        (Object.hasOwn(value, "expires_ms") && (!Number.isInteger(value.expires_ms) || value.expires_ms < 1))
       ) {
         rejection = "invalid_request";
         throw new TypeError("invalid_logging_request");

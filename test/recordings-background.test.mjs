@@ -112,10 +112,7 @@ for (const action of ["owner loss", "preemption"]) {
   });
 }
 
-for (const [reason, delay] of [
-  ["observing", 61_000],
-  ["renewal_due", 14_000],
-]) {
+for (const [reason, delay] of [["renewal_due", 14_000]]) {
   test(`unhinted ${reason} retries cross the SDK gate without spending the catalog window`, async (t) => {
     const times = [];
     const h = await harness(t, {
@@ -138,6 +135,21 @@ for (const [reason, delay] of [
   });
 }
 
+test("an unhinted observation retry outlives sixty-second browse intent and needs renewed demand", async (t) => {
+  const h = await harness(t, {
+    catalog: () =>
+      h.clocks.monotonic() < 60_000 ? { status: "deferred", reason: "observing" } : { status: "ok", rows: [] },
+  });
+  h.catalog("if_due");
+  await settled(h);
+  await advance(h, 61_000);
+  assert.equal(h.calls.catalog.length, 1);
+  assert.equal(h.manager.diagnostics().background.retries, 0);
+  h.catalog("if_due");
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
+  assert.equal(h.calls.catalog.length, 2);
+});
+
 test("observation gate retries retain only bounded catalog intent and cancel on owner loss", async (t) => {
   const h = await harness(t, { catalog: () => ({ status: "deferred", reason: "observing" }) });
   h.catalog("if_due");
@@ -151,13 +163,14 @@ test("observation gate retries retain only bounded catalog intent and cancel on 
 test("a new browse owner can retain a pending gate retry when the first owner leaves", async (t) => {
   let count = 0;
   const h = await harness(t, {
-    catalog: () => (++count === 1 ? { status: "deferred", reason: "observing" } : { status: "ok", rows: [] }),
+    catalog: () =>
+      ++count === 1 ? { status: "deferred", reason: "observing", retryAfterMs: 30_000 } : { status: "ok", rows: [] },
   });
   h.catalog("if_due");
   await settled(h);
   h.manager.catalog({}, { cameraId: h.cameraId, refresh: "if_due" });
   h.manager.ownerLost(h.owner);
-  await advance(h, 61_000);
+  await advance(h, 30_000);
   await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
   assert.equal(h.calls.catalog.length, 2);
 });
@@ -169,8 +182,8 @@ test("repeated unhinted observation deferrals stop at the catalog intent deadlin
   await advance(h, 61_000);
   await settled(h);
   await advance(h, 300_000);
-  assert.equal(h.calls.catalog.length, 2);
-  assert.equal(h.manager.diagnostics().background.retries, 1);
+  assert.equal(h.calls.catalog.length, 1);
+  assert.equal(h.manager.diagnostics().background.retries, 0);
   assert.equal(h.store.snapshot.history.catalog, null);
 });
 

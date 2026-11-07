@@ -48,7 +48,7 @@ the existing host HTTP/command policy hooks also apply to these routes.
 // Additional hello member:
 recordings: {
   version: 1; browseOnly: boolean; playback: boolean; enabled: boolean; scopeId: string | null;
-  timezone: "America/Chicago"; stationWindow: number; pageSize: 100; coverBudget: 4;
+  timezone: "America/Chicago"; stationWindow: number; pageSize: 100; coverBudget: 100;
 }
 
 // Requests (no cursor, grant, serial, path, selector or URL fields):
@@ -147,25 +147,29 @@ Catalog responses contain at most 100 newest entries, or the single requested fo
 there is no public cursor. Bounded internal station continuation is described below.
 Known times precede unknown times.
 `if_due` returns cached data promptly, records a camera/socket interest for 60 s,
-and requests at most one station-wide refresh per 120 s, including failed exchanges.
+and requests at most one station-wide refresh per 60 s, including failed exchanges.
 Transient SDK deferrals (`observing`, `busy`, `quiet_period`, `renewal_due`,
 `reply_capacity`, `owner_unhealthy`) release that reservation. A shared cycle allows
-at most two automatic retries per 120 s, with one retry timer; repeated browsing
+at most two automatic retries per 60 s, with one retry timer; repeated browsing
 cannot add retries. Retry hints are honored (bounded to 1–300 s); without a hint,
 the first retry waits 5 s and the second 30 s. Interest must still be active,
 unless the cycle belongs to the enabled background schedule.
-At most four uncached
+An unhinted `observing` deferral waits 61 s, beyond the 60 s browse intent;
+with background scheduling disabled, a fresh browse is needed after observation.
+At most 100 uncached
 event IDs share one camera budget per 60 s across clients and detail browsing.
 Cached covers need no interest or connected owner. Uncached covers require an
 eligible event plus the matching socket's current browse ID. The station has one
-read in flight, at most four unsent unique cover demands, a 5 s post-cover gap,
-six cover attempts per rolling minute and a 5-minute event failure cache.
+read in flight, at most 32 unsent unique cover demands, unchanged runtime cover
+pacing and a 5-minute event failure cache. Metadata has no additional bridge
+post-cover wait; the SDK retains its 2 s read quiet period. Table continuations
+retain their separate 5 s completion gap.
 Ordinary foreground requests preempt feature work.
 
 `RECORDINGS_BACKGROUND` defaults to `true`; `false` disables background catalogs
 and cover prefetch without disabling browsing or its bounded catalog retries.
 The background schedule starts 60 seconds after enrollment, with a live-configurable
-interval (milliseconds), subject to the unchanged shared 120-second latest-query
+interval (milliseconds), subject to the shared 60-second latest-query
 admission gate and all SDK gates. It skips unhealthy sessions and pauses during
 live view, playback or an unresolved playback safety hold. It never acquires a
 session. Background continuation requires a consistent full page of the requested
@@ -738,7 +742,7 @@ Integration `f7b7f4e` also accepts a five-camera roster from a 3o-style bridge,
 so install it before or together with the new bridge.
 
 A latest-catalog query defaults to 20 station-wide rows and retains the existing
-two-minute admission spacing. `catalogQueryCount` changes the per-query count.
+60-second admission spacing. `catalogQueryCount` changes the per-query count.
 Foreground browse continuation keeps its 60-second interest, four-extra-page,
 retention and cursor rules. Background bursts use the stop rules above. Every
 page independently arbitrates with controls/live view and keeps the five-second

@@ -20,7 +20,7 @@ export function validateExperiments(value) {
     v.playType !== 1 ||
     v.clientType !== "WEB" ||
     (v.icePolicy !== undefined && !["relay", "all"].includes(v.icePolicy)) ||
-    (v.maxClips !== undefined && (!Number.isSafeInteger(v.maxClips) || v.maxClips < 1 || v.maxClips > 5))
+    (v.maxClips !== undefined && (!Number.isSafeInteger(v.maxClips) || v.maxClips < 1))
   )
     return null;
   return {

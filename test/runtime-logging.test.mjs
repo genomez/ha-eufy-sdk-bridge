@@ -77,7 +77,7 @@ for (const fields of [
   { debug: null },
   { debug: true, event_log: "false" },
   { debug: true, expires_ms: 0 },
-  { debug: true, expires_ms: 3600001 },
+  { debug: true, expires_ms: -1 },
   { debug: true, expires_ms: "1000" },
   { debug: true, expires_ms: 1000.5 },
   { debug: true, debug_p2p: true },
@@ -115,6 +115,31 @@ test("expiry restores startup defaults, preserves requested evidence and ignores
   assert.equal(logging.snapshot().debug.expiresAtMs, null);
   assert.throws(() => logging.set({ debug: true, unexpected: true }));
   assert.equal(logging.snapshot().debug.effective, false);
+});
+
+for (const expires_ms of [3_600_001, 86_400_000])
+  test(`config.set accepts timed logging beyond one hour: ${expires_ms}`, async (t) => {
+    const { rpc } = fixture(t);
+    const response = await rpc({ cmd: "config.set", debug: true, expires_ms });
+    assert.equal(response.ok, true);
+    assert.equal(response.logging.debug.effective, true);
+    assert.equal(response.logging.debug.source, "session");
+  });
+
+test("long logging override still expires by monotonic time across wall jumps", async () => {
+  const { createLoggingControl } = await import("../src/logging-control.mjs");
+  let mono = 0,
+    wall = 10_000;
+  const logging = createLoggingControl({ debug: false }, { monotonic: () => mono, now: () => wall });
+  logging.set({ debug: true, expires_ms: 86_400_000 });
+  assert.equal(logging.snapshot().debug.expiresAtMs, 86_410_000);
+  wall += 2 * 86_400_000;
+  mono = 86_399_999;
+  assert.equal(logging.effective("debug"), true);
+  wall -= 4 * 86_400_000;
+  mono++;
+  assert.equal(logging.effective("debug"), false);
+  assert.equal(logging.snapshot().debug.expired, true);
 });
 
 test("diagnostics label requested inert flags and live bridge logging honestly", async (t) => {
