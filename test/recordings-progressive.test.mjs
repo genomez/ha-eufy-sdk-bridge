@@ -912,6 +912,11 @@ test("real encoder exit reaches job history as a process failure rather than cap
         },
       }),
   });
+  child.stderr.write("discarded-prefix" + "x".repeat(4096));
+  child.stderr.write("\nHEVC decoder: invalid data\npassword=synthetic-secret\n");
+  child.emit("exit", 23);
+  // stderr can arrive after exit; history must retain the final tail observed at close.
+  child.stderr.write("late decoder detail\n");
   child.emit("close", 23);
   await until(() => !f.jobs.busy());
   const d = f.jobs.diagnostics(),
@@ -920,6 +925,10 @@ test("real encoder exit reaches job history as a process failure rather than cap
   assert.equal(h.reason, "convert_failed");
   assert.equal(h.endReason, "ffmpeg_exit");
   assert.deepEqual(h.process, { exitCode: 23, signal: null });
+  assert.ok(Buffer.byteLength(h.stderr) <= 2048);
+  assert.match(h.stderr, /HEVC decoder: invalid data/);
+  assert.match(h.stderr, /late decoder detail/);
+  assert.doesNotMatch(h.stderr, /discarded-prefix|synthetic-secret|password=/);
   assert.equal(d.progressive.failuresByReason.ffmpeg_exit, 1);
 });
 

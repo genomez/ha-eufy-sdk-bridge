@@ -10,6 +10,7 @@ import {
   playableThreshold,
   endReasons,
   isViewerEnd,
+  createConversionStderr,
 } from "./recordings-job-evidence.mjs";
 const owned = /^(?:index\.m3u8(?:\.tmp)?|segment[0-9]{6}\.ts(?:\.tmp)?|final\.mp4)$/;
 
@@ -72,6 +73,7 @@ export function progressiveUsage(directory, remove = false) {
 /** Own a bounded subprocess until close, including failed spawn and abort escalation. */
 function processRun(executable, args, signal, timeoutMs, spawnProcess, failed = () => {}) {
   const child = spawnProcess(executable, args, { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  const stderr = createConversionStderr();
   let bad = false,
     closed = false,
     escalation,
@@ -84,9 +86,10 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess, failed = 
     failureDetail ??= detail;
     failureDetail.exitCode ??= detail.exitCode;
     failureDetail.signal ??= detail.signal;
+    failureDetail.stderr = stderr.read();
     failed({ ...failureDetail });
   };
-  child.stderr.on("data", () => {});
+  child.stderr.on("data", (data) => stderr.write(data));
   child.stdin.on("error", () => {
     inputError = true;
     bad = true;
@@ -134,7 +137,7 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess, failed = 
   });
   done.catch(() => {});
   if (signal?.aborted) abort();
-  return { child, done, abort };
+  return { child, done, abort, stderr: () => stderr.read() };
 }
 
 /**
@@ -158,7 +161,7 @@ export function createProgressiveEncoder({
   if (fps !== 15 || !(expectedMs > 0 && expectedMs <= 3_600_000)) throw failure();
   fs.mkdirSync(directory, { mode: 0o700 });
   const controller = new AbortController();
-  let failureDetail, failureReason;
+  let failureDetail, failureReason, failureStderr;
   const onAbort = () => {
     const endReason = endReasons.includes(signal?.reason?.endReason) ? signal.reason.endReason : "cancelled";
     failureDetail ??= { endReason, exitCode: null, signal: null };
@@ -234,6 +237,7 @@ export function createProgressiveEncoder({
   let segments = [],
     progress = "";
   const recordProcessFailure = (detail) => {
+    failureStderr = detail.stderr ?? failureStderr;
     if (isViewerEnd(failureDetail?.endReason) || failureDetail?.endReason === "cancelled") return;
     if (!failureDetail || ["ffmpeg_input_error", "conversion_validation_failed"].includes(failureDetail.endReason))
       failureDetail = detail;
@@ -310,7 +314,12 @@ export function createProgressiveEncoder({
     },
     (error) => {
       failed = true;
-      recordProcessFailure({ endReason: error.endReason, exitCode: error.exitCode, signal: error.signal });
+      recordProcessFailure({
+        endReason: error.endReason,
+        exitCode: error.exitCode,
+        signal: error.signal,
+        stderr: error.stderr,
+      });
       controller.abort();
       changed();
     },
@@ -333,6 +342,7 @@ export function createProgressiveEncoder({
         reason: failureReason ?? "none",
         endReason: complete ? "normal_completion" : (failureDetail?.endReason ?? "none"),
         process: failureDetail ? { exitCode: failureDetail.exitCode, signal: failureDetail.signal } : null,
+        stderr: failureStderr ?? process.stderr(),
         segments: segments.map((s) => ({ ...s })),
       };
     },
@@ -384,6 +394,7 @@ export function createProgressiveEncoder({
         signal,
         Math.max(120_000, expectedMs * 2),
         spawnProcess,
+        recordProcessFailure,
       );
       remux.child.stdout.resume();
       remux.child.stdin.end();

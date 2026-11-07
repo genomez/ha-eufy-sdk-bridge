@@ -95,7 +95,7 @@ for (const [name, timestamps, catalogMs, expectedFailure] of [
 for (const sourceFps of [15, 60]) {
   const profile = { expectedMs: 22000, frames: 106, spanMs: 21910, gapMs: 3000 };
   test(
-    `final frame survives EOF quantization with ${sourceFps}fps source VUI`,
+    `native duration stays valid after EOF quantization with ${sourceFps}fps source VUI`,
     {
       skip:
         process.env.PROGRESSIVE_MEDIA_REQUIRED !== "1" && (!fs.existsSync(ffmpeg) || !fs.existsSync(ffprobe))

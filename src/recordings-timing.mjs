@@ -155,12 +155,12 @@ export function createRecordingTiming({ expectedMs }) {
 }
 
 /**
- * Hold the final decoded frame for one output period before CFR quantization.
- * Scaling PTS around tpad makes its one-frame pad exactly 1/15 s regardless of inferred source rate;
- * the inverse restores native positions before gap holding and EOF rounding.
+ * Quantize native PTS to 15fps, holding across gaps. Avoid FRAME_RATE expressions:
+ * pipe-fed MPEG-TS may have no frame rate when the filter link is configured.
+ * The final source frame may be dropped when it rounds to the same 15fps tick as EOF
+ * (at most 1/15 s).
  */
-export const nativeVideoFilter =
-  "setpts=PTS*15/FRAME_RATE,tpad=stop_mode=clone:stop=1,setpts=PTS*FRAME_RATE/15,fps=fps=15:round=near:eof_action=pass,scale=w='trunc(min(1920,iw)/2)*2':h=-2";
+export const nativeVideoFilter = "fps=fps=15:round=near:eof_action=pass,scale=w='trunc(min(1920,iw)/2)*2':h=-2";
 
 /**
  * Native span against the whole-second catalog duration (catalog precision), then output against

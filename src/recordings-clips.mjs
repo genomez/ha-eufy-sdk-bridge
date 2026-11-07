@@ -7,7 +7,15 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { createProgressiveEncoder, progressiveUsage } from "./recordings-progressive.mjs";
-import { endReasons, isViewerEnd, playableThreshold, cameraLabel, processFailure } from "./recordings-job-evidence.mjs";
+import {
+  endReasons,
+  isViewerEnd,
+  playableThreshold,
+  cameraLabel,
+  processFailure,
+  conversionStderr,
+  createConversionStderr,
+} from "./recordings-job-evidence.mjs";
 import { createPlaybackSessions } from "./recordings-playback-sessions.mjs";
 import { createRecordingTiming, nativeVideoFilter, validNativeDuration } from "./recordings-timing.mjs";
 
@@ -112,21 +120,6 @@ export function armClipSafety(rtc, _root, enabled, probeMarker) {
   rtc.configurePlaybackSafety?.(false, durable ?? (() => {}), enabled || !!durable);
 }
 
-/** Remove transport identities and credentials before emitting bounded decoder diagnostics. */
-function conversionStderr(value) {
-  return value
-    .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s]+/gi, "[redacted]")
-    .replace(/\b(?:[a-z_]*token|authorization|password|secret|api[_-]?key)\b[^\r\n]*/gi, "[redacted]")
-    .replace(/\bbearer\s+\S+/gi, "[redacted]")
-    .replace(/\bT[0-9A-Z]{7,}\b/gi, "[redacted]")
-    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, "[redacted]")
-    .replace(/(?<![a-z0-9])(?:[0-9a-f]{0,4}:){2,}[0-9a-f:.%]*/gi, "[redacted]")
-    .replace(/[A-Za-z0-9_+\/=.-]{24,}/g, "[redacted]")
-    .replace(/[\x00-\x1f\x7f-\x9f]+/g, " ")
-    .replace(/[^\x20-\x7e]/g, "?")
-    .slice(-2048);
-}
-
 /** Duration-bound conversion settles only after process close, including cancellation and forced termination. */
 export function convertClip({
   input,
@@ -152,8 +145,7 @@ export function convertClip({
     // Station HEVC carries its own VUI frame rate, which overrides -framerate on raw input.
     // Only the metadata-free fallback retimes frames uniformly to the retained duration.
     const fps = nativeTiming?.native ? "15" : String((frames * 1000) / durationMs);
-    let stderr = Buffer.alloc(0),
-      stderrTruncated = false;
+    const stderr = createConversionStderr();
     let failed = false,
       terminating = false,
       closed = false,
@@ -208,11 +200,7 @@ export function convertClip({
       progress = lines.pop().slice(-1024);
       for (const line of lines) if (/^frame=\d+\s*$/.test(line)) outputFrames = Number(line.slice(6));
     });
-    child.stderr?.on("data", (data) => {
-      const chunk = Buffer.from(data);
-      stderrTruncated ||= stderr.length + chunk.length > 2048;
-      stderr = Buffer.concat([stderr, chunk.subarray(-2048)]).subarray(-2048);
-    });
+    child.stderr?.on("data", (data) => stderr.write(data));
     let spawnFailed = false,
       timedOut = false;
     const terminate = () => {
@@ -246,13 +234,10 @@ export function convertClip({
         nativeTiming?.native && Math.abs((outputFrames * 1000) / 15 - nativeTiming.durationMs) > (1000 / 15) * 2;
       if (code === 0 && !failed && !invalidTiming) resolve();
       else {
-        const tail = stderr.toString("utf8");
-        const firstNewline = tail.indexOf("\n");
-        const diagnostic = stderrTruncated ? (firstNewline < 0 ? "" : tail.slice(firstNewline + 1)) : tail;
         log({
           event: "recordings.clip_convert_failed",
           exitCode: Number.isInteger(code) ? code : null,
-          stderr: conversionStderr(diagnostic),
+          stderr: stderr.read(),
         });
         reject(
           Object.assign(
@@ -655,6 +640,7 @@ export function createClipJobs({
   function observeProgressive(j) {
     const snapshot = j.encoder?.snapshot();
     if (!snapshot) return;
+    j.conversionStderr = conversionStderr(typeof snapshot.stderr === "string" ? snapshot.stderr : "");
     const segments = Array.isArray(snapshot.segments) ? snapshot.segments : [];
     j.finalSegmentCount = Math.min(3600, segments.length);
     j.finalDurationMs = Math.min(
@@ -706,6 +692,7 @@ export function createClipJobs({
       state: j.state,
       reason: j.reason,
       endReason,
+      ...(j.progressiveRequested && { stderr: j.conversionStderr ?? "" }),
       transferSpeed: [1, 2, 4, 8].includes(j.transferSpeed) ? j.transferSpeed : null,
       mode: evidence.mode,
       selectedIceCandidateType: evidence.selectedIceCandidateType,
