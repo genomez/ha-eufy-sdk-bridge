@@ -43,7 +43,7 @@ origin. Timing state resets on the existing settled retry. Native spans exceedin
 `expectedMs + 1000` fail before that frame is packetized, written to the spool, or
 committed to the running encoder. This fixed 1000 ms ingress margin tolerates
 catalog rounding while limiting expansion; completion still requires catalog
-agreement within 200 ms. Timing failures use `convert_failed` and the existing
+agreement within that one-second window (catalog durations are whole seconds). Timing failures use `convert_failed` and the existing
 `conversion_validation_failed` end reason (subprocess shutdown may supply another
 existing process end reason), immediately aborting capture and encoder input even
 if the pull implementation swallows the callback error. Standalone MP4 uses the same TS
@@ -59,8 +59,8 @@ verified finish. The effective value is also reported as
 `recordings.clips.progressive.playableThresholdMs` in `/diagnostics`. Segment inventory, individual byte counts,
 input lag, storage and subprocess lifetime are bounded. The encoder's decoded
 output count and muxed duration must match native span plus one frame period within
-two CFR ticks (133.34 ms), and that native duration must agree with the catalog
-within 200 ms, before delivery becomes complete. Duplicate output frames are
+two CFR ticks (133.34 ms), and that native duration must agree with the whole-second catalog
+within one second, before delivery becomes complete. Duplicate output frames are
 expected. Standalone native MP4 also validates its encoded frame count against
 native duration. The metadata-free fallback retains its frame-count/receipt checks.
 Authoritative playback

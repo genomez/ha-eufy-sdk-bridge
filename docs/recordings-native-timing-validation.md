@@ -102,7 +102,8 @@ not changed.
 
 Native milliseconds remain an experimental interpretation for this camera
 population. CFR output necessarily quantizes presentation to 66.67 ms ticks;
-duration checks allow two ticks, with a fixed 200 ms catalog-agreement limit.
+duration checks allow two ticks; catalog agreement allows the whole-second catalog
+rounding (native duration within expectedMs - 1000 ms .. expectedMs + 1000 ms plus one frame).
 Missing initial metadata retains the existing fixed-rate fallback. A rebuilt SDK
 package containing `8a7d6bc` must be used when packaging the bridge; its existing
 pinned SDK tarball and lockfile are intentionally unchanged. No build, deployment,
@@ -146,7 +147,8 @@ already failed final admission, but did not protect a running encoder.
 The shared timing spool now admits at most `expectedMs + 1000` of native span,
 checking before accepting/packetizing each frame. The fixed one-second margin
 allows catalog rounding without granting an hour of CFR expansion to short clips;
-final catalog agreement remains 200 ms. Backward steps over 10 ms fail closed;
+final catalog agreement uses the same one-second window (catalog durations are whole
+seconds; a 200 ms limit rejected normal clips such as 188 frames against a 12 s entry). Backward steps over 10 ms fail closed;
 duplicates and <=10 ms regression jitter retain the 1 ms clamp. Both progressive
 HLS and standalone MP4 reject discontinuities after native selection. No new
 public reason or end-reason enum was added. Capture errors abort the shared
@@ -196,3 +198,14 @@ artifacts, images, persistent containers and services were not touched.
 Live/device acceptance is still
 pending. Native-clock qualification is deliberately conservative: unusual initial
 cadence uses the legacy fallback, which does not preserve native gaps.
+
+## Re-check follow-up (4b1964f and docs)
+
+- Catalog agreement widened from 200 ms to the whole-second catalog window, sharing
+  `catalogSlackMs` with the ingress bound. Output-versus-native accuracy is unchanged
+  (two CFR ticks). Truncation beyond one second still fails.
+- A short capture that never qualifies (fewer than four frames) now starts its
+  progressive encoder from the EOF flush, so delivery completes instead of staying
+  `warming`.
+- Fail-first: both new tests failed against cad9d55. Full suite: 1054 passed,
+  0 failed, 42 skipped.
