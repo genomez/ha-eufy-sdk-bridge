@@ -1,3 +1,4 @@
+import { validateExperiments } from "./recordings-experiments.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -248,6 +249,7 @@ function clipEvidence(receipt = {}) {
     "wrong_route",
   ];
   return {
+    ...experimentEvidence(receipt),
     ...boundedPlaybackDiagnostics(receipt),
     admissionGate: finite(receipt.admissionGateName ?? admissionGates[receipt.admissionGate], admissionGates),
     captureOutcome: finite(receipt.captureOutcome, [
@@ -300,6 +302,68 @@ function clipEvidence(receipt = {}) {
     ]),
     reconnectOutcome: finite(receipt.reconnectOutcome, ["not_needed", "connected", "failed", "timed_out"]),
     reconnectDurationMs: count(receipt.reconnectDurationMs),
+  };
+}
+
+/** Fixed scalar projections; arbitrary receipt objects never enter diagnostics. */
+function experimentEvidence(receipt) {
+  const scalar = (v) => (Number.isSafeInteger(v) && v >= 0 && v <= Number.MAX_SAFE_INTEGER ? v : null);
+  const timeline = Object.fromEntries(
+    [
+      "admissionGrantedMs",
+      "startSentMs",
+      "startAcknowledgedMs",
+      "firstVideoFrameMs",
+      "eofStatusMs",
+      "mediaReadyMs",
+      "releaseSettledMs",
+    ]
+      .filter((k) => scalar(receipt.timeline?.[k]) !== null)
+      .map((k) => [k, receipt.timeline[k]]),
+  );
+  const fps = receipt.arrivalFps;
+  const timing = receipt.frameTiming;
+  const native = receipt.nativeFrameTiming;
+  const type = (v) => finite(v, ["relay", "srflx", "host", "prflx"]);
+  const experiment = validateExperiments(receipt.experiment);
+  return {
+    timeline,
+    ...(experiment && { experiment }),
+    selectedIceCandidateType: type(receipt.selectedIceCandidateType),
+    selectedRemoteIceCandidateType: type(receipt.selectedRemoteIceCandidateType),
+    durationBasis: finite(receipt.durationBasis, ["arrival", "catalog_experiment", "native_header_experiment"]),
+    ...(fps && {
+      arrivalFps: {
+        buckets: count(fps.buckets),
+        min: count(fps.min),
+        median: Number.isFinite(fps.median) && fps.median >= 0 ? fps.median : 0,
+        max: count(fps.max),
+      },
+    }),
+    ...(native && {
+      nativeFrameTiming: {
+        source: finite(native.source, ["native_video_header_unverified"]),
+        frames: count(native.frames),
+        timestampDeltaTicks: scalar(native.timestampDeltaTicks),
+        maxTimestampGapTicks: scalar(native.maxTimestampGapTicks),
+        sequenceDelta: scalar(native.sequenceDelta),
+        maxSpacingDifferenceAssumingMs: scalar(native.maxSpacingDifferenceAssumingMs),
+        spacingDiffersAssumingMs: native.spacingDiffersAssumingMs === true,
+        mediaTimestampValidated: false,
+      },
+    }),
+    ...(timing && {
+      frameTiming: {
+        source: finite(timing.source, ["ptcs_sender_clock_unverified"]),
+        frames: count(timing.frames),
+        timestampDeltaMs: scalar(timing.timestampDeltaMs),
+        maxTimestampGapMs: scalar(timing.maxTimestampGapMs),
+        sequenceDelta: scalar(timing.sequenceDelta),
+        maxSpacingDifferenceMs: scalar(timing.maxSpacingDifferenceMs),
+        spacingDiffers: timing.spacingDiffers === true,
+        mediaTimestampValidated: false,
+      },
+    }),
   };
 }
 
@@ -365,6 +429,7 @@ function boundedPlaybackDiagnostics(receipt) {
 /** One FIFO worker owns station ingress, release, conversion and temporary storage. */
 export function createClipJobs({
   root,
+  experiments,
   enabled,
   live,
   pull,
@@ -478,6 +543,13 @@ export function createClipJobs({
       latest,
       evidence = clipEvidence();
     const start = monotonic();
+    const bridgeTimeline = {};
+    let experiment;
+    const timing = () => ({
+      ...evidence,
+      ...(experiment && { experiment }),
+      timeline: { ...evidence.timeline, ...bridgeTimeline },
+    });
     try {
       if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
       if (live()) throw fault("live_view");
@@ -490,6 +562,7 @@ export function createClipJobs({
       fd = fs.openSync(j.input, "wx", 0o600);
       let writeFailed = false;
       const pullOptions = {
+        timelineOriginMs: start,
         signal: j.controller.signal,
         beforeDispatch: () => state(j, "pulling"),
         video(data) {
@@ -525,7 +598,11 @@ export function createClipJobs({
               media.resolve(value);
             }
           };
-          pendingPull = Promise.resolve().then(() => pull(j.selection, pullOptions));
+          pendingPull = Promise.resolve().then(() => {
+            experiment ??= validateExperiments(experiments?.take()) ?? undefined;
+            if (experiment) pullOptions.experiment = experiment;
+            return pull(j.selection, pullOptions);
+          });
           j.stationSettled = pendingPull.then(
             () => {},
             () => {},
@@ -547,11 +624,12 @@ export function createClipJobs({
           convertMs,
           bytes: 0,
           audioIncluded: false,
-          ...evidence,
+          ...timing(),
         };
         const endedAt = j.selection?.selector?.begin * 1000 + j.expectedMs;
         const age = now() - endedAt;
         const freshRefusal =
+          !experiment &&
           !freshRetried &&
           receipt.captureOutcome === "start_refused" &&
           !receipt.startAcknowledged &&
@@ -573,7 +651,7 @@ export function createClipJobs({
             if (monotonic() < admissionDeadline) continue;
           }
         }
-        if (receipt.startAttempted || frames || !transientAdmission.has(evidence.admissionGate)) break;
+        if (experiment || receipt.startAttempted || frames || !transientAdmission.has(evidence.admissionGate)) break;
         const remaining = admissionDeadline - monotonic();
         if (remaining <= 0) break;
         j.waitingForAdmission = true;
@@ -627,18 +705,23 @@ export function createClipJobs({
       const reserve = Math.min(cap, Math.max(16 * 1024 ** 2, fs.statSync(j.input).size * 2));
       const maxBytes = room(reserve) - 8 * 1024 ** 2;
       if (maxBytes <= 0) throw fault("storage");
+      bridgeTimeline.convertStartMs = Math.max(0, Math.round(monotonic() - start));
       state(j, "converting");
       const converting = monotonic();
-      await convert({
-        input: j.input,
-        output: j.output,
-        frames,
-        durationMs: j.durationMs,
-        maxBytes,
-        signal: j.controller.signal,
-        log,
-      });
-      convertMs = Math.round(monotonic() - converting);
+      try {
+        await convert({
+          input: j.input,
+          output: j.output,
+          frames,
+          durationMs: j.durationMs,
+          maxBytes,
+          signal: j.controller.signal,
+          log,
+        });
+      } finally {
+        convertMs = Math.round(monotonic() - converting);
+        bridgeTimeline.convertEndMs = Math.max(0, Math.round(monotonic() - start));
+      }
       if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
       const stat = fs.lstatSync(j.output);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !stat.size || stat.size >= maxBytes)
@@ -651,6 +734,7 @@ export function createClipJobs({
       j.pulledMs = j.expectedMs;
       j.access = now();
       j.expiresAtMs = now() + ttl;
+      bridgeTimeline.readyMs = Math.max(0, Math.round(monotonic() - start));
       state(j, "ready");
       terminal(j);
       last = {
@@ -663,7 +747,7 @@ export function createClipJobs({
         convertMs,
         bytes: j.bytes,
         audioIncluded: false,
-        ...evidence,
+        ...timing(),
         ...(mediaReceipt && { cleanupOutcome: "pending" }),
       };
       if (captureAttempted) lastCapture = last;
@@ -720,7 +804,7 @@ export function createClipJobs({
         convertMs,
         bytes: j.bytes,
         audioIncluded: false,
-        ...evidence,
+        ...timing(),
       };
       if (captureAttempted) lastCapture = last;
       counters.jobs++;

@@ -955,6 +955,10 @@ test("failed clip exposes only finite receipt evidence and cumulative counts", a
     jobOrdinal: 2,
     state: "failed",
     reason: "cleanup_uncertain",
+    timeline: {},
+    selectedIceCandidateType: "unknown",
+    selectedRemoteIceCandidateType: "unknown",
+    durationBasis: "unknown",
     admissionGate: "none",
     pullMs: d.lastJob.pullMs,
     convertMs: 0,
@@ -1450,4 +1454,115 @@ test("discarded tail counts are bounded", async (t) => {
   f.jobs.prepare("camera", "a", selection);
   await until(() => state(f, "a").state === "failed");
   assert.equal(f.jobs.diagnostics().lastJob.droppedAfterCutoff, 65535);
+});
+
+test("experiment receipt and scalar pipeline timeline survive readiness and settled cleanup", async (t) => {
+  let mono = 0;
+  const experiment = { playSpeed: 4, playType: 1, clientType: "WEB", maxClips: 1, icePolicy: "all" };
+  const f = await fixture(t, {
+    monotonic: () => mono,
+    experiments: { take: () => experiment },
+    pull: async (_, opts) => {
+      assert.deepEqual(opts.experiment, experiment);
+      assert.equal(opts.timelineOriginMs, 0);
+      opts.beforeDispatch();
+      opts.video(Buffer.from("a"));
+      opts.video(Buffer.from("b"));
+      mono = 5;
+      return {
+        ...clean,
+        experiment,
+        timeline: {
+          admissionGrantedMs: 0,
+          startSentMs: 1,
+          startAcknowledgedMs: 2,
+          firstVideoFrameMs: 3,
+          eofStatusMs: 4,
+          mediaReadyMs: 5,
+          releaseSettledMs: 5,
+          private: "secret",
+        },
+        nativeFrameTiming: {
+          source: "native_video_header_unverified",
+          frames: 3,
+          timestampDeltaTicks: 100,
+          maxTimestampGapTicks: 50,
+          sequenceDelta: 2,
+          maxSpacingDifferenceAssumingMs: 40,
+          spacingDiffersAssumingMs: true,
+          mediaTimestampValidated: true,
+          private: "secret",
+        },
+        selectedIceCandidateType: "host",
+        durationBasis: "native_header_experiment",
+        frameTiming: {
+          source: "ptcs_sender_clock_unverified",
+          mediaTimestampValidated: true,
+          timestampDeltaMs: 100,
+          maxTimestampGapMs: 50,
+          sequenceDelta: 2,
+          maxSpacingDifferenceMs: 40,
+          spacingDiffers: true,
+          frames: 3,
+        },
+      };
+    },
+    convert: async ({ output, durationMs }) => {
+      assert.equal(durationMs, 10000);
+      mono = 7;
+      fs.writeFileSync(output, "converted");
+    },
+  });
+  await ready(f, "a");
+  await until(() => !f.jobs.busy());
+  const d = f.jobs.diagnostics();
+  assert.deepEqual(d.lastCaptureJob, d.lastJob);
+  assert.deepEqual(d.lastJob.experiment, experiment);
+  assert.equal(d.lastJob.selectedIceCandidateType, "host");
+  assert.equal(d.lastJob.durationBasis, "native_header_experiment");
+  assert.equal(d.lastJob.frameTiming.mediaTimestampValidated, false);
+  assert.deepEqual(d.lastJob.nativeFrameTiming, {
+    source: "native_video_header_unverified",
+    frames: 3,
+    timestampDeltaTicks: 100,
+    maxTimestampGapTicks: 50,
+    sequenceDelta: 2,
+    maxSpacingDifferenceAssumingMs: 40,
+    spacingDiffersAssumingMs: true,
+    mediaTimestampValidated: false,
+  });
+  assert.deepEqual(d.lastJob.timeline, {
+    admissionGrantedMs: 0,
+    startSentMs: 1,
+    startAcknowledgedMs: 2,
+    firstVideoFrameMs: 3,
+    eofStatusMs: 4,
+    mediaReadyMs: 5,
+    releaseSettledMs: 5,
+    convertStartMs: 5,
+    convertEndMs: 7,
+    readyMs: 7,
+  });
+});
+
+test("armed refusal consumes one dispatch and never automatically retries", async (t) => {
+  let calls = 0;
+  const experiment = { playSpeed: 2, playType: 1, clientType: "WEB", maxClips: 1 };
+  const f = await fixture(t, {
+    experiments: { take: () => experiment },
+    pull: async () => {
+      calls++;
+      return {
+        ...clean,
+        startAttempted: false,
+        captureOutcome: "not_admitted",
+        admissionGateName: "observation_window",
+      };
+    },
+    wait: async () => assert.fail("experiment retried"),
+  });
+  f.jobs.prepare("camera", "a", selection);
+  await until(() => !f.jobs.busy());
+  assert.equal(calls, 1);
+  assert.deepEqual(f.jobs.diagnostics().lastJob.experiment, experiment);
 });

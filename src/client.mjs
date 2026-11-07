@@ -3,6 +3,7 @@
 // heavier modules depend on the instance via `ctx.eufy`, not on how it was built. Event wiring that
 // needs other modules (error → session recovery, push liveness) lives in server.mjs, after ctx is whole.
 import { EufyMega, FileSessionStore, FileFcmStore, ConsoleLogger } from "@mega-yfue/eufy-sdk";
+import { playbackSessionIcePolicy } from "./recordings-experiments.mjs";
 import { recordingTimeZone } from "./config.mjs";
 import { registerRecordingsPolicy } from "./recordings-adapter.mjs";
 
@@ -43,6 +44,7 @@ export function createEufy({ cfg, DEBUG_P2P }, options = {}) {
       commandKeepaliveMs: cfg.rtcCommandKeepaliveMs,
       ...options.rtc,
       recordings,
+      icePolicyAtSessionCreation: playbackSessionIcePolicy(cfg.recordings?.root),
     },
     pollMs: cfg.pollMs, // undefined → SDK default; changeable live via config.set
     // Event pre-warm is OFF by default (`[]` = no event opens P2P speculatively) so a battery camera's

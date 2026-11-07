@@ -1,4 +1,5 @@
 import path from "node:path";
+import { playbackExperiments } from "./recordings-experiments.mjs";
 import { createClipJobs, armClipSafety } from "./recordings-clips.mjs";
 import { randomBytes } from "node:crypto";
 import { DEFAULT_PACING, pacingUpdate, createCoverMeasurements } from "./recordings-pacing.mjs";
@@ -113,6 +114,7 @@ export function createRecordings(
     ...clipOptions,
     root: path.join(ctx.cfg.recordings?.root ?? "/data/recordings", "clips"),
     enabled: playbackEnabled,
+    experiments: playbackExperiments(ctx.cfg.recordings?.root),
     live: () => liveRequests > 0 || !!ctx.state.streaming?.size || !!ctx.state.activeStreams?.size,
     pull: (selection, opts) => ctx.eufy.pullRecordingClip(selection.scope, selection.selector, opts),
     changed(cameraId, eventId) {
