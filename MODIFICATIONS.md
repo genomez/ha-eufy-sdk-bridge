@@ -576,6 +576,14 @@ Offline synthetic validation only; installation acceptance remains false.
 - Add a detached ring of the latest 20 terminal clip jobs, after capture cleanup settles, with sanitized display metadata, fixed capture/transport/timeline evidence and progressive first-playable/final-delivery metrics. Preserve lastJob and lastCaptureJob.
 - Preserve viewer release, expiry and eviction causes through asynchronous encoder shutdown. Record process exit/signal, spawn, input, timeout, validation, capture and normal-completion end reasons separately; viewer abandonment does not increment conversion failures.
 - Add saturating per-session lifecycle counters, fixed per-job failure buckets and the latest twenty job time-to-playable count/min/median/max.
-- Add RECORDINGS_PROGRESSIVE_PLAYABLE_MS (decimal integer 1000-6000, default/fallback 6000), reported consistently in diagnostics and the HA-facing progressivePlayableMs capability. The companion HA validator still hardcodes 6000 and requires a separate matching update before lower thresholds are enabled.
+- Add RECORDINGS_PROGRESSIVE_PLAYABLE_MS (decimal integer 1000-6000, default/fallback 6000), reported consistently in diagnostics and the HA-facing progressivePlayableMs capability. The companion HA validator accepts playable inventories of at least 1000 ms; the bridge enforces the configured threshold.
 - Add real installed SDK router/session/peer projection coverage using signaling/native fakes, exact connection deadline, active relay recovery, populated transitions and candidate grant_timeout. The candidate test uses the runtime's candidate-creation seam, without changing SDK code or pins.
 - Local offline qualification only; SDK tarball and all three historical probe pin files are unchanged. No installation, device or client acceptance is claimed.
+
+### Playback 3u review corrections, 2026-11-07
+
+- Latch ffmpeg nonzero/signal exit and process-error evidence before close. Preserve whichever arrives first between process failure and viewer retirement, while retaining the close cleanup barrier. Fail-first regressions exercise exit/error/signal ordering against release, expiry and eviction and verify terminal job history and failure counts.
+- Keep public playback reasons within the existing clip enum. Viewer retirement maps to none; process failure maps to convert_failed. Opens during viewer-retirement cleanup return busy without allocating a dead-generation lease; retry after settlement starts a fresh generation. Regressions cover public reasons across every diagnostic end reason and public reason, plus release/expiry reopening.
+- Reject camera history labels containing IPv4/IPv6 literals, MAC forms, long hex values or serial-shaped tokens; retain ordinary display labels and short camera models. Add fail-first label/history regressions.
+- Correct companion HA documentation: its playable inventory floor is 1000 ms, and the bridge owns the configured early-delivery threshold.
+- Local offline qualification only; SDK source, dependency pins and all three protected probe pin files remain unchanged.

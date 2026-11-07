@@ -1060,6 +1060,11 @@ export function createClipJobs({
           exitCode: j.processDetail?.exitCode ?? null,
           signal: j.processDetail?.signal ?? null,
         });
+        if (j.cancelReason === "convert_failed") {
+          const snapshot = j.encoder.snapshot();
+          j.endReason = snapshot.endReason ?? j.endReason;
+          j.processDetail = snapshot.process ?? j.processDetail;
+        }
       }
       if (!j.mediaComplete && pendingPull && !j.controller.signal.aborted) j.controller.abort();
       try {
@@ -1316,8 +1321,11 @@ export function createClipJobs({
       return { clip: view(jobs.get(key(c, e))) };
     },
     playbackOpen(owner, requestKey, c, e) {
+      sessions.expire();
       const j = jobs.get(key(c, e));
       if (!j) throw fault("not_found");
+      // Do not pin a retired generation while its station/process cleanup still owns it.
+      if (!j.hlsComplete && j.controller.signal.aborted && isViewerEnd(j.cancelReason)) throw fault("busy");
       const s = sessions.open(owner, requestKey, j);
       observeProgressive(j);
       return playbackView(s);
@@ -1471,7 +1479,13 @@ export function createClipJobs({
         cache:
           j.state === "ready" ? "ready" : j.state === "converting" ? "finalizing" : unavailable ? "failed" : "absent",
         cleanup: j === active ? "pending" : j.cleanup,
-        reason: unavailable ? j.reason : snapshot.reason,
+        reason: unavailable
+          ? j.reason
+          : clipReasons.includes(snapshot.reason)
+            ? snapshot.reason
+            : isViewerEnd(snapshot.reason) || [undefined, "normal_completion", "cancelled"].includes(snapshot.reason)
+              ? "none"
+              : "convert_failed",
         segments: snapshot.segments,
         clip: view(j),
       },

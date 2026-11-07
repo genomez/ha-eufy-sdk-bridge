@@ -95,10 +95,20 @@ offsets retain the existing worker-start origin; they may precede cleanup settle
 `conversion_validation_failed`, `capture_failure`, `cancelled`, `refused`.
 Process errors include only numeric exit code and an allowlisted signal class
 (`other` for an unrecognized signal). Viewer shutdown causes survive asynchronous
-pipe/process closure and do not become conversion failures. Existing public clip
+pipe/process closure and do not become conversion failures when viewer retirement
+arrives first. Nonzero/signal exit and process error evidence is latched immediately;
+a later viewer release cannot replace it, and cleanup still waits for child close.
+Existing public clip
 reason enums remain compatible; use history's end reason to distinguish viewer
 shutdowns. `session_evicted` means forced lease clearing during shutdown, not a
 capacity rejection (full lease tables refuse opens).
+
+Viewer release, expiry and eviction map to public `reason: none`; diagnostic
+process failures map to `convert_failed`. Public playback responses accept only
+the existing clip reason enum. A new open on a viewer-retired generation returns
+`busy` while cleanup is pending, without allocating a lease or binding its request
+key to that generation. Retry the open after cleanup settles to start a fresh
+generation. Verified complete HLS retains the existing replay behavior.
 
 `clips.progressive` counts unique sessions opened, reached playable, completed,
 released early, expired and evicted. Shared jobs count each viewer lease once per
@@ -113,13 +123,11 @@ statistics before the first observation). All new aggregate counters saturate at
 
 ### Companion HA compatibility
 
-A lower threshold requires a matching HA validator. The companion source at
-`custom_components/eufy_sdk/recordings_models.py` currently requires 6000 ms for
-`playable` and drops `progressivePlayableMs` from capabilities. Before enabling a
-lower value, that separate repository must preserve/validate the advertised
-1000�6000 ms threshold (default 6000 for older bridges) and apply it when validating
-playable segment duration. This bridge-only change does not modify that repository.
-The default 6000 ms remains compatible.
+The companion validator in `custom_components/eufy_sdk/recordings_models.py`
+accepts any `playable` inventory totaling at least 1000 ms. The bridge owns and
+enforces the configured 1000-6000 ms early-delivery threshold; HA does not apply
+the advertised threshold when validating inventory. This bridge-only change does
+not modify the companion repository. The default threshold remains 6000 ms.
 
 ## Validation boundary
 

@@ -8,6 +8,7 @@ import {
   processFailure,
   playableThreshold,
   endReasons,
+  isViewerEnd,
 } from "./recordings-job-evidence.mjs";
 const owned = /^(?:index\.m3u8(?:\.tmp)?|segment[0-9]{6}\.ts(?:\.tmp)?|final\.mp4)$/;
 
@@ -68,14 +69,22 @@ export function progressiveUsage(directory, remove = false) {
 }
 
 /** Own a bounded subprocess until close, including failed spawn and abort escalation. */
-function processRun(executable, args, signal, timeoutMs, spawnProcess) {
+function processRun(executable, args, signal, timeoutMs, spawnProcess, failed = () => {}) {
   const child = spawnProcess(executable, args, { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   let bad = false,
     closed = false,
     escalation,
     spawned = false,
     inputError = false,
-    timedOut = false;
+    timedOut = false,
+    failureDetail;
+  const recordFailure = (code, closeSignal) => {
+    const detail = processFailure({ code, signal: closeSignal, spawned, input: inputError, timeout: timedOut });
+    failureDetail ??= detail;
+    failureDetail.exitCode ??= detail.exitCode;
+    failureDetail.signal ??= detail.signal;
+    failed({ ...failureDetail });
+  };
   child.stderr.on("data", () => {});
   child.stdin.on("error", () => {
     inputError = true;
@@ -84,6 +93,13 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess) {
   child.on("error", () => {
     spawned = true;
     bad = true;
+    recordFailure();
+  });
+  child.once("exit", (code, exitSignal) => {
+    if (exitSignal || (Number.isInteger(code) && code !== 0)) {
+      bad = true;
+      recordFailure(code, exitSignal);
+    }
   });
   const abort = () => {
     if (closed || escalation) return;
@@ -106,8 +122,10 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess) {
       clearTimeout(escalation);
       signal?.removeEventListener("abort", abort);
       if (code === 0 && !bad) resolve();
-      else
-        reject(failure(processFailure({ code, signal: closeSignal, spawned, input: inputError, timeout: timedOut })));
+      else {
+        recordFailure(code, closeSignal);
+        reject(failure(failureDetail));
+      }
     });
   });
   done.catch(() => {});
@@ -139,7 +157,7 @@ export function createProgressiveEncoder({
   const onAbort = () => {
     const endReason = endReasons.includes(signal?.reason?.endReason) ? signal.reason.endReason : "cancelled";
     failureDetail ??= { endReason, exitCode: null, signal: null };
-    failureReason ??= endReason;
+    failureReason ??= isViewerEnd(endReason) || endReason === "cancelled" ? "none" : "convert_failed";
     controller.abort();
   };
   signal?.addEventListener("abort", onAbort, { once: true });
@@ -198,7 +216,6 @@ export function createProgressiveEncoder({
     path.join(directory, "segment%06d.ts"),
     path.join(directory, "index.m3u8"),
   ];
-  const process = processRun(ffmpeg, args, controller.signal, Math.max(120_000, expectedMs * 6), spawnProcess);
   let committed = 0,
     offset = 0,
     eof = false,
@@ -208,6 +225,27 @@ export function createProgressiveEncoder({
     outputFrames = 0;
   let segments = [],
     progress = "";
+  const recordProcessFailure = (detail) => {
+    if (isViewerEnd(failureDetail?.endReason) || failureDetail?.endReason === "cancelled") return;
+    if (!failureDetail || ["ffmpeg_input_error", "conversion_validation_failed"].includes(failureDetail.endReason))
+      failureDetail = detail;
+    else {
+      failureDetail.exitCode ??= detail.exitCode;
+      failureDetail.signal ??= detail.signal;
+    }
+    failureReason ??= "convert_failed";
+    failed = true;
+    controller.abort();
+    changed();
+  };
+  const process = processRun(
+    ffmpeg,
+    args,
+    controller.signal,
+    Math.max(120_000, expectedMs * 6),
+    spawnProcess,
+    recordProcessFailure,
+  );
   process.child.stdout.on("data", (chunk) => {
     progress += chunk.toString();
     const lines = progress.split("\n");
@@ -264,9 +302,7 @@ export function createProgressiveEncoder({
     },
     (error) => {
       failed = true;
-      if (!failureDetail || ["ffmpeg_input_error", "conversion_validation_failed"].includes(failureDetail.endReason))
-        failureDetail = { endReason: error.endReason, exitCode: error.exitCode, signal: error.signal };
-      failureReason ??= "convert_failed";
+      recordProcessFailure({ endReason: error.endReason, exitCode: error.exitCode, signal: error.signal });
       controller.abort();
       changed();
     },
@@ -348,7 +384,7 @@ export function createProgressiveEncoder({
     },
     async abort(reason = "convert_failed", detail) {
       failed = true;
-      failureReason ??= reason;
+      failureReason ??= isViewerEnd(reason) || reason === "cancelled" ? "none" : reason;
       failureDetail ??= detail ?? {
         endReason: reason === "convert_failed" ? "conversion_validation_failed" : reason,
         exitCode: null,

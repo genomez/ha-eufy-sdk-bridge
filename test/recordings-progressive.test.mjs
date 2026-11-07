@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { createProgressiveEncoder, segmentInventory, progressiveUsage } from "../src/recordings-progressive.mjs";
 import { createClipJobs } from "../src/recordings-clips.mjs";
+import { cameraLabel, endReasons } from "../src/recordings-job-evidence.mjs";
 import { temporary, until } from "./helpers/recordings-fixtures.mjs";
 
 function manifest(directory, count, duration = 1) {
@@ -532,7 +533,7 @@ test("an explicit encoder abort survives the asynchronous process close", async 
     spawnProcess: fakeProcess(directory, []),
   });
   await encoder.abort("viewer_released");
-  assert.equal(encoder.snapshot().reason, "viewer_released");
+  assert.equal(encoder.snapshot().reason, "none");
   assert.equal(encoder.snapshot().endReason, "viewer_released");
 });
 
@@ -815,4 +816,218 @@ test("real encoder exit reaches job history as a process failure rather than cap
   assert.equal(h.endReason, "ffmpeg_exit");
   assert.deepEqual(h.process, { exitCode: 23, signal: null });
   assert.equal(d.progressive.failuresByReason.ffmpeg_exit, 1);
+});
+
+const publicReasons = new Set([
+  "none",
+  "live_view",
+  "busy",
+  "owner_unavailable",
+  "not_found",
+  "too_long",
+  "storage",
+  "convert_failed",
+  "station_error",
+  "cleanup_uncertain",
+  "experiment_only",
+  "disabled",
+]);
+function assertPublicReasons(value) {
+  if (!value || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "reason") assert.ok(publicReasons.has(child), `Non-public reason: ${child}`);
+    else assertPublicReasons(child);
+  }
+}
+
+for (const mode of ["exit", "signal", "error"])
+  for (const cause of ["viewer_released", "viewer_expired", "session_evicted"])
+    for (const order of [
+      "failure-release-close",
+      "failure-close-release",
+      "release-failure-close",
+      "release-close-failure",
+    ])
+      test(`${mode} / ${cause} / ${order} preserves the first cause until close`, async (t) => {
+        const root = await temporary(t),
+          input = path.join(root, "input.hevc");
+        fs.writeFileSync(input, "source");
+        const controller = new AbortController();
+        let child;
+        const encoder = createProgressiveEncoder({
+          directory: path.join(root, "hls"),
+          input,
+          fps: 15,
+          expectedMs: 6000,
+          signal: controller.signal,
+          spawnProcess(...args) {
+            child = fakeProcess(path.join(root, "hls"), [])(...args);
+            child.kill = () => true;
+            return child;
+          },
+        });
+        let settled = false,
+          pending;
+        const failureFirst = order.startsWith("failure");
+        try {
+          for (const event of order.split("-")) {
+            if (event === "failure") {
+              if (mode === "error") child.emit("error", new Error("private executable"));
+              else child.emit("exit", mode === "exit" ? 23 : null, mode === "signal" ? "SIGSEGV" : null);
+              if (failureFirst) {
+                assert.equal(
+                  encoder.snapshot().endReason,
+                  { exit: "ffmpeg_exit", signal: "ffmpeg_signal", error: "ffmpeg_spawn_error" }[mode],
+                );
+                assert.equal(encoder.snapshot().reason, "convert_failed");
+              }
+            } else if (event === "release") {
+              controller.abort({ endReason: cause });
+              pending = encoder.abort(cause).then(() => {
+                settled = true;
+              });
+              if (!order.slice(0, order.indexOf("release")).includes("close")) {
+                await Promise.resolve();
+                assert.equal(settled, false, "cleanup must await process close");
+              }
+            } else
+              child.emit(
+                "close",
+                mode === "exit" ? 23 : mode === "error" ? -2 : null,
+                mode === "signal" ? "SIGSEGV" : null,
+              );
+          }
+        } finally {
+          child.emit(
+            "close",
+            mode === "exit" ? 23 : mode === "error" ? -2 : null,
+            mode === "signal" ? "SIGSEGV" : null,
+          );
+          await (pending ?? encoder.abort());
+        }
+        const snapshot = encoder.snapshot();
+        assert.equal(
+          snapshot.endReason,
+          failureFirst ? { exit: "ffmpeg_exit", signal: "ffmpeg_signal", error: "ffmpeg_spawn_error" }[mode] : cause,
+        );
+        assert.equal(snapshot.reason, failureFirst ? "convert_failed" : "none");
+        assertPublicReasons(snapshot);
+      });
+
+for (const mode of ["exit", "signal", "error"])
+  test(`job history retains ${mode} evidence preceding viewer release and pending close`, async (t) => {
+    let child;
+    const f = await fixture(t, {
+      progressiveEncoder: (options) =>
+        createProgressiveEncoder({
+          ...options,
+          spawnProcess(...args) {
+            child = fakeProcess(options.directory, [])(...args);
+            child.kill = () => true;
+            return child;
+          },
+        }),
+    });
+    if (mode === "error") child.emit("error", new Error("private executable"));
+    else child.emit("exit", mode === "exit" ? 23 : null, mode === "signal" ? "SIGSEGV" : null);
+    f.jobs.playbackRelease("a", f.a.sessionId, f.a.generation);
+    await Promise.resolve();
+    assert.equal(f.jobs.busy(), true);
+    child.emit("close", mode === "exit" ? 23 : mode === "error" ? -2 : null, mode === "signal" ? "SIGSEGV" : null);
+    await until(() => !f.jobs.busy());
+    const d = f.jobs.diagnostics(),
+      h = d.history.at(-1);
+    const expected = { exit: "ffmpeg_exit", signal: "ffmpeg_signal", error: "ffmpeg_spawn_error" }[mode];
+    assert.equal(h.endReason, expected);
+    assert.equal(h.state, "failed");
+    assert.equal(h.reason, "convert_failed");
+    assert.deepEqual(h.process, {
+      exitCode: mode === "exit" ? 23 : mode === "error" ? -2 : null,
+      signal: mode === "signal" ? "SIGSEGV" : null,
+    });
+    assert.equal(d.progressive.failuresByReason[expected], 1);
+    assertPublicReasons(f.jobs.status("camera", "event"));
+  });
+
+for (const cause of ["viewer_released", "viewer_expired"])
+  test(`${cause} reopen waits for cleanup without retaining a dead generation`, async (t) => {
+    let now = 0,
+      child;
+    const f = await fixture(t, {
+      now: () => now,
+      progressiveEncoder: (options) =>
+        createProgressiveEncoder({
+          ...options,
+          spawnProcess(...args) {
+            child = fakeProcess(options.directory, [])(...args);
+            child.kill = () => true;
+            return child;
+          },
+        }),
+    });
+    if (cause === "viewer_released") f.jobs.playbackRelease("a", f.a.sessionId, f.a.generation);
+    else {
+      now = 180001;
+      assert.throws(() => f.jobs.playbackOpen("b", "request-b", "camera", "event"), { reason: "busy" });
+      assert.throws(() => f.jobs.playbackStatus("a", f.a.sessionId, f.a.generation), { reason: "not_found" });
+    }
+    try {
+      assertPublicReasons(f.jobs.prepare("camera", "event", f.selection, { progressive: true }));
+      assert.throws(() => f.jobs.playbackOpen("b", "request-b", "camera", "event"), { reason: "busy" });
+      assert.equal(f.jobs.playbackExisting("b", "request-b", "camera", "event"), null);
+    } finally {
+      child.emit("close", 1);
+    }
+    await until(() => !f.jobs.busy());
+    assertPublicReasons(f.jobs.status("camera", "event"));
+    assertPublicReasons(f.jobs.prepare("camera", "event", f.selection, { progressive: true }));
+    const reopened = f.jobs.playbackOpen("b", "request-b", "camera", "event");
+    assertPublicReasons(reopened);
+    assert.notEqual(reopened.playback.generation, f.a.generation);
+    assert.equal(reopened.playback.delivery, "warming");
+    await until(() => f.pulls() === 2);
+    f.jobs.playbackRelease("b", reopened.playback.sessionId, reopened.playback.generation);
+    child.emit("close", 1);
+    await until(() => !f.jobs.busy());
+  });
+
+for (const reason of [...endReasons, ...publicReasons])
+  test(`public playback and clip reasons stay within the enum for ${reason}`, async (t) => {
+    const f = await fixture(t);
+    f.snapshot.reason = reason;
+    assertPublicReasons(f.jobs.playbackStatus("a", f.a.sessionId, f.a.generation));
+    assertPublicReasons(f.jobs.playbackExisting("a", "request-a", "camera", "event"));
+    assertPublicReasons(f.jobs.playbackOpen("b", "request-b", "camera", "event"));
+    assertPublicReasons(f.jobs.status("camera", "event"));
+    f.resolvePull({ ...clean, captureOutcome: "invalid_media", boundedMediaObserved: false });
+    await until(() => !f.jobs.busy());
+    assertPublicReasons(f.jobs.playbackStatus("a", f.a.sessionId, f.a.generation));
+    assertPublicReasons(f.jobs.status("camera", "event"));
+  });
+
+test("history camera labels redact addresses, MACs and long identity tokens", async (t) => {
+  const labels = [
+    "Porch 192.168.50.111",
+    "Camera 2001:db8::1",
+    "Camera ::1",
+    "Camera [fe80::1%eth0]",
+    "Camera ::ffff:192.0.2.1",
+    "Camera AA:BB:CC:DD:EE:FF",
+    "Camera aa-bb-cc-dd-ee-ff",
+    "Camera aabb.ccdd.eeff",
+    "Camera aabbccddeeff",
+    "Camera 0123456789abcdef",
+    "Camera ABC123456789",
+  ];
+  for (const label of labels) {
+    const f = await fixture(t);
+    f.selection.camera = { name: label, model: label };
+    f.resolvePull({ ...clean, captureOutcome: "invalid_media", boundedMediaObserved: false });
+    await until(() => !f.jobs.busy());
+    assert.deepEqual(f.jobs.diagnostics().history.at(-1).camera, { name: null, model: null }, label);
+    assert.equal(cameraLabel(label), null, label);
+  }
+  assert.equal(cameraLabel("Front Porch"), "Front Porch");
+  assert.equal(cameraLabel("T8425"), "T8425");
+  assert.equal(cameraLabel("Porch 2"), "Porch 2");
 });

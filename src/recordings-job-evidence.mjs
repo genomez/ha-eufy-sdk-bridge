@@ -48,7 +48,10 @@ export function cameraLabel(value) {
   if (
     typeof value !== "string" ||
     value.length > 256 ||
-    /[\\/]|https?:|\bT[0-9A-Z]{7,}\b|[A-Za-z0-9_+=.-]{24,}|\b[cep]_[A-Za-z0-9_-]+\b/i.test(value)
+    /[\\/]|https?:|\bT[0-9A-Z]{7,}\b|[A-Za-z0-9_+=.-]{24,}|\b[cep]_[A-Za-z0-9_-]+\b/i.test(value) ||
+    /\b(?:\d{1,3}\.){3}\d{1,3}\b|(?:[0-9a-f]{0,4}:){2,}[0-9a-f:.]*|\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b|\b[0-9a-f]{4}(?:\.[0-9a-f]{4}){2}\b|\b[0-9a-f]{12,}\b|\b(?=[a-z0-9]{12,}\b)(?=[a-z0-9]*\d)[a-z0-9]+\b/i.test(
+      value,
+    )
   )
     return null;
   return (
