@@ -1,3 +1,4 @@
+import { wireMs, wireTime } from "./recordings-wire.mjs";
 import path from "node:path";
 import { playbackExperiments } from "./recordings-experiments.mjs";
 import { readProgressiveSettings } from "./recordings-progressive-settings.mjs";
@@ -35,6 +36,10 @@ export function createRecordings(
   let lastGoodCount = DEFAULT_PACING.catalogQueryCount,
     lastCountQuery = null,
     countRevision = 0;
+  const windowContract = () => ({
+    stationWindow: catalogCount,
+    disclosure: `latest ${catalogCount} station-wide; history incomplete`,
+  });
   const catalogSettings = () => ({
     backgroundCatalogInterval: { value: pacing.backgroundCatalogInterval, source: intervalSource },
     catalogQueryCount: {
@@ -58,6 +63,7 @@ export function createRecordings(
       lastGoodCount = requestedCount;
     } else if (revision === countRevision && requestedCount > lastGoodCount && result.status !== "deferred") {
       catalogCount = lastGoodCount;
+      lastPageCount = 0;
       countSource = "fallback";
     }
   }
@@ -123,6 +129,8 @@ export function createRecordings(
   let pagingStatus = "unverified",
     lastPageCount = 0,
     deeperFailures = 0;
+  // Page evidence belongs to the current effective window, including after a live decrease.
+  const pageCount = (count) => (Number.isSafeInteger(count) && count >= 0 && count <= catalogCount ? count : 0);
   const rejected = { not_in_scope: 0, bad_record_id: 0, bad_start_time: 0, other: 0 };
   let identityConflict = 0;
   const timeShapes = new Map();
@@ -217,7 +225,7 @@ export function createRecordings(
         !stopped,
       scopeId: adapter.account() === account ? (scope?.scopeId ?? null) : null,
       timezone: "America/Chicago",
-      stationWindow: catalogCount,
+      ...windowContract(),
       pageSize: 100,
       coverBudget: LIMITS.folderBudget,
       catalogSettings: catalogSettings(),
@@ -703,7 +711,7 @@ export function createRecordings(
           finishBackgroundPaging(cycle, reasonOf(result.reason));
           return;
         }
-        lastPageCount = result.page?.count ?? 0;
+        lastPageCount = pageCount(result.page?.count ?? 0);
         collectDiagnostics(result);
         if (
           !Array.isArray(result.rows) ||
@@ -769,13 +777,13 @@ export function createRecordings(
       refresh = {
         state: "deferred",
         reason: catalogCycle.reason,
-        retryAfterMs: Math.max(0, catalogCycle.retryAt - mono()),
+        retryAfterMs: wireMs(catalogCycle.retryAt - mono()),
       };
       return;
     }
     const wait = policy.catalogWait();
     if (wait > 0) {
-      refresh = { state: "rate_limited", reason: "rate_limited", retryAfterMs: Math.ceil(wait) };
+      refresh = { state: "rate_limited", reason: "rate_limited", retryAfterMs: wireMs(wait) };
       return;
     }
     if (!available()) {
@@ -840,7 +848,7 @@ export function createRecordings(
           refresh = {
             state: result.status === "deferred" ? "deferred" : "failed",
             reason: reasonOf(result.reason),
-            retryAfterMs: cycle.retryAt ? Math.max(0, cycle.retryAt - mono()) : null,
+            retryAfterMs: cycle.retryAt ? wireMs(cycle.retryAt - mono()) : null,
           };
           return;
         }
@@ -850,7 +858,7 @@ export function createRecordings(
           refresh = { state: "failed", reason: "invalid_reply", retryAfterMs: null };
           return;
         }
-        lastPageCount = result.page?.count ?? result.rows.length;
+        lastPageCount = pageCount(result.page?.count ?? result.rows.length);
         collectDiagnostics(result);
         const validLatest = result.rows.filter((r) => r.timeStatus === "valid" && Number.isSafeInteger(r.startedAtMs));
         const overflow =
@@ -1059,6 +1067,7 @@ export function createRecordings(
       }
       if (args.reset || Object.hasOwn(args, "catalogQueryCount")) {
         countRevision++;
+        if (catalogCount !== next.catalogQueryCount) lastPageCount = 0;
         catalogCount = next.catalogQueryCount;
         countSource = args.reset ? "default" : "live";
       }
@@ -1103,6 +1112,7 @@ export function createRecordings(
       const cameras = scope && adapter.account() === account ? scope.cameras : [];
       return {
         clips: clips.diagnostics(),
+        ...windowContract(),
         catalogSettings: catalogSettings(),
         playbackModelPolicy: playbackModelPolicy(),
         rowsKeptPerCamera: cameras.map((c) => ({
@@ -1131,7 +1141,7 @@ export function createRecordings(
           lastCatalogAtMs: background.lastCatalogAtMs,
           nextCatalogAtMs:
             backgroundEnabled() && Number.isFinite(nextCatalog)
-              ? Math.floor(now() + Math.max(0, nextCatalog - mono()))
+              ? wireTime(now() + Math.max(0, nextCatalog - mono()))
               : null,
           catalogRuns: background.catalogRuns,
           ok: background.ok,
@@ -1263,8 +1273,7 @@ export function createRecordings(
         ),
         truncated,
         historyIncomplete: true,
-        stationWindow: catalogCount,
-        disclosure: `latest ${catalogCount} station-wide; history incomplete`,
+        ...windowContract(),
         lastSuccessfulQueryAtMs: state.lastSuccessfulQueryAtMs,
         lastAttemptAtMs: policy.snapshot().catalog,
         dirty,
@@ -1335,7 +1344,7 @@ export function createRecordings(
       queued.push({ owner, cameraId: args.cameraId, eventId: args.eventId, browseId: args.browseId });
       await persistBudget();
       flush();
-      return { ...result, state: "pending", retryAfterMs: Math.ceil(policy.coverWait()) || null };
+      return { ...result, state: "pending", retryAfterMs: wireMs(policy.coverWait()) || null };
     },
     clipPrepare(args, source) {
       fields(args, ["cameraId", "eventId"]);

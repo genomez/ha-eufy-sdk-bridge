@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { assertWireIntegers } from "./helpers/recordings-wire.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -1148,4 +1149,23 @@ test("history camera labels redact addresses, MACs and long identity tokens", as
   assert.equal(cameraLabel("Front Porch"), "Front Porch");
   assert.equal(cameraLabel("T8425"), "T8425");
   assert.equal(cameraLabel("Porch 2"), "Porch 2");
+});
+
+test("fractional monotonic clocks keep clip and playback open/status/renew and diagnostics integral", async (t) => {
+  let mono = 0;
+  const f = await fixture(t, { monotonic: () => (mono += 0.25) });
+  assertWireIntegers(f.a);
+  assertWireIntegers(f.jobs.status("camera", "event"));
+  const status = () => f.jobs.playbackStatus("a", f.a.sessionId, f.a.generation);
+  assertWireIntegers(status());
+  assertWireIntegers(f.jobs.playbackStatus("a", f.a.sessionId, f.a.generation, true));
+  f.snapshot.delivery = "playable";
+  assertWireIntegers(status());
+  f.finish();
+  await until(() => f.jobs.status("camera", "event").clip.state === "ready");
+  assertWireIntegers(f.jobs.prepare("camera", "event", f.selection, { progressive: true }));
+  assertWireIntegers(status());
+  assertWireIntegers(f.jobs.diagnostics());
+  const history = f.jobs.diagnostics().history.at(-1);
+  assert.ok(history.pullMs >= 1);
 });

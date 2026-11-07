@@ -208,13 +208,12 @@ Clip cleanup uncertainty triggers a bounded in-memory station reconnect. Existin
 finite capture, cessation, release and reconnect outcomes, ingress media counts,
 rejection counts by reason, and reconnect duration, with cumulative counters.
 
-
 ### Live catalog interval and row count
 
 Use the existing authorized WS command, with milliseconds for the interval:
 
 ```json
-{"id":1,"cmd":"recordings.set_pacing","backgroundCatalogInterval":60000,"catalogQueryCount":50}
+{ "id": 1, "cmd": "recordings.set_pacing", "backgroundCatalogInterval": 60000, "catalogQueryCount": 50 }
 ```
 
 Either setting can be changed alone; `{"id":2,"cmd":"recordings.set_pacing","reset":true}`
@@ -247,3 +246,23 @@ disclosure reflect the effective count for the next query. The retired
 `recordings.test_playback_models` command returns the normal unknown-command error;
 use `<RECORDINGS_ROOT>/playback-models.json`, e.g.
 `{"version":1,"models":["T8425","T8171"]}`, for live playback eligibility.
+
+## Local recordings wire-contract fixes, 2026-11-07
+
+Install the updated Home Assistant integration first, then this bridge. This
+bridge advertises `coverBudget: 100`, which HA revision `cd068ae` rejects even at
+the default query count. The SDK artifact is unchanged and does not need repacking.
+
+`stationWindow` and `disclosure` in capability, catalog and diagnostics describe
+the effective `catalogQueryCount` (including fallback), validated in 1..87381.
+The default fields remain `20` and `latest 20 station-wide; history incomplete`.
+Raising the count above 20 requires the updated HA integration. The HA catalog
+page size and maximum returned rows remain 100. Diagnostic `lastPageCount` is
+current-window evidence: changing the effective count clears it until a matching
+page completes; historical requested/returned counts remain in `catalogSettings`.
+No scheduling or capture limits change.
+
+Monotonic milliseconds sent to HA are rounded upward to nonnegative integers,
+including refresh/cover retries and diagnostic timing statistics. HA retains its
+strict integer validators. New HA accepts old bridges at window 20, including
+legacy capability/diagnostics without the new disclosure/window metadata.

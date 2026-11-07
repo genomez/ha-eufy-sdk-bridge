@@ -1,3 +1,4 @@
+import { wireMs } from "./recordings-wire.mjs";
 import { CATALOG_QUERY_COUNT_MAX } from "@mega-yfue/eufy-sdk";
 import { LIMITS, failure, reasonOf } from "./recordings-policy.mjs";
 
@@ -64,10 +65,10 @@ export function createCoverMeasurements() {
           pacing: { ...bucket.pacing },
           failures: { ...bucket.failures },
           sampleCount: n,
-          minMs: n ? sorted[0] : null,
-          medianMs: n ? (sorted[Math.floor((n - 1) / 2)] + sorted[Math.floor(n / 2)]) / 2 : null,
-          p95Ms: n ? sorted[Math.ceil(n * 0.95) - 1] : null,
-          maxMs: n ? sorted[n - 1] : null,
+          minMs: n ? wireMs(sorted[0]) : null,
+          medianMs: n ? wireMs((sorted[Math.floor((n - 1) / 2)] + sorted[Math.floor(n / 2)]) / 2) : null,
+          p95Ms: n ? wireMs(sorted[Math.ceil(n * 0.95) - 1]) : null,
+          maxMs: n ? wireMs(sorted[n - 1]) : null,
         };
       });
     },

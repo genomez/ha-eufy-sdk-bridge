@@ -133,3 +133,26 @@ test("uncapped long interval uses the existing timer without querying early", as
   assert.equal(h.manager.catalogSettings().backgroundCatalogInterval.value, 1e12);
   assert.equal(h.manager.diagnostics().background.nextCatalogAtMs, h.clocks.now() + 1e12 - (2 ** 31 - 1));
 });
+
+test("window and disclosure agree across capability, catalog and diagnostics through count changes", async (t) => {
+  let h;
+  h = await harness(t, { catalog: (_, opts) => page(h.scope, opts.queryCount) });
+  assert.equal(CATALOG_QUERY_COUNT_MAX, 87381);
+  for (const count of [20, 50, 100, 1, CATALOG_QUERY_COUNT_MAX]) {
+    h.manager.setPacing({ catalogQueryCount: count });
+    const disclosure = `latest ${count} station-wide; history incomplete`;
+    for (const payload of [h.manager.capability(), h.catalog(), h.manager.diagnostics()]) {
+      assert.equal(payload.stationWindow, count);
+      assert.equal(payload.disclosure, disclosure);
+    }
+    assert.equal(h.manager.capability().pageSize, 100);
+  }
+  h.manager.setPacing({ catalogQueryCount: 50 });
+  h.catalog("if_due");
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
+  assert.equal(h.manager.diagnostics().lastPageCount, 50);
+  h.manager.setPacing({ reset: true });
+  assert.equal(h.manager.diagnostics().lastPageCount, 0);
+  assert.equal(h.manager.diagnostics().stationWindow, 20);
+  assert.equal(h.manager.diagnostics().disclosure, "latest 20 station-wide; history incomplete");
+});

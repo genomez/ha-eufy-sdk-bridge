@@ -2086,3 +2086,25 @@ test("ambiguous slow-prefix clocks cannot be uniformly stretched into standalone
     { reason: "convert_failed" },
   );
 });
+
+for (const mediaDurationMs of [0.25, -1, 86400001])
+  test(`invalid SDK duration ${mediaDurationMs} cannot escape a failed clip status`, async (t) => {
+    const f = await fixture(t, {
+      pull: async (_, opts) => {
+        opts.beforeDispatch();
+        opts.video(Buffer.from("first"));
+        opts.video(Buffer.from("last"));
+        return { ...clean, mediaDurationMs };
+      },
+    });
+    f.jobs.prepare("camera", "invalid-duration", selection);
+    await until(() => !f.jobs.busy());
+    const reply = f.jobs.status("camera", "invalid-duration").clip;
+    assert.equal(reply.durationMs, null);
+  });
+
+test("refused clips do not expose expected durations beyond the HA wire range", async (t) => {
+  const f = await fixture(t, { live: () => true });
+  const result = f.jobs.prepare("camera", "too-long", { selector: { expectedMs: 2147400000 } });
+  assert.equal(result.clip.progress.expectedMs, null);
+});

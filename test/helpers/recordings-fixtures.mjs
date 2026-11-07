@@ -130,7 +130,7 @@ export function row(scope, index = 0, extra = {}) {
 }
 export async function harness(t, options = {}) {
   const root = await temporary(t),
-    clocks = clock(),
+    clocks = options.clocks ?? clock(),
     store = createRecordingsStore(root, { clock: clocks.now, ...options.storeOptions });
   const eufy = new EventEmitter(),
     calls = { catalog: [], cover: [] },

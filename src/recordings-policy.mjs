@@ -1,3 +1,4 @@
+import { wireTime } from "./recordings-wire.mjs";
 export const LIMITS = Object.freeze({
   catalogInterval: 60_000,
   timeout: 8_000,
@@ -173,7 +174,7 @@ export function createRecordingsPolicy({ monotonic = () => performance.now(), no
       return entry;
     },
     snapshot() {
-      const wall = (mono) => (Number.isFinite(mono) ? Math.floor(now() - (monotonic() - mono)) : null);
+      const wall = (mono) => (Number.isFinite(mono) ? wireTime(now() - (monotonic() - mono)) : null);
       return {
         catalog: wall(lastCatalog),
         coverCompleted: wall(lastCover),

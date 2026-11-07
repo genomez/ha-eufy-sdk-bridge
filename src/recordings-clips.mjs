@@ -1,3 +1,4 @@
+import { wireMs } from "./recordings-wire.mjs";
 import { validateExperiments } from "./recordings-experiments.mjs";
 import { readProgressiveSettings } from "./recordings-progressive-settings.mjs";
 import { createDownloadSpool, downloadEvidence } from "./recordings-download.mjs";
@@ -547,7 +548,7 @@ export function createClipJobs({
     return {
       count: n,
       min: n ? sorted[0] : null,
-      median: n ? (sorted[Math.floor((n - 1) / 2)] + sorted[Math.floor(n / 2)]) / 2 : null,
+      median: n ? wireMs((sorted[Math.floor((n - 1) / 2)] + sorted[Math.floor(n / 2)]) / 2) : null,
       max: n ? sorted[n - 1] : null,
     };
   };
@@ -596,11 +597,16 @@ export function createClipJobs({
   }
   const counters = newCounters();
   const key = (c, e) => `${c}/${e}`;
+  // Invalid SDK metadata must not poison even a refused/failed status reply.
+  const duration = (value) => (Number.isSafeInteger(value) && value >= 0 && value <= 86_400_000 ? value : null);
   const view = (j) => ({
     state: j?.state ?? "idle",
     reason: j?.reason ?? "none",
-    progress: { pulledMs: j?.pulledMs ?? 0, expectedMs: j?.expectedMs ?? 0 },
-    durationMs: j?.durationMs ?? null,
+    progress: {
+      pulledMs: duration(j?.pulledMs ?? 0) ?? 0,
+      expectedMs: duration(j?.expectedMs ?? 0),
+    },
+    durationMs: duration(j?.durationMs),
     bytes: j?.bytes ?? 0,
     expiresAtMs: j?.expiresAtMs ?? null,
     ...(j && { progressivePolicy: { ...j.progressivePolicy } }),
@@ -651,7 +657,7 @@ export function createClipJobs({
       ? snapshot.delivery
       : "unavailable";
     if (["playable", "complete"].includes(snapshot.delivery) && j.playableAtMs === null) {
-      j.playableAtMs = Math.max(0, Math.round(monotonic() - j.admittedMono));
+      j.playableAtMs = wireMs(monotonic() - j.admittedMono);
       j.playableSegments = j.finalSegmentCount;
       j.playableDurationMs = j.finalDurationMs;
       playableTimes.push(j.playableAtMs);
@@ -854,7 +860,7 @@ export function createClipJobs({
             feedProgressive(bytes);
             j.pulledMs = Math.min(
               j.expectedMs,
-              Math.round((latest - first) * (experiment?.playSpeed ?? pullOptions.transferSpeed)),
+              wireMs((latest - first) * (experiment?.playSpeed ?? pullOptions.transferSpeed)),
             );
           } catch (e) {
             writeFailed = true;
@@ -937,7 +943,7 @@ export function createClipJobs({
               Number.MAX_SAFE_INTEGER,
               (counts.admissionGates[evidence.admissionGate] ?? 0) + 1,
             );
-        pullMs = Math.round(monotonic() - start);
+        pullMs = wireMs(monotonic() - start);
         last = {
           startedAtMs: j.startedAtMs,
           finishedAtMs: j.finishedAtMs,
@@ -1021,7 +1027,7 @@ export function createClipJobs({
         }
         if (monotonic() >= admissionDeadline) break;
       }
-      pullMs = Math.round(monotonic() - start);
+      pullMs = wireMs(monotonic() - start);
       if (fd !== undefined && !writeFailed) {
         try {
           const tail = recordingTiming.flush();
@@ -1084,7 +1090,7 @@ export function createClipJobs({
       const reserve = Math.min(cap, Math.max(16 * 1024 ** 2, fs.statSync(j.input).size * 2));
       const maxBytes = room(reserve) - 8 * 1024 ** 2;
       if (maxBytes <= 0) throw fault("storage");
-      bridgeTimeline.convertStartMs = Math.max(0, Math.round(monotonic() - start));
+      bridgeTimeline.convertStartMs = wireMs(monotonic() - start);
       state(j, "converting");
       const converting = monotonic();
       try {
@@ -1105,8 +1111,8 @@ export function createClipJobs({
             log,
           });
       } finally {
-        convertMs = Math.round(monotonic() - converting);
-        bridgeTimeline.convertEndMs = Math.max(0, Math.round(monotonic() - start));
+        convertMs = wireMs(monotonic() - converting);
+        bridgeTimeline.convertEndMs = wireMs(monotonic() - start);
       }
       if (j.controller.signal.aborted) throw fault(j.cancelReason ?? "none");
       const stat = fs.lstatSync(j.output);
@@ -1120,7 +1126,7 @@ export function createClipJobs({
       j.pulledMs = j.expectedMs;
       j.access = now();
       j.expiresAtMs = now() + ttl;
-      bridgeTimeline.readyMs = Math.max(0, Math.round(monotonic() - start));
+      bridgeTimeline.readyMs = wireMs(monotonic() - start);
       state(j, "ready");
       terminal(j);
       last = {
