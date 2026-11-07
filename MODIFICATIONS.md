@@ -552,3 +552,5 @@ Offline synthetic validation only; installation acceptance remains false.
 
 - Pass through the bounded discarded-tail count and truncated completeness reason. Preserve the last attempted capture evidence separately as lastCaptureJob when later queued cancellations or immediate refusals update lastJob with their own ordinal, state, reason and timestamps.
 - Pin the rebuilt local 3p7r SDK tarball and installed runtime independently. Local synthetic validation only; latch, reconnect and refusal policy are unchanged.
+
+- Playback 3p7r2, 2026-11-06: pin the local a545c5b SDK tarball and runtime with unsaturated EOF truncation checks and bounded receipt counts; offline packaging only.
