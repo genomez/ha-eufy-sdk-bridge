@@ -36,6 +36,22 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+test("MP4 preserves native per-frame PTS instead of uniformly retiming 120 frames to 12s", async () => {
+  let seen;
+  const child = new EventEmitter();
+  child.kill = () => {};
+  const conversion = convertClip({ input: "synthetic.ts", output: "synthetic.mp4", frames: 120,
+    durationMs: 12000, maxBytes: 1024,
+    nativeTiming: { native: true, frames: 120, spanMs: 11935, durationMs: 11935 + 1000 / 15 },
+    spawnProcess: (_program, args) => { seen = args; return child; },
+  });
+  child.emit("close", 0);
+  await conversion;
+  assert.equal(seen[seen.indexOf("-f") + 1], "mpegts");
+  assert.equal(seen[seen.indexOf("-r") + 1], "15");
+  assert.ok(!seen.join(" ").includes("setpts=N"));
+});
+
 for (const failure of ["start_refused", "eof"])
   test(`2x ${failure} retries once at 1x in the same job with clean conversion input`, async (t) => {
     const speeds = [],

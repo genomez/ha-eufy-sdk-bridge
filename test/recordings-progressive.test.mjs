@@ -60,6 +60,28 @@ function fakeProcess(directory, calls, { fail = false, frames = 90 } = {}) {
   };
 }
 
+test("120 native frames spanning 11935ms complete as 12s HLS, including a 4069ms gap", async (t) => {
+  const root = await temporary(t), directory = path.join(root, "hls"), input = path.join(root, "input.ts");
+  fs.writeFileSync(input, "synthetic timestamped spool");
+  const calls = [];
+  const nativeTiming = { native: true, frames: 120, spanMs: 11935, durationMs: 11935 + 1000 / 15 };
+  const fake = fakeProcess(directory, calls, { frames: 180 });
+  const encoder = createProgressiveEncoder({ directory, input, fps: 15, expectedMs: 12000, nativeTiming,
+    spawnProcess: (program, args) => {
+      const child = fake(program, args);
+      child.stdin.once("finish", () => manifest(directory, 12));
+      return child;
+    },
+  });
+  t.after(async () => { await encoder.abort(); encoder.dispose(); });
+  encoder.commit(fs.statSync(input).size);
+  await encoder.finish({ frames: 120, durationMs: 12000 });
+  assert.equal(encoder.snapshot().delivery, "complete");
+  assert.equal(encoder.snapshot().segments.reduce((n, s) => n + s.durationMs, 0), 12000);
+  assert.equal(calls[0][calls[0].indexOf("-f") + 1], "mpegts");
+  assert.ok(!calls[0].join(" ").includes("setpts=N"));
+});
+
 test("streaming inventory appears before EOF and MP4 finalization copies the encoded video", async (t) => {
   const root = await temporary(t),
     directory = path.join(root, "hls"),
