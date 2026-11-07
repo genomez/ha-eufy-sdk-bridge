@@ -526,6 +526,10 @@ export function createClipJobs({
             }
           };
           pendingPull = Promise.resolve().then(() => pull(j.selection, pullOptions));
+          j.stationSettled = pendingPull.then(
+            () => {},
+            () => {},
+          );
           receipt = await Promise.race([pendingPull, media.promise]);
         } catch (error) {
           if (!error?.admissionGateName) throw error;
@@ -872,8 +876,12 @@ export function createClipJobs({
       for (const j of [...pending]) abort(j, "live_view");
       if (active) {
         const j = active;
-        if (!j.mediaComplete && (j.state === "pulling" || j.state === "queued")) abort(j, "live_view");
-        await j.done;
+        // Ready EOF media survives; live waits only for the station cleanup, not conversion.
+        if (j.mediaComplete) await j.stationSettled;
+        else if (j.state === "pulling" || j.state === "queued") {
+          abort(j, "live_view");
+          await j.done;
+        }
       }
     },
     busy: () => !!active && !active.waitingForAdmission,
