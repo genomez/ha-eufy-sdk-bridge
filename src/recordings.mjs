@@ -171,6 +171,7 @@ export function createRecordings(
     readPlaybackModels(ctx.cfg.recordings?.root ?? "/data/recordings", {
       models: ctx.cfg.recordings?.playbackModels,
       source: ctx.cfg.recordings?.playbackModelsSource,
+      rejection: ctx.cfg.recordings?.playbackModelsRejection,
     });
   const playbackAllowed = (cameraId, models = playbackModelPolicy().models) =>
     models.includes(

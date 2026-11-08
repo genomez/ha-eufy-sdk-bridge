@@ -10,6 +10,96 @@ import { harness, seed, temporary, tick } from "./helpers/recordings-fixtures.mj
 const expected = ["T8425", "T8426", "T8170", "T8171", "T8214", "T8416", "T8134"];
 const file = (root) => path.join(root, "playback-models.json");
 const write = (root, models) => fs.writeFileSync(file(root), JSON.stringify({ version: 1, models }));
+const startup = (env) => {
+  const cfg = loadConfig(env).cfg.recordings;
+  return { models: cfg.playbackModels, source: cfg.playbackModelsSource, rejection: cfg.playbackModelsRejection };
+};
+
+test("startup extras normalize and deduplicate the union with defaults or an environment base", async (t) => {
+  const root = await temporary(t);
+  for (const [env, models, source] of [
+    [
+      { RECORDINGS_PLAYBACK_MODELS_EXTRA: " t8212 , t8171a2,T8425,T8212" },
+      [...expected, "T8212", "T8171A2"],
+      "default+extra",
+    ],
+    [
+      { RECORDINGS_PLAYBACK_MODELS: "t8134,T8212", RECORDINGS_PLAYBACK_MODELS_EXTRA: "t8212,T8171a2" },
+      ["T8134", "T8212", "T8171A2"],
+      "env+extra",
+    ],
+    [{ RECORDINGS_PLAYBACK_MODELS: "", RECORDINGS_PLAYBACK_MODELS_EXTRA: "T8212" }, ["T8212"], "env+extra"],
+    [{ RECORDINGS_PLAYBACK_MODELS_EXTRA: "T8425" }, expected, "default+extra"],
+    [{ RECORDINGS_PLAYBACK_MODELS_EXTRA: "" }, expected, "default"],
+  ]) {
+    const policy = readPlaybackModels(root, startup(env));
+    assert.deepEqual(policy.models, models);
+    assert.equal(policy.source, source);
+    assert.equal(policy.rejection, null);
+  }
+});
+
+for (const extra of ["T8212,invalid", "T8212,", ",T8212", "T8212,,T8171", " ", "T821", "T8212-X", "T8212 x", 42])
+  test(`invalid startup extras reject the whole value: ${JSON.stringify(extra)}`, async (t) => {
+    const root = await temporary(t);
+    for (const base of [{}, { RECORDINGS_PLAYBACK_MODELS: "T8134" }, { RECORDINGS_PLAYBACK_MODELS: "" }]) {
+      const fallback = startup(base);
+      const defaults = startup({ ...base, RECORDINGS_PLAYBACK_MODELS_EXTRA: extra });
+      assert.deepEqual(defaults.models, fallback.models);
+      assert.equal(defaults.source, fallback.source);
+      assert.equal(defaults.rejection, "extra_models");
+      const policy = readPlaybackModels(root, defaults);
+      assert.deepEqual(policy.models, fallback.models);
+      assert.equal(policy.source, fallback.source);
+      assert.equal(policy.rejection, "extra_models");
+      assert.notEqual(policy.revision, readPlaybackModels(root, fallback).revision);
+      assert.ok(!JSON.stringify(policy).includes("invalid"));
+    }
+  });
+
+test("live file replaces startup base and extras, including rejected extras and empty files", async (t) => {
+  const root = await temporary(t);
+  for (const base of [{}, { RECORDINGS_PLAYBACK_MODELS: "T8134" }]) {
+    for (const extra of ["T8212", "T8212,invalid"]) {
+      const defaults = startup({ ...base, RECORDINGS_PLAYBACK_MODELS_EXTRA: extra });
+      for (const models of [[" t8171a2 ", "T8171A2"], []]) {
+        write(root, models);
+        const policy = readPlaybackModels(root, defaults);
+        assert.deepEqual(policy.models, models.length ? ["T8171A2"] : []);
+        assert.equal(policy.source, "file");
+        assert.equal(policy.rejection, null);
+      }
+      fs.writeFileSync(file(root), "{");
+      const rejected = readPlaybackModels(root, defaults);
+      assert.deepEqual(rejected.models, defaults.models);
+      assert.equal(rejected.source, defaults.source);
+      assert.equal(rejected.rejection, "malformed");
+      fs.renameSync(file(root), path.join(root, `saved-${Object.keys(base).length}-${extra.includes("invalid")}.json`));
+      assert.equal(readPlaybackModels(root, defaults).rejection, defaults.rejection);
+    }
+  }
+});
+
+test("startup extras and rejection reach catalog admission, diagnostics and capability readback", async (t) => {
+  const h = await harness(t);
+  await seed(h);
+  for (const [extra, playable, source, rejection] of [
+    ["T8425", true, "env+extra", null],
+    ["T8425,invalid", false, "env", "extra_models"],
+  ]) {
+    Object.assign(
+      h.ctx.cfg.recordings,
+      loadConfig({ RECORDINGS_PLAYBACK_MODELS: "T8134", RECORDINGS_PLAYBACK_MODELS_EXTRA: extra }).cfg.recordings,
+      { root: h.root },
+    );
+    assert.equal(h.catalog().events[0].playable, playable);
+    const policy = h.manager.playbackModelPolicy();
+    assert.equal(policy.source, source);
+    assert.equal(policy.rejection, rejection);
+    assert.deepEqual(h.manager.capability().playbackModelPolicy, policy);
+    assert.deepEqual(h.manager.diagnostics().playbackModelPolicy, policy);
+  }
+});
 
 test("absent live file uses the complete default or startup environment, including explicit empty", async (t) => {
   const root = await temporary(t);

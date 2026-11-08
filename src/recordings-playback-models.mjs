@@ -7,6 +7,39 @@ export const DEFAULT_PLAYBACK_MODELS = Object.freeze(["T8425", "T8426", "T8170",
 const reject = (category) => {
   throw Object.assign(new Error("playback_models_rejected"), { category });
 };
+function normalizeModels(models) {
+  if (
+    !Array.isArray(models) ||
+    models.some((model) => typeof model !== "string" || !/^T\d{4}[A-Z0-9]*$/.test(model.trim().toUpperCase()))
+  )
+    reject("models");
+  return [...new Set(models.map((model) => model.trim().toUpperCase()))];
+}
+
+/** Startup extras extend the base atomically; rejected entries never partially apply. */
+export function playbackModelDefaults(env) {
+  const models = [
+    ...new Set(
+      (env.RECORDINGS_PLAYBACK_MODELS ?? DEFAULT_PLAYBACK_MODELS.join(","))
+        .split(",")
+        .map((model) => model.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ];
+  const source = env.RECORDINGS_PLAYBACK_MODELS == null ? "default" : "env";
+  const extra = env.RECORDINGS_PLAYBACK_MODELS_EXTRA;
+  if (extra == null || extra === "") return { models, source, rejection: null };
+  try {
+    if (typeof extra !== "string") reject("models");
+    return {
+      models: [...new Set([...models, ...normalizeModels(extra.split(","))])],
+      source: `${source}+extra`,
+      rejection: null,
+    };
+  } catch {
+    return { models, source, rejection: "extra_models" };
+  }
+}
 const unchanged = (a, b) =>
   a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
 function regular(stat) {
@@ -28,12 +61,7 @@ function parse(bytes) {
   )
     reject("schema");
   if (value.version !== 1) reject("version");
-  if (
-    !Array.isArray(value.models) ||
-    value.models.some((model) => typeof model !== "string" || !/^T\d{4}[A-Z0-9]*$/.test(model.trim().toUpperCase()))
-  )
-    reject("models");
-  return [...new Set(value.models.map((model) => model.trim().toUpperCase()))];
+  return normalizeModels(value.models);
 }
 
 /** No cache or timer: every read describes the next catalog or playback admission. */
@@ -80,6 +108,7 @@ export function readPlaybackModels(root, defaults = {}, io = fs) {
     if (rejection) models = fallback;
     else source = "file";
   }
+  if (source !== "file" && rejection == null) rejection = defaults.rejection ?? null;
   const revision = createHash("sha256")
     .update(JSON.stringify([1, source, rejection, models]))
     .digest("hex");

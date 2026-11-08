@@ -1,7 +1,7 @@
 /** Modified for genomez S1 experimental source preview, 2026-10-16. */
 import { pilotLog } from "./pilot-log.mjs";
 import { createLoggingControl } from "./logging-control.mjs";
-import { DEFAULT_PLAYBACK_MODELS } from "./recordings-playback-models.mjs";
+import { playbackModelDefaults } from "./recordings-playback-models.mjs";
 // Environment → the immutable config + constants the whole bridge reads. Side-effect free (no mkdir,
 // no process.exit) so it can be imported from tests; server.mjs owns the startup guards.
 import path from "node:path";
@@ -76,6 +76,7 @@ export const STREAM_FAIL_BACKOFF_MAX_MS = 5 * 60_000; // cap on the exponential 
  * BRIDGE_DEBUG_P2P is currently inert: the SDK has no bridge-provided logger sink.
  */
 export function loadConfig(env = process.env) {
+  const playbackModels = playbackModelDefaults(env);
   const cfg = {
     email: env.EUFY_EMAIL,
     password: env.EUFY_PASSWORD,
@@ -118,15 +119,9 @@ export function loadConfig(env = process.env) {
           ? Number(env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS)
           : 3000,
       progressiveFps: env.RECORDINGS_PROGRESSIVE_FPS === "15" ? 15 : null,
-      playbackModelsSource: env.RECORDINGS_PLAYBACK_MODELS == null ? "default" : "env",
-      playbackModels: [
-        ...new Set(
-          (env.RECORDINGS_PLAYBACK_MODELS ?? DEFAULT_PLAYBACK_MODELS.join(","))
-            .split(",")
-            .map((v) => v.trim().toUpperCase())
-            .filter(Boolean),
-        ),
-      ],
+      playbackModelsSource: playbackModels.source,
+      playbackModels: playbackModels.models,
+      playbackModelsRejection: playbackModels.rejection,
       background: env.RECORDINGS_BACKGROUND == null ? true : truthy(env.RECORDINGS_BACKGROUND),
       backgroundPaging: env.RECORDINGS_BACKGROUND_PAGING == null ? true : truthy(env.RECORDINGS_BACKGROUND_PAGING),
       root: env.RECORDINGS_ROOT || "/data/recordings",

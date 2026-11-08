@@ -174,6 +174,10 @@ This replaces the earlier review.7 candidate with review.9 input `681efd9` (impl
 Recordings playback allows camera models T8425, T8426, T8170, T8171, T8214, T8416
 and T8134 by default. `RECORDINGS_PLAYBACK_MODELS` sets the startup fallback as a
 comma-separated list; an explicitly empty value disables playback for every model.
+`RECORDINGS_PLAYBACK_MODELS_EXTRA` adds a comma-separated list to that environment
+base or the built-in default. Extras use the same normalization and model validation
+as the live file. Any invalid extra entry rejects the entire extra value, retains
+the base list, and reports `rejection: "extra_models"`; entries never partially apply.
 For live changes without an add-on restart, atomically replace
 `<RECORDINGS_ROOT>/playback-models.json` (normally `/data/recordings/playback-models.json`):
 
@@ -186,7 +190,8 @@ each must match `^T\d{4}[A-Z0-9]*$`. An empty array disables all models. Missing
 use the environment or built-in default. Malformed JSON, unknown versions, bad
 entries, unknown fields, linked, changing or unreadable files are rejected as a
 whole and use that same fallback; no partial list or previous valid file is retained.
-Precedence is valid live file, startup environment, built-in default.
+Precedence is valid live file, then (startup environment or built-in default) plus
+accepted extras. A valid live file replaces everything, including extras.
 The live file has no timer, expiry or new limits.
 
 Catalog flags and playback admission re-read the file on the next request, even
@@ -196,7 +201,7 @@ Disallowed models remain browsable, report `playable: false`, and clip preparati
 returns `not_found`. Home Assistant uses these flags and needs no integration change.
 `config.get` returns `recordings.playbackModelPolicy`; the same policy appears in
 recordings capability, `recordings.diagnostics`, and `/diagnostics.recordings`.
-It includes `models`, `source` (`file`, `env`, or `default`),
+It includes `models`, `source` (`file`, `env`, `default`, `env+extra`, or `default+extra`),
 `rejection` (null when accepted/absent), and a policy `revision`. File rejection remains visible when the fallback is used.
 
 Environment changes still require an add-on restart. The live controls
