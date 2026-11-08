@@ -1273,6 +1273,7 @@ export function createRecordings(
         version: 1,
         scopeId: scope.scopeId,
         cameraId: args.cameraId,
+        playbackSupported: playbackAllowed(args.cameraId, models),
         revision: String(state.revision),
         events: rows.map((r) =>
           publicRecording(

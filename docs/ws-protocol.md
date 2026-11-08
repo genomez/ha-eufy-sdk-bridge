@@ -81,6 +81,7 @@ type Catalog = {
   version: 1;
   scopeId: string;
   cameraId: string;
+  playbackSupported?: boolean;
   revision: string;
   events: RecordingEvent[];
   truncated: boolean;
@@ -145,6 +146,14 @@ type Cover = {
 
 Catalog responses contain at most 100 newest entries, or the single requested focus event;
 there is no public cursor. Bounded internal station continuation is described below.
+The additive version-1 `playbackSupported` field reports whether this enrolled camera's
+model is enabled by the current playback model policy, including live policy changes.
+It is independent of row count, selectors and the global playback switch; `true` is
+not a guarantee of playable media. Excluded cameras still receive no catalog.
+Clients may use `false` for a non-playable camera-folder information item and `true`
+with zero rows for an empty-folder item. Older bridges omit this field: clients must
+then keep their existing behavior without adding either item. Information items must
+not initiate requests, expose thumbnails or change existing IDs and signing rules.
 Known times precede unknown times.
 `if_due` returns cached data promptly, records a camera/socket interest for 60 s,
 and requests at most one station-wide refresh per 60 s, including failed exchanges.
