@@ -1241,7 +1241,7 @@ for (const reason of [...endReasons, ...publicReasons])
 
 test("history camera labels redact addresses, MACs and long identity tokens", async (t) => {
   const labels = [
-    "Porch 192.168.50.111",
+    "Porch 10.20.30.111",
     "Camera 2001:db8::1",
     "Camera ::1",
     "Camera [fe80::1%eth0]",
@@ -1254,7 +1254,7 @@ test("history camera labels redact addresses, MACs and long identity tokens", as
     "Camera ABC123456789",
     "Porch_192.168.1.1",
     "Camera_ABC123456789",
-    "Porch 192.\u0000168.50.111",
+    "Porch 10.\u000020.30.111",
     "Camera_aa:bb:cc:dd:ee:ff",
   ];
   for (const label of labels) {
