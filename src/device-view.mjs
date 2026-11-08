@@ -430,6 +430,9 @@ export function createDeviceView(ctx) {
       type: p.type, // "bool" | "number" | "string" | "enum"
       unit: p.unit, // "%", "°C", "dBm", …
       kind: p.kind, // percent | celsius | dbm | seconds | …
+      min: p.min,
+      max: p.max,
+      step: p.step,
       writable: p.writable, // a setter exists (device.set accepts it)
       ...(p.boundedStateWrites === true ? { boundedStateWrites: true } : {}),
       enumValues: p.enumValues, // { raw: label } for enums
@@ -458,6 +461,7 @@ export function createDeviceView(ctx) {
         writeOnly: true,
         min: p.min,
         max: p.max,
+        step: p.step,
         enumValues: p.enumValues,
         description: p.description,
       }));
