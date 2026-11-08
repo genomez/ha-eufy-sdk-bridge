@@ -39,28 +39,36 @@ const failure = (code) => Object.assign(new Error("Bounded command failed"), { c
 /** Scalar light settings have no verified T9000 RTC encoding; the momentary switch is separate. */
 export const scalarLightSettings = new Set(["brightness", "spotlightEnabled", "colorTemp"]);
 
-/** Qualify scalar settings against the current parent, without retaining topology across roster changes. */
+/**
+ * Qualify scalar settings against the current parent, without retaining topology across roster changes.
+ * Unknown parents restrict only scalar controls. Retained hidden specs carry routeRestricted through
+ * decoded-read adaptation and let registry reconciliation retire legacy write-only identities reversibly.
+ */
 export function createLightSettingsWritePolicy({ getDevice }) {
-  async function unsupported(dev) {
-    if (!dev.capabilities?.includes("light") || !dev.stationSn || dev.stationSn === dev.sn) return false;
-    const station = await getDevice(dev.stationSn);
-    return /^T9000/i.test(station?.model ?? "") && (!station.stationSn || station.stationSn === station.sn);
+  async function restricted(dev) {
+    if (!dev.capabilities?.includes("light") || dev.stationSn === dev.sn) return false;
+    if (!dev.stationSn) return true;
+    try {
+      const station = await getDevice(dev.stationSn);
+      if (!station?.model || (station.stationSn && station.stationSn !== station.sn)) return true;
+      return /^T9000/i.test(station.model);
+    } catch {
+      return true;
+    }
   }
   return {
     async properties(dev, specs) {
-      if (!specs.some((spec) => scalarLightSettings.has(spec.name)) || !(await unsupported(dev))) return specs;
-      return specs.flatMap((spec) =>
+      if (!specs.some((spec) => scalarLightSettings.has(spec.name)) || !(await restricted(dev))) return specs;
+      return specs.map((spec) =>
         scalarLightSettings.has(spec.name)
-          ? spec.writeOnly
-            ? []
-            : [{ ...spec, writable: false, unexposed: true }]
-          : [spec],
+          ? { ...spec, writable: false, unexposed: true, routeRestricted: true }
+          : spec,
       );
     },
     async assertWritable(sn, name) {
       if (!scalarLightSettings.has(name)) return;
-      if (await unsupported(await getDevice(sn)))
-        throw Object.assign(new Error("Light setting has no verified T9000 command route"), {
+      if (await restricted(await getDevice(sn)))
+        throw Object.assign(new Error("Light setting has no verified command route"), {
           code: "command_unsupported",
           sendAttempted: false,
         });
