@@ -1,5 +1,5 @@
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
-import { conversionStderr, endReasons, progressivePumpStages } from "./recordings-job-evidence.mjs";
+import { conversionStderr, endReasons, progressivePumpStages, stderrCategories } from "./recordings-job-evidence.mjs";
 // A finite event vocabulary; no identifiers, payloads or exception text enter stdout.
 const events = new Set([
   "command_started",
@@ -217,6 +217,7 @@ export function pilotProgressiveRecord(line) {
       "elapsedMs",
       "pumpStage",
       "abortStage",
+      "stderrCategory",
       "stderrTail",
     ];
     if (
@@ -242,6 +243,7 @@ export function pilotProgressiveRecord(line) {
     )
       return;
     if (typeof r.stderrTail !== "string" || Buffer.byteLength(r.stderrTail) > 2048) return;
+    if (!stderrCategories.includes(r.stderrCategory)) return;
     if (
       r.event === "recordings.progressive_started"
         ? r.endReason !== "none" ||
@@ -252,6 +254,7 @@ export function pilotProgressiveRecord(line) {
           r.elapsedMs !== 0 ||
           r.pumpStage !== "starting" ||
           r.abortStage !== null ||
+          r.stderrCategory !== "unknown" ||
           r.stderrTail !== ""
         : r.endReason === "none"
     )

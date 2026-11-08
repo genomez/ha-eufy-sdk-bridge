@@ -141,7 +141,14 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess, failed = 
   });
   done.catch(() => {});
   if (signal?.aborted) abort();
-  return { child, done, abort, stderr: () => stderr.read(), outcome: () => ({ ...outcome }) };
+  return {
+    child,
+    done,
+    abort,
+    stderr: () => stderr.read(),
+    stderrCategory: () => stderr.category(),
+    outcome: () => ({ ...outcome }),
+  };
 }
 
 /**
@@ -289,6 +296,7 @@ export function createProgressiveEncoder({
         elapsedMs: starting ? 0 : Math.max(0, Math.round(performance.now() - startedAt)),
         pumpStage: starting ? "starting" : pumpStage,
         abortStage: starting ? null : abortStage,
+        stderrCategory: starting ? "unknown" : process.stderrCategory(),
         stderrTail: starting ? "" : conversionStderr(process.stderr()),
       });
     } catch {}

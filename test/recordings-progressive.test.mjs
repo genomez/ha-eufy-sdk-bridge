@@ -83,6 +83,8 @@ for (const fail of [false, true])
         child.stderr.write(
           "\ndecoder 192.0.2.40 https://example.invalid/media?token=synthetic-secret T9000SYNTHETIC123 /tmp/short.ts C:\\tmp\\short.ts\ninvalid data\n",
         );
+        // Classification must see the raw suffix even when path redaction removes it.
+        child.stderr.write("C:\\fixture\\clip.ts: Broken pipe\n");
         return child;
       },
     });
@@ -101,6 +103,9 @@ for (const fail of [false, true])
     assert.equal(end.endReason, fail ? "ffmpeg_exit" : "normal_completion");
     assert.equal(end.exitCode, fail ? 1 : 0);
     assert.equal(end.signal, null);
+    assert.equal(records[0].stderrCategory, "unknown");
+    assert.equal(end.stderrCategory, "broken_pipe");
+    assert.doesNotMatch(end.stderrTail, /Broken pipe|fixture|clip\.ts/);
     assert.equal(end.framesWritten, 90);
     assert.equal(end.segmentsWritten, 6);
     assert.ok(Number.isSafeInteger(end.elapsedMs) && end.elapsedMs >= 0);

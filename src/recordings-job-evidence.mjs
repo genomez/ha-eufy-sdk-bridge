@@ -71,20 +71,81 @@ export function cameraLabel(value) {
   return shown.trim().slice(0, 80) || null;
 }
 
-/** Remove transport identities and credentials before emitting bounded decoder diagnostics. */
+export const stderrCategories = Object.freeze([
+  "decode_error",
+  "invalid_data",
+  "non_monotonic_dts",
+  "broken_pipe",
+  "eof_early",
+  "muxer_error",
+  "unknown",
+]);
+
+/** Classify raw decoder text before removing paths or opaque tokens. */
+export function conversionStderrCategory(value) {
+  if (/non[- ]monoton(?:ic|ous).*\bdts\b/i.test(value)) return "non_monotonic_dts";
+  if (/broken pipe|\bEPIPE\b/i.test(value)) return "broken_pipe";
+  if (/premature (?:end|eof)|unexpected (?:end|eof)|end of file.*(?:early|premature)/i.test(value)) return "eof_early";
+  if (
+    /error (?:writing|opening output)|could not write header|muxer.*(?:error|failed)|av_interleaved_write_frame/i.test(
+      value,
+    )
+  )
+    return "muxer_error";
+  if (/invalid data/i.test(value)) return "invalid_data";
+  if (
+    /error (?:while )?decod|decode(?:r|ing)? (?:error|failed)|corrupt(?:ed)?|missing picture|invalid (?:nal|pps|sps)/i.test(
+      value,
+    )
+  )
+    return "decode_error";
+  return "unknown";
+}
+
+const stderrNumber = /^[+-]?(?:\d{1,6}(?:\.\d{1,6})?|\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?|\d{1,3}:\d{1,3})$/;
+const stderrCodec = /^(?:h264|h265|av1|vp8|vp9|mpeg4)$/i;
+const stderrPunctuation = /^[\[\](){},:;.!?'"=+*%#@<>|~-]+$/;
+
+function stderrToken(token) {
+  if (token === "[redacted]") return token;
+  // Never split an opaque token into individually harmless-looking fragments.
+  if (/[a-f0-9]{8,}|(?:[a-f0-9]{2}[:-]){5}[a-f0-9]{2}|::/i.test(token)) return "[redacted]";
+  const core = token.replace(/^[\[\](){},;!?'"#]+|[\[\](){},:;.!?'"%]+$/g, "");
+  const metric = /^(?:frame|frames|pts|dts|fps|time|size|bitrate|speed|q)=([^=]+)$/i.exec(core);
+  if (
+    /^[a-z]+(?:-[a-z]+)*$/i.test(core) ||
+    stderrCodec.test(core) ||
+    stderrNumber.test(core) ||
+    (metric && stderrNumber.test(metric[1])) ||
+    stderrPunctuation.test(token)
+  )
+    return token;
+  return "[redacted]";
+}
+
+/** Allow only decoder words, known codecs/metrics, short numbers and common punctuation. */
 export function conversionStderr(value) {
   return value
-    .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s]+/gi, "[redacted]")
-    .replace(/(["'])(?:[a-z]:[\\/]|\/|\.{1,2}[\\/])[^"'\r\n]*\1/gi, "[redacted]")
-    .replace(/(?:[a-z]:[\\/]|\\\\|\.{1,2}[\\/]|\/)[^\s"'<>]+/gi, "[redacted]")
-    .replace(/\b(?:[a-z_]*token|authorization|password|secret|api[_-]?key)\b[^\r\n]*/gi, "[redacted]")
-    .replace(/\bbearer\s+\S+/gi, "[redacted]")
-    .replace(/\bT[0-9A-Z]{7,}\b/gi, "[redacted]")
-    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, "[redacted]")
-    .replace(/(?<![a-z0-9])(?:[0-9a-f]{0,4}:){2,}[0-9a-f:.%]*/gi, "[redacted]")
-    .replace(/[A-Za-z0-9_+\/=.-]{24,}/g, "[redacted]")
-    .replace(/[\x00-\x1f\x7f-\x9f]+/g, " ")
-    .replace(/[^\x20-\x7e]/g, "?")
+    .split(/\r\n?|\n/)
+    .map((line) => {
+      const result = [];
+      for (const token of line
+        .replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
+        .replace(/[^\x20-\x7e]/g, "?")
+        .match(/\S+/g) ?? []) {
+        // Unquoted paths may contain spaces: discard the rest of this line, not just its first component.
+        if (
+          /[\\/]|(?:^|[^a-z0-9])[a-z]:/i.test(token) ||
+          /\b(?:[a-z_]*token|authorization|password|secret|api[_-]?key|bearer)\b/i.test(token)
+        ) {
+          result.push("[redacted]");
+          break;
+        }
+        result.push(stderrToken(token));
+      }
+      return result.join(" ");
+    })
+    .join(" ")
     .slice(-2048);
 }
 
@@ -92,6 +153,11 @@ export function conversionStderr(value) {
 export function createConversionStderr() {
   let stderr = Buffer.alloc(0),
     truncated = false;
+  const rawTail = () => {
+    const tail = stderr.toString("utf8"),
+      firstNewline = tail.indexOf("\n");
+    return truncated ? (firstNewline < 0 ? "" : tail.slice(firstNewline + 1)) : tail;
+  };
   return {
     write(data) {
       const chunk = Buffer.from(data);
@@ -99,9 +165,8 @@ export function createConversionStderr() {
       stderr = Buffer.concat([stderr, chunk.subarray(-2048)]).subarray(-2048);
     },
     read() {
-      const tail = stderr.toString("utf8"),
-        firstNewline = tail.indexOf("\n");
-      return conversionStderr(truncated ? (firstNewline < 0 ? "" : tail.slice(firstNewline + 1)) : tail);
+      return conversionStderr(rawTail());
     },
+    category: () => conversionStderrCategory(rawTail()),
   };
 }

@@ -101,6 +101,7 @@ const progressiveRecord = {
   elapsedMs: 2300,
   pumpStage: "stdin_write",
   abortStage: "stdin_write",
+  stderrCategory: "invalid_data",
   stderrTail: "HEVC decoder: invalid data",
 };
 
@@ -123,12 +124,15 @@ test("progressive wrapper accepts fixed fields and rejects invalid or extra diag
     { elapsedMs: 0.5 },
     { pumpStage: "private" },
     { abortStage: "private" },
+    { stderrCategory: "private" },
+    { stderrCategory: null },
     { stderrTail: "x".repeat(2049) },
     { stderrTail: "é".repeat(1025) },
     { stderrTail: null },
     { event: "recordings.progressive_started" },
   ].map((fields) => ({ ...progressiveRecord, ...fields }));
   invalid.push(Object.fromEntries(Object.entries(progressiveRecord).filter(([key]) => key !== "abortStage")));
+  invalid.push(Object.fromEntries(Object.entries(progressiveRecord).filter(([key]) => key !== "stderrCategory")));
   for (const record of invalid) assert.equal(pilotProgressiveRecord(JSON.stringify(record)), undefined);
   assert.deepEqual(runPilotProcess([progressiveRecord, ...invalid]), [progressiveRecord]);
 });
