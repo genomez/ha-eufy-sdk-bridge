@@ -15,6 +15,18 @@ export const endReasons = Object.freeze([
   "refused",
 ]);
 export const isViewerEnd = (reason) => ["viewer_released", "viewer_expired", "session_evicted"].includes(reason);
+export const progressivePumpStages = Object.freeze([
+  "starting",
+  "storage_reserve",
+  "segment_inventory",
+  "lag_limit",
+  "spool_read",
+  "stdin_write",
+  "waiting",
+  "eof",
+  "validation",
+  "complete",
+]);
 export function playableThreshold(value) {
   return Number.isInteger(value) && value >= 1000 && value <= 6000 ? value : 3000;
 }
@@ -63,6 +75,8 @@ export function cameraLabel(value) {
 export function conversionStderr(value) {
   return value
     .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s]+/gi, "[redacted]")
+    .replace(/(["'])(?:[a-z]:[\\/]|\/|\.{1,2}[\\/])[^"'\r\n]*\1/gi, "[redacted]")
+    .replace(/(?:[a-z]:[\\/]|\\\\|\.{1,2}[\\/]|\/)[^\s"'<>]+/gi, "[redacted]")
     .replace(/\b(?:[a-z_]*token|authorization|password|secret|api[_-]?key)\b[^\r\n]*/gi, "[redacted]")
     .replace(/\bbearer\s+\S+/gi, "[redacted]")
     .replace(/\bT[0-9A-Z]{7,}\b/gi, "[redacted]")

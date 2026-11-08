@@ -11,6 +11,7 @@ import { cameraLabel, endReasons } from "../src/recordings-job-evidence.mjs";
 import { temporary, until } from "./helpers/recordings-fixtures.mjs";
 import { createRecordingTiming, nativeVideoFilter } from "../src/recordings-timing.mjs";
 import { variableCadenceProfiles, variableCadenceStamps } from "./helpers/recordings-variable-cadence.mjs";
+import { runPilotProcess } from "./helpers/pilot-process.mjs";
 
 function manifest(directory, count, duration = 1) {
   fs.mkdirSync(directory, { recursive: true });
@@ -62,6 +63,95 @@ function fakeProcess(directory, calls, { fail = false, frames = 90, segmentCount
     return child;
   };
 }
+
+for (const fail of [false, true])
+  test(`progressive lifecycle reaches wrapper once after ${fail ? "nonzero" : "normal"} close`, async (t) => {
+    const root = await temporary(t),
+      directory = path.join(root, "hls"),
+      input = path.join(root, "input.hevc");
+    const records = [];
+    fs.writeFileSync(input, "source");
+    const encoder = createProgressiveEncoder({
+      directory,
+      input,
+      expectedMs: 6000,
+      fps: 15,
+      lifecycle: (record) => records.push({ ...record, jobOrdinal: 1 }),
+      spawnProcess: (...args) => {
+        const child = fakeProcess(directory, [], { fail })(...args);
+        child.stderr.write("discarded-prefix" + "x".repeat(4096));
+        child.stderr.write(
+          "\ndecoder 192.0.2.40 https://example.invalid/media?token=synthetic-secret T9000SYNTHETIC123 /tmp/short.ts C:\\tmp\\short.ts\ninvalid data\n",
+        );
+        return child;
+      },
+    });
+    t.after(() => encoder.dispose());
+    encoder.commit(6);
+    const finishing = encoder.finish({ frames: 90, durationMs: 6000 });
+    if (fail) await assert.rejects(finishing);
+    else await finishing;
+    await encoder.abort();
+    await encoder.abort();
+    assert.deepEqual(
+      records.map((r) => r.event),
+      ["recordings.progressive_started", "recordings.progressive_ended"],
+    );
+    const end = records[1];
+    assert.equal(end.endReason, fail ? "ffmpeg_exit" : "normal_completion");
+    assert.equal(end.exitCode, fail ? 1 : 0);
+    assert.equal(end.signal, null);
+    assert.equal(end.framesWritten, 90);
+    assert.equal(end.segmentsWritten, 6);
+    assert.ok(Number.isSafeInteger(end.elapsedMs) && end.elapsedMs >= 0);
+    assert.match(end.stderrTail, /invalid data/);
+    assert.doesNotMatch(end.stderrTail, /discarded-prefix|192\.0\.2|example|synthetic-secret|T9000|tmp|short/);
+    assert.ok(Buffer.byteLength(end.stderrTail) <= 2048);
+    assert.deepEqual(runPilotProcess(records), records);
+  });
+
+for (const stage of ["spool_read", "storage_reserve", "segment_inventory", "stdin_write"])
+  test(`progressive ${stage} failure logs its abort stage without raw exception text`, async (t) => {
+    const root = await temporary(t),
+      directory = path.join(root, "hls"),
+      input = path.join(root, "input.hevc");
+    const records = [];
+    if (stage !== "spool_read") fs.writeFileSync(input, "source");
+    const encoder = createProgressiveEncoder({
+      directory,
+      input,
+      expectedMs: 6000,
+      fps: 15,
+      lifecycle: (record) => records.push({ ...record, jobOrdinal: 1 }),
+      reserve() {
+        if (stage === "storage_reserve") throw new Error("synthetic-private /tmp/short.ts");
+      },
+      spawnProcess: (...args) => {
+        const child = fakeProcess(directory, [])(...args);
+        if (stage === "segment_inventory")
+          fs.writeFileSync(path.join(directory, "index.m3u8"), "#EXTINF:3,\nsegment000000.ts\n");
+        if (stage === "stdin_write")
+          child.stdin = new Writable({
+            write(_data, _encoding, callback) {
+              callback(new Error("synthetic-private /tmp/short.ts"));
+            },
+          });
+        return child;
+      },
+    });
+    t.after(() => encoder.dispose());
+    if (stage === "stdin_write") encoder.commit(6);
+    await until(() => records.some((r) => r.event === "recordings.progressive_ended"));
+    await encoder.abort();
+    assert.equal(records.length, 2);
+    // Preserve existing failure classification when the terminated fake closes nonzero.
+    assert.equal(records[1].endReason, "ffmpeg_exit");
+    assert.equal(records[1].endReason, encoder.snapshot().endReason);
+    assert.equal(records[1].pumpStage, stage);
+    assert.equal(records[1].abortStage, stage);
+    assert.doesNotMatch(JSON.stringify(records), /synthetic-private|\/tmp/);
+    assert.deepEqual(runPilotProcess(records), records);
+  });
 
 test("120 native frames spanning 11935ms complete as 12s HLS, including a 4069ms gap", async (t) => {
   const root = await temporary(t),
@@ -878,8 +968,10 @@ test("time to playable keeps the last twenty samples and counts shared viewers o
 for (const cause of ["released", "expired", "evicted"])
   test(`real encoder ${cause} input shutdown is not convert_failed`, async (t) => {
     let now = 0;
+    const records = [];
     const f = await fixture(t, {
       now: () => now,
+      log: (record) => records.push(record),
       progressiveEncoder: (options) =>
         createProgressiveEncoder({ ...options, spawnProcess: fakeProcess(options.directory, []) }),
     });
@@ -895,6 +987,14 @@ for (const cause of ["released", "expired", "evicted"])
     assert.equal(h.state, "cancelled");
     assert.equal(h.reason, "none");
     assert.equal(h.progressive.delivery, "unavailable");
+    const lifecycle = records.filter((r) => r.event.startsWith("recordings.progressive_"));
+    assert.deepEqual(
+      lifecycle.map((r) => r.event),
+      ["recordings.progressive_started", "recordings.progressive_ended"],
+    );
+    assert.equal(lifecycle[1].endReason, h.endReason);
+    assert.notEqual(lifecycle[1].abortStage, null);
+    assert.deepEqual(runPilotProcess(lifecycle), lifecycle);
     assert.equal(
       Object.values(d.progressive.failuresByReason).reduce((a, b) => a + b, 0),
       0,
@@ -903,7 +1003,9 @@ for (const cause of ["released", "expired", "evicted"])
 
 test("real encoder exit reaches job history as a process failure rather than capture cancellation", async (t) => {
   let child;
+  const records = [];
   const f = await fixture(t, {
+    log: (record) => records.push(record),
     progressiveEncoder: (options) =>
       createProgressiveEncoder({
         ...options,
@@ -931,6 +1033,12 @@ test("real encoder exit reaches job history as a process failure rather than cap
   assert.match(h.stderr, /late decoder detail/);
   assert.doesNotMatch(h.stderr, /discarded-prefix|synthetic-secret|password=/);
   assert.equal(d.progressive.failuresByReason.ffmpeg_exit, 1);
+  const lifecycle = records.filter((r) => r.event.startsWith("recordings.progressive_"));
+  assert.equal(lifecycle.length, 2);
+  assert.equal(lifecycle[1].endReason, "ffmpeg_exit");
+  assert.equal(lifecycle[1].exitCode, 23);
+  assert.match(lifecycle[1].stderrTail, /late decoder detail/);
+  assert.deepEqual(runPilotProcess(lifecycle), lifecycle);
 });
 
 const publicReasons = new Set([
@@ -968,6 +1076,7 @@ for (const mode of ["exit", "signal", "error"])
           input = path.join(root, "input.hevc");
         fs.writeFileSync(input, "source");
         const controller = new AbortController();
+        const records = [];
         let child;
         const encoder = createProgressiveEncoder({
           directory: path.join(root, "hls"),
@@ -975,6 +1084,7 @@ for (const mode of ["exit", "signal", "error"])
           fps: 15,
           expectedMs: 6000,
           signal: controller.signal,
+          lifecycle: (record) => records.push({ ...record, jobOrdinal: 1 }),
           spawnProcess(...args) {
             child = fakeProcess(path.join(root, "hls"), [])(...args);
             child.kill = () => true;
@@ -1026,6 +1136,10 @@ for (const mode of ["exit", "signal", "error"])
           failureFirst ? { exit: "ffmpeg_exit", signal: "ffmpeg_signal", error: "ffmpeg_spawn_error" }[mode] : cause,
         );
         assert.equal(snapshot.reason, failureFirst ? "convert_failed" : "none");
+        assert.equal(records.length, 2);
+        assert.equal(records[1].endReason, snapshot.endReason);
+        assert.equal(records[1].exitCode, mode === "exit" ? 23 : mode === "error" ? -2 : null);
+        assert.equal(records[1].signal, mode === "signal" ? "SIGSEGV" : null);
         assertPublicReasons(snapshot);
       });
 

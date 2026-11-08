@@ -16,6 +16,7 @@ import { temporary, until, harness, seed, row, tick, inventory } from "./helpers
 import { loadConfig } from "../src/config.mjs";
 import { playbackExperiments, playbackSessionIcePolicy } from "../src/recordings-experiments.mjs";
 import { variableCadenceProfiles, variableCadenceStamps } from "./helpers/recordings-variable-cadence.mjs";
+import { runPilotProcess } from "./helpers/pilot-process.mjs";
 
 const clean = {
   admissionGate: 0,
@@ -1826,6 +1827,8 @@ test("new jobs log exactly one bounded queue/terminal pair including deduplicati
   assert.equal(records[2].state, "cancelled");
   assert.equal(records[3].state, "ready");
   assert.equal(records[3].jobOrdinal, 1);
+  // Forward the actual trace output, including null and numeric transferSpeed, through the launcher.
+  assert.deepEqual(runPilotProcess(records), records);
   assert.equal(JSON.stringify(records).includes("synthetic-private"), false);
   assert.equal(JSON.stringify(records).includes("camera"), false);
   assert.equal(f.jobs.diagnostics().lastJob.startedAtMs, 100000);

@@ -1,6 +1,13 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { pilotLog, pilotRecordEvent, pilotClipRecord, setPilotLogTimestamps } from "../src/pilot-log.mjs";
+import {
+  pilotLog,
+  pilotRecordEvent,
+  pilotClipRecord,
+  pilotProgressiveRecord,
+  PILOT_RECORD_MAX_CHARS,
+  setPilotLogTimestamps,
+} from "../src/pilot-log.mjs";
 // Native libraries can write to file descriptors. Reconstruct only finite allowlisted events; a
 // child's LOG_TIMESTAMPS `ts` is validated, then re-stamped here rather than forwarded.
 // Clip lifecycle records retain their validated fixed schema and original UTC timestamp.
@@ -18,14 +25,14 @@ child.stdout.on("data", (chunk) => {
         const event = pilotRecordEvent(pending);
         if (event !== undefined) pilotLog(event);
         else {
-          const clip = pilotClipRecord(pending);
+          const clip = pilotClipRecord(pending) ?? pilotProgressiveRecord(pending);
           if (clip) process.stdout.write(JSON.stringify(clip) + "\n");
         }
       }
       pending = "";
       discarding = false;
     } else if (!discarding) {
-      if (pending.length >= 512) {
+      if (pending.length >= PILOT_RECORD_MAX_CHARS) {
         pending = "";
         discarding = true;
       } else pending += char;

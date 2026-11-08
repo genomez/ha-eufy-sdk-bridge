@@ -1,4 +1,5 @@
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
+import { conversionStderr, endReasons, progressivePumpStages } from "./recordings-job-evidence.mjs";
 // A finite event vocabulary; no identifiers, payloads or exception text enter stdout.
 const events = new Set([
   "command_started",
@@ -145,11 +146,12 @@ export function pilotClipRecord(line) {
   try {
     const r = JSON.parse(line);
     if (!r || typeof r !== "object" || Array.isArray(r)) return;
-    const keys = ["event", "ts", "jobOrdinal", "state", "reason", "durationBucket", "source"];
+    const keys = ["event", "ts", "jobOrdinal", "state", "reason", "transferSpeed", "durationBucket", "source"];
     if (Object.keys(r).length !== keys.length || !keys.every((k) => Object.hasOwn(r, k))) return;
     if (!["recordings.clip_queued", "recordings.clip_terminal"].includes(r.event)) return;
     if (typeof r.ts !== "string" || !ISO_UTC.test(r.ts)) return;
     if (!Number.isSafeInteger(r.jobOrdinal) || r.jobOrdinal < 1) return;
+    if (r.transferSpeed !== null && !(Number.isFinite(r.transferSpeed) && r.transferSpeed >= 0)) return;
     if (
       r.event === "recordings.clip_queued"
         ? r.state !== "queued"
@@ -187,9 +189,74 @@ export function pilotClipRecord(line) {
       jobOrdinal: r.jobOrdinal,
       state: r.state,
       reason: r.reason,
+      transferSpeed: r.transferSpeed,
       durationBucket: r.durationBucket,
       source: { connection: source.connection, locality: source.locality, client: source.client },
     };
+  } catch {}
+  return undefined;
+}
+
+// A 2 KiB ASCII tail can double under JSON escaping; fixed fields fit in the remaining 1 KiB.
+export const PILOT_RECORD_MAX_CHARS = 5 * 1024;
+
+/** Validate fixed encoder diagnostics and sanitize again at the child stdout boundary. */
+export function pilotProgressiveRecord(line) {
+  try {
+    const r = JSON.parse(line);
+    const keys = [
+      "event",
+      "ts",
+      "jobOrdinal",
+      "stage",
+      "endReason",
+      "exitCode",
+      "signal",
+      "framesWritten",
+      "segmentsWritten",
+      "elapsedMs",
+      "pumpStage",
+      "abortStage",
+      "stderrTail",
+    ];
+    if (
+      !r ||
+      typeof r !== "object" ||
+      Array.isArray(r) ||
+      Object.keys(r).length !== keys.length ||
+      !keys.every((k) => Object.hasOwn(r, k))
+    )
+      return;
+    if (!["recordings.progressive_started", "recordings.progressive_ended"].includes(r.event)) return;
+    if (typeof r.ts !== "string" || !ISO_UTC.test(r.ts)) return;
+    if (!Number.isSafeInteger(r.jobOrdinal) || r.jobOrdinal < 1 || r.stage !== "hls_encode") return;
+    if (!["none", ...endReasons].includes(r.endReason)) return;
+    if (r.exitCode !== null && !Number.isSafeInteger(r.exitCode)) return;
+    if (![null, "SIGTERM", "SIGKILL", "SIGABRT", "SIGSEGV", "SIGPIPE", "SIGINT", "other"].includes(r.signal)) return;
+    for (const key of ["framesWritten", "segmentsWritten", "elapsedMs"])
+      if (!Number.isSafeInteger(r[key]) || r[key] < 0) return;
+    if (
+      r.segmentsWritten > 3600 ||
+      !progressivePumpStages.includes(r.pumpStage) ||
+      (r.abortStage !== null && !progressivePumpStages.includes(r.abortStage))
+    )
+      return;
+    if (typeof r.stderrTail !== "string" || Buffer.byteLength(r.stderrTail) > 2048) return;
+    if (
+      r.event === "recordings.progressive_started"
+        ? r.endReason !== "none" ||
+          r.exitCode !== null ||
+          r.signal !== null ||
+          r.framesWritten !== 0 ||
+          r.segmentsWritten !== 0 ||
+          r.elapsedMs !== 0 ||
+          r.pumpStage !== "starting" ||
+          r.abortStage !== null ||
+          r.stderrTail !== ""
+        : r.endReason === "none"
+    )
+      return;
+    return Object.fromEntries(keys.map((key) => [key, key === "stderrTail" ? conversionStderr(r[key]) : r[key]]));
   } catch {}
   return undefined;
 }

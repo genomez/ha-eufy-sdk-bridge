@@ -823,6 +823,7 @@ export function createClipJobs({
               nativeTiming: recordingTiming.timing,
               signal: j.controller.signal,
               reserve: room,
+              lifecycle: (record) => log({ ...record, jobOrdinal: j.jobOrdinal }),
               changed: () => {
                 observeProgressive(j);
                 const snapshot = j.encoder?.snapshot();

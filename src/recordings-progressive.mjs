@@ -11,6 +11,7 @@ import {
   endReasons,
   isViewerEnd,
   createConversionStderr,
+  conversionStderr,
 } from "./recordings-job-evidence.mjs";
 const owned = /^(?:index\.m3u8(?:\.tmp)?|segment[0-9]{6}\.ts(?:\.tmp)?|final\.mp4)$/;
 
@@ -80,7 +81,8 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess, failed = 
     spawned = false,
     inputError = false,
     timedOut = false,
-    failureDetail;
+    failureDetail,
+    outcome = { exitCode: null, signal: null };
   const recordFailure = (code, closeSignal) => {
     const detail = processFailure({ code, signal: closeSignal, spawned, input: inputError, timeout: timedOut });
     failureDetail ??= detail;
@@ -125,6 +127,8 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess, failed = 
   const done = new Promise((resolve, reject) => {
     child.once("close", (code, closeSignal) => {
       closed = true;
+      const detail = processFailure({ code, signal: closeSignal });
+      outcome = { exitCode: detail.exitCode, signal: detail.signal };
       clearTimeout(watchdog);
       clearTimeout(escalation);
       signal?.removeEventListener("abort", abort);
@@ -137,7 +141,7 @@ function processRun(executable, args, signal, timeoutMs, spawnProcess, failed = 
   });
   done.catch(() => {});
   if (signal?.aborted) abort();
-  return { child, done, abort, stderr: () => stderr.read() };
+  return { child, done, abort, stderr: () => stderr.read(), outcome: () => ({ ...outcome }) };
 }
 
 /**
@@ -157,10 +161,22 @@ export function createProgressiveEncoder({
   ffmpeg = "/usr/bin/ffmpeg",
   spawnProcess = spawn,
   maxLagBytes = 32 * 1024 ** 2,
+  lifecycle = () => {},
 }) {
   if (fps !== 15 || !(expectedMs > 0 && expectedMs <= 3_600_000)) throw failure();
   fs.mkdirSync(directory, { mode: 0o700 });
   const controller = new AbortController();
+  const startedAt = performance.now();
+  let pumpStage = "starting",
+    abortStage = null,
+    lifecycleEnded = false;
+  controller.signal.addEventListener(
+    "abort",
+    () => {
+      abortStage ??= pumpStage;
+    },
+    { once: true },
+  );
   let failureDetail, failureReason, failureStderr;
   const onAbort = () => {
     const endReason = endReasons.includes(signal?.reason?.endReason) ? signal.reason.endReason : "cancelled";
@@ -258,6 +274,44 @@ export function createProgressiveEncoder({
     spawnProcess,
     recordProcessFailure,
   );
+  const emitLifecycle = (event, endReason = "none", segmentCount = segments.length) => {
+    // Diagnostic sinks must never change encoder decisions or process ownership.
+    try {
+      const starting = event === "recordings.progressive_started";
+      lifecycle({
+        event,
+        ts: new Date().toISOString(),
+        stage: "hls_encode",
+        endReason,
+        ...(starting ? { exitCode: null, signal: null } : process.outcome()),
+        framesWritten: starting ? 0 : outputFrames,
+        segmentsWritten: starting ? 0 : segmentCount,
+        elapsedMs: starting ? 0 : Math.max(0, Math.round(performance.now() - startedAt)),
+        pumpStage: starting ? "starting" : pumpStage,
+        abortStage: starting ? null : abortStage,
+        stderrTail: starting ? "" : conversionStderr(process.stderr()),
+      });
+    } catch {}
+  };
+  emitLifecycle("recordings.progressive_started");
+  const emitEnded = () => {
+    if (lifecycleEnded) return;
+    lifecycleEnded = true;
+    // The last closed segment may appear after the pump has sent EOF.
+    let finalSegments;
+    try {
+      finalSegments = segmentInventory(directory);
+    } catch {}
+    emitLifecycle(
+      "recordings.progressive_ended",
+      endReasons.includes(failureDetail?.endReason)
+        ? failureDetail.endReason
+        : complete
+          ? "normal_completion"
+          : "conversion_validation_failed",
+      finalSegments?.length ?? segments.length,
+    );
+  };
   process.child.stdout.on("data", (chunk) => {
     progress += chunk.toString();
     const lines = progress.split("\n");
@@ -265,7 +319,9 @@ export function createProgressiveEncoder({
     for (const line of lines) if (/^frame=\d+\s*$/.test(line)) outputFrames = Number(line.slice(6));
   });
   const readSegments = () => {
+    pumpStage = "storage_reserve";
     reserve(2 * 1024 ** 2);
+    pumpStage = "segment_inventory";
     const next = segmentInventory(directory);
     if (next.length < segments.length || segments.some((s, i) => JSON.stringify(s) !== JSON.stringify(next[i])))
       throw failure();
@@ -275,24 +331,32 @@ export function createProgressiveEncoder({
     }
   };
   const pump = (async () => {
+    pumpStage = "spool_read";
     const fd = fs.openSync(input, "r");
     try {
       while (!controller.signal.aborted) {
         readSegments();
+        pumpStage = "lag_limit";
         if (committed - offset > maxLagBytes) throw failure();
         if (offset < committed) {
+          pumpStage = "spool_read";
           const data = Buffer.alloc(Math.min(65536, committed - offset));
           const size = fs.readSync(fd, data, 0, data.length, offset);
           if (!size) throw failure();
+          pumpStage = "stdin_write";
           await new Promise((resolve, reject) =>
             process.child.stdin.write(data.subarray(0, size), (error) => (error ? reject(error) : resolve())),
           );
           offset += size;
         } else if (eof) {
+          pumpStage = "eof";
           ended = true;
           process.child.stdin.end();
           break;
-        } else await delay(20, undefined, { signal: controller.signal });
+        } else {
+          pumpStage = "waiting";
+          await delay(20, undefined, { signal: controller.signal });
+        }
       }
     } finally {
       fs.closeSync(fd);
@@ -324,6 +388,19 @@ export function createProgressiveEncoder({
       changed();
     },
   );
+  // Failures may close without a caller reaching finish(); still emit exactly once after cleanup.
+  process.done.then(
+    async () => {
+      if (!ended) {
+        await Promise.allSettled([pump]);
+        emitEnded();
+      }
+    },
+    async () => {
+      await Promise.allSettled([pump]);
+      emitEnded();
+    },
+  );
   return {
     commit(bytes) {
       if (failed || controller.signal.aborted || committed + bytes - offset > maxLagBytes) throw failure();
@@ -347,26 +424,34 @@ export function createProgressiveEncoder({
       };
     },
     async finish({ frames, durationMs }) {
-      eof = true;
-      await pump;
-      await process.done;
-      readSegments();
-      const duration = segments.reduce((n, s) => n + s.durationMs, 0);
-      if (
-        failed ||
-        signal?.aborted ||
-        !segments.length ||
-        (nativeTiming?.native
-          ? nativeTiming.frames !== frames ||
-            !validNativeDuration(nativeTiming, expectedMs, duration) ||
-            Math.abs(outputFrames - (nativeTiming.durationMs * fps) / 1000) > 2
-          : outputFrames !== frames ||
-            Math.abs(duration - durationMs) > Math.max(200, (1000 / fps) * 2) ||
-            Math.abs((frames * 1000) / fps - durationMs) > 200)
-      )
-        throw failure();
-      complete = true;
-      changed();
+      try {
+        eof = true;
+        await pump;
+        await process.done;
+        readSegments();
+        pumpStage = "validation";
+        const duration = segments.reduce((n, s) => n + s.durationMs, 0);
+        if (
+          failed ||
+          signal?.aborted ||
+          !segments.length ||
+          (nativeTiming?.native
+            ? nativeTiming.frames !== frames ||
+              !validNativeDuration(nativeTiming, expectedMs, duration) ||
+              Math.abs(outputFrames - (nativeTiming.durationMs * fps) / 1000) > 2
+            : outputFrames !== frames ||
+              Math.abs(duration - durationMs) > Math.max(200, (1000 / fps) * 2) ||
+              Math.abs((frames * 1000) / fps - durationMs) > 200)
+        )
+          throw failure();
+        complete = true;
+        pumpStage = "complete";
+        changed();
+      } finally {
+        // A pump failure still owns a child until its close event.
+        await Promise.allSettled([pump, process.done]);
+        emitEnded();
+      }
     },
     async finalizeMp4(output, maxBytes) {
       if (!complete || failed) throw failure();
@@ -415,6 +500,7 @@ export function createProgressiveEncoder({
       };
       controller.abort();
       await Promise.allSettled([pump, process.done]);
+      emitEnded();
       signal?.removeEventListener("abort", onAbort);
       changed();
     },
