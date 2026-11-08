@@ -25,6 +25,20 @@ export function recordingTimeZone(value) {
   }
 }
 
+/** Parse the entire JSON option atomically; never retain rejected camera names. */
+export function recordingSkipCameras(value) {
+  const base = { names: [], source: "default", rejection: null };
+  if (value == null) return base;
+  try {
+    const names = JSON.parse(value);
+    if (!Array.isArray(names) || !names.every((name) => typeof name === "string" && name.trim()))
+      throw new Error("invalid");
+    return { names: [...new Set(names.map((name) => name.trim().toLowerCase()))], source: "env", rejection: null };
+  } catch {
+    return { ...base, rejection: "skip_cameras" };
+  }
+}
+
 /** The SDK event names broadcast to every connected WS client. */
 export const FORWARDED_EVENTS = [
   "propertyChanged",
@@ -77,6 +91,7 @@ export const STREAM_FAIL_BACKOFF_MAX_MS = 5 * 60_000; // cap on the exponential 
  */
 export function loadConfig(env = process.env) {
   const playbackModels = playbackModelDefaults(env);
+  const skipCameras = recordingSkipCameras(env.RECORDINGS_SKIP_CAMERAS);
   const cfg = {
     email: env.EUFY_EMAIL,
     password: env.EUFY_PASSWORD,
@@ -118,7 +133,10 @@ export function loadConfig(env = process.env) {
         /^(?:[1-5][0-9]{3}|6000)$/.test(env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS)
           ? Number(env.RECORDINGS_PROGRESSIVE_PLAYABLE_MS)
           : 3000,
-      progressiveFps: env.RECORDINGS_PROGRESSIVE_FPS === "15" ? 15 : null,
+      progressiveFps: env.RECORDINGS_PROGRESSIVE_FPS === "off" ? null : 15,
+      skipCameras: skipCameras.names,
+      skipCamerasSource: skipCameras.source,
+      skipCamerasRejection: skipCameras.rejection,
       playbackModelsSource: playbackModels.source,
       playbackModels: playbackModels.models,
       playbackModelsRejection: playbackModels.rejection,

@@ -127,7 +127,7 @@ the actual source revision and bundle used for the follow-up.
 
 The installed-SDK synthetic pairing suite now covers ten enrolled camera entries
 across wired, battery and doorbell children, excludes another station, a display
-and case/whitespace variants of J Safe, and proves the original five camera IDs
+and explicitly configured, case/whitespace variants of a synthetic excluded name, and proves the original five camera IDs
 are byte-identical across roster growth. A battery catalog and selected cover
 create no child RTC session: only the already connected station owner is used.
 

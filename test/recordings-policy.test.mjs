@@ -7,7 +7,7 @@ import { createRecordings } from "../src/recordings.mjs";
 import { recordingMac } from "../src/recordings-adapter.mjs";
 import { clock, inventory, harness, row, seed, until, tick, jpeg } from "./helpers/recordings-fixtures.mjs";
 
-test("model enrollment excludes J Safe and rejects ambiguous station ownership", () => {
+test("model enrollment rejects ambiguous station ownership", () => {
   assert.equal(recordingEnrollment(inventory).cameras.length, 5);
   for (const rows of [
     [...inventory, inventory[0]],
@@ -466,7 +466,7 @@ test("ordinary inventory publication and rename do not invalidate a current cata
   h.catalog("if_due");
   await until(() => h.calls.catalog.length === 1);
   await h.manager.syncInventory(
-    inventory.map((r) => ({ ...r, name: r.name === "J Safe" ? r.name : "Renamed fixture" })),
+    inventory.map((r) => ({ ...r, name: r.name === "Excluded fixture" ? r.name : "Renamed fixture" })),
   );
   assert.equal(h.calls.catalog[0].o.signal.aborted, false);
   resolve({ status: "ok", rows: [row(h.scope)] });
@@ -568,4 +568,25 @@ test("duplicate and unresolved child channels invalidate enrollment", () => {
     const rows = inventory.map((row, index) => (index === 2 ? { ...row, channel } : row));
     assert.equal(recordingEnrollment(rows), null);
   }
+});
+
+test("camera exclusions are optional, normalized exact names including commas", () => {
+  const records = inventory.map((r, i) => (i === 1 ? { ...r, name: " Camera, East " } : r));
+  assert.equal(recordingEnrollment(records).cameras.length, 5);
+  const cfg = loadConfig({ RECORDINGS_SKIP_CAMERAS: '["CAMERA, EAST", "Fixture camera 1"]' }).cfg.recordings;
+  const enrolled = recordingEnrollment(records, [], cfg.skipCameras);
+  assert.equal(enrolled.cameras.length, 3);
+  assert.ok(!enrolled.cameras.some((c) => ["Camera, East", "Fixture camera 1"].includes(c.name)));
+  assert.equal(recordingEnrollment(records, [], ["camera"]).cameras.length, 5);
+});
+
+test("excluding every camera disables recordings and drops stale camera readback", async (t) => {
+  const h = await harness(t);
+  await seed(h);
+  h.ctx.cfg.recordings.skipCameras = inventory.filter((r) => r.isCamera).map((r) => r.name.toLowerCase());
+  await h.manager.syncInventory(inventory);
+  assert.equal(h.manager.capability().enabled, false);
+  assert.throws(() => h.manager.cameras(), { code: "recordings_scope_invalid" });
+  assert.throws(() => h.catalog(), { code: "recordings_scope_invalid" });
+  assert.deepEqual(h.manager.diagnostics().rowsKeptPerCamera, []);
 });

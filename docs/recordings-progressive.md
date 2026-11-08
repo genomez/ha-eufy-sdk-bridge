@@ -1,9 +1,10 @@
 # Progressive event recording transport
 
 This backend candidate adds HLS EVENT delivery alongside the finished MP4 API.
-It is disabled by default. `RECORDINGS_PROGRESSIVE_FPS=15`
-advertises the additive `progressivePlayback` capability together with the effective
-`progressivePlayableMs` value. Enable it only for a
+Quick-start playback is enabled by default at 15 fps; `RECORDINGS_PROGRESSIVE_FPS=off`
+disables it. The live `progressive.json` policy still overrides startup settings.
+The default playable threshold remains 3000 ms. The bridge advertises the additive `progressivePlayback` capability together with the effective
+`progressivePlayableMs` value. Playback still requires a
 source population qualified for the 15 fps output profile; approximately
 30 arriving frames/second at 2x is not that qualification. Unknown/long catalog
 durations remain on the completed-file HA path. The HLS limit is one hour.

@@ -272,3 +272,23 @@ Monotonic milliseconds sent to HA are rounded upward to nonnegative integers,
 including refresh/cover retries and diagnostic timing statistics. HA retains its
 strict integer validators. New HA accepts old bridges at window 20, including
 legacy capability/diagnostics without the new disclosure/window metadata.
+
+### Recording time and camera exclusions
+
+Station timestamps use the valid host `TZ` supplied by Home Assistant Supervisor,
+with the existing station compatibility default when absent or invalid. The bridge
+reports the IANA zone used in its capability and each event. Install the matching
+integration first; it displays absolute timestamps in Home Assistant's configured
+time zone and accepts legacy bridge zones.
+
+`RECORDINGS_SKIP_CAMERAS` accepts a JSON array of camera names. Matching ignores
+case and surrounding spaces; commas remain part of a name. Empty or omitted means
+skip nothing. Invalid JSON, a non-array, or any non-string/blank entry rejects the
+entire value and skips nothing. Capability/config and diagnostics expose only
+`skipCameraPolicy` count, source and fixed rejection `skip_cameras`, never option
+names. Restart after changes. Excluded cameras cannot list recordings, request
+thumbnails or play recordings, including retained cache entries.
+
+Quick-start progressive playback defaults to 15 fps with a 3000 ms playable
+threshold. `RECORDINGS_PROGRESSIVE_FPS=off` disables it; live `progressive.json`
+continues to override startup settings.

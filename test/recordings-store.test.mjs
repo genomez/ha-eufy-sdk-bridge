@@ -376,3 +376,22 @@ test("cancellation before atomic publication leaves previous manifest readable",
   assert.deepEqual(h.store.snapshot, old);
   assert.deepEqual(await fs.readFile(path.join(h.root, "catalog.json")), disk);
 });
+
+for (const timeZone of ["Europe/Berlin", "Australia/Sydney"])
+  test(`recording rows and capability retain configured ${timeZone} across restart`, async (t) => {
+    const h = await harness(t, { timeZone });
+    const event = row(h.scope);
+    const offset = timeZone === "Europe/Berlin" ? "+01:00" : "+11:00";
+    const hours = timeZone === "Europe/Berlin" ? 1 : 11;
+    const wall = new Date(event.startedAtMs + hours * 3600000).toISOString().slice(0, 19);
+    await h.store.mergeCatalog(h.scope, [
+      { ...event, startedAtLocal: wall + offset, sourceStartLocal: wall.replace("T", " ") },
+    ]);
+    assert.equal(h.manager.capability().timezone, timeZone);
+    assert.equal(h.catalog().events[0].timezone, timeZone);
+    await h.manager.stop();
+    const second = createRecordingsStore(h.root, { clock: h.clocks.now });
+    t.after(() => second.close());
+    await second.load();
+    assert.equal(second.listPage(h.cameraId).rows[0].timezone, timeZone);
+  });

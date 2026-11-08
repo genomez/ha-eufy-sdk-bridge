@@ -1,3 +1,4 @@
+import { loadConfig } from "../src/config.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -264,6 +265,7 @@ test("hello advertises additive browse-only capability without changing schema",
     browseOnly: true,
     playback: false,
     playbackModelPolicy: h.manager.playbackModelPolicy(),
+    skipCameraPolicy: { count: 0, source: "default", rejection: null },
     progressivePolicy: h.manager.capability().progressivePolicy,
     enabled: true,
     scopeId: h.scope.scopeId,
@@ -688,4 +690,69 @@ test("config.get and WS/HTTP diagnostics expose live catalog settings and source
   assert.deepEqual((await s.rpc({ id: 2, cmd: "config.get" })).recordings.catalogSettings, settings);
   assert.deepEqual((await s.rpc({ id: 3, cmd: "recordings.diagnostics" })).recordings.catalogSettings, settings);
   assert.deepEqual(JSON.parse((await request(h, "/diagnostics")).body).recordings.catalogSettings, settings);
+});
+
+test("skip policy readback exposes counts and rejection without names", async (t) => {
+  const h = await harness(t),
+    s = await socket(t, h);
+  for (const raw of ['[" Private fixture, east "]', '["Private fixture",null]']) {
+    Object.assign(h.ctx.cfg.recordings, loadConfig({ RECORDINGS_SKIP_CAMERAS: raw }).cfg.recordings, { root: h.root });
+    const expected = raw.includes("null")
+      ? { count: 0, source: "default", rejection: "skip_cameras" }
+      : { count: 1, source: "env", rejection: null };
+    const config = await s.rpc({ cmd: "config.get" });
+    assert.deepEqual(config.recordings.skipCameraPolicy, expected);
+    assert.deepEqual(h.manager.capability().skipCameraPolicy, expected);
+    assert.deepEqual(h.manager.diagnostics().skipCameraPolicy, expected);
+    for (const result of [config, h.manager.capability(), h.manager.diagnostics()])
+      assert.ok(!JSON.stringify(result).toLowerCase().includes("private fixture"));
+  }
+});
+
+test("restart exclusions block retained lists, covers, playback and HTTP bytes", async (t) => {
+  const h = await harness(t);
+  await seed(h);
+  const eventId = h.catalog().events[0].eventId;
+  await h.store.putCover(h.scope, h.cameraId, eventId, jpeg);
+  await h.manager.stop();
+  const cfg = loadConfig({ RECORDINGS_SKIP_CAMERAS: JSON.stringify([" FIXTURE CAMERA 0 "]) }).cfg;
+  cfg.recordings.root = h.root;
+  cfg.recordings.background = false;
+  h.ctx.cfg = cfg;
+  const store = createRecordingsStore(h.root, { clock: h.clocks.now });
+  const manager = createRecordings(h.ctx, { store, clocks: h.clocks });
+  h.ctx.recordings = manager;
+  t.after(() => manager.stop());
+  await manager.load();
+  await manager.syncInventory(inventory);
+  assert.equal(manager.cameras().cameras.length, 4);
+  assert.ok(!JSON.stringify(manager.diagnostics()).includes("Fixture camera 0"));
+  const s = await socket(t, h);
+  for (const command of [
+    { cmd: "recordings.catalog", refresh: "cache_only" },
+    { cmd: "recordings.cover", mode: "cache_only" },
+    { cmd: "recordings.clip_prepare" },
+    { cmd: "recordings.playback_open", requestKey: "synthetic-request-key" },
+  ])
+    assert.equal((await s.rpc({ ...command, cameraId: h.cameraId, eventId })).ok, false);
+  const cover = await request(h, `/recordings/v1/covers/${h.cameraId}/${eventId}`);
+  assert.equal(cover.status, 404);
+  assert.equal(h.calls.cover.length, 0);
+  assert.equal(h.calls.catalog.length, 0);
+});
+
+test("startup progressive default and off retain live file precedence", async (t) => {
+  const h = await harness(t);
+  h.eufy.pullRecordingClip = async () => {};
+  for (const env of [{}, { RECORDINGS_PROGRESSIVE_FPS: "off" }]) {
+    const cfg = loadConfig(env).cfg.recordings;
+    Object.assign(h.ctx.cfg.recordings, cfg, { root: h.root });
+    assert.equal(h.manager.capability().progressivePlayback === true, cfg.progressiveFps === 15);
+    assert.equal(h.manager.capability().progressivePolicy.playableMs, 3000);
+  }
+  for (const fps of [15, "off"]) {
+    await fs.writeFile(path.join(h.root, "progressive.json"), JSON.stringify({ version: 1, fps }));
+    assert.equal(h.manager.capability().progressivePlayback === true, fps === 15);
+    assert.equal(h.manager.capability().progressivePolicy.source, "file");
+  }
 });

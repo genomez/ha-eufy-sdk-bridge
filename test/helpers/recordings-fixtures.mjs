@@ -19,7 +19,7 @@ export const inventory = [
     stationSn: "synthetic-station",
     name: `Fixture camera ${i}`,
   })),
-  { sn: "excluded-fixture", model: "T8425", stationSn: "synthetic-station", name: "J Safe" },
+  { sn: "excluded-fixture", model: "T8425", stationSn: "synthetic-station", name: "Excluded fixture" },
 ];
 // Structurally complete single-component JPEG marker fixture, never a camera capture.
 export const jpeg = Buffer.from([
@@ -131,7 +131,7 @@ export function row(scope, index = 0, extra = {}) {
 export async function harness(t, options = {}) {
   const root = await temporary(t),
     clocks = options.clocks ?? clock(),
-    store = createRecordingsStore(root, { clock: clocks.now, ...options.storeOptions });
+    store = createRecordingsStore(root, { clock: clocks.now, timeZone: options.timeZone, ...options.storeOptions });
   const eufy = new EventEmitter(),
     calls = { catalog: [], cover: [] },
     pacingCalls = [],
@@ -157,6 +157,7 @@ export async function harness(t, options = {}) {
   };
   const ctx = {
     cfg: {
+      recordingTimeZone: options.timeZone,
       recordings: { enabled: true, background: options.background ?? false, root },
       go2rtcApi: "",
       streamIdleMs: 0,

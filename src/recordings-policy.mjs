@@ -72,14 +72,15 @@ export const transientReasons = new Set([
 ]);
 
 /** Local inventory only. A conflicting roster cannot authorize a station read. */
-export function recordingEnrollment(records, conflicts = []) {
+export function recordingEnrollment(records, conflicts = [], skipCameras = []) {
   if (!Array.isArray(records) || conflicts.length) return null;
   const stations = records.filter((r) => /^T9000/i.test(r.model ?? ""));
   if (stations.length !== 1 || !stations[0].sn) return null;
   const station = stations[0].sn;
   if (stations[0].stationSn && stations[0].stationSn !== station) return null;
   if (new Set(records.map((r) => r.sn)).size !== records.length) return null;
-  const candidates = records.filter((r) => r.isCamera === true && r.name?.trim().toLowerCase() !== "j safe");
+  const skipped = new Set(skipCameras);
+  const candidates = records.filter((r) => r.isCamera === true && !skipped.has(r.name?.trim().toLowerCase()));
   if (candidates.some((r) => !r.sn || !r.stationSn)) return null;
   const cameras = candidates.filter((r) => r.stationSn === station && r.sn !== station);
   if (

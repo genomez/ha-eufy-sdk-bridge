@@ -1,3 +1,4 @@
+import { recordingTimeZone } from "./config.mjs";
 import { wireMs, wireTime } from "./recordings-wire.mjs";
 import path from "node:path";
 import { playbackExperiments } from "./recordings-experiments.mjs";
@@ -22,7 +23,13 @@ import {
 
 export function createRecordings(
   ctx,
-  { store = createRecordingsStore(ctx.cfg.recordings?.root ?? "/data/recordings"), clocks = {}, clipOptions = {} } = {},
+  {
+    store = createRecordingsStore(ctx.cfg.recordings?.root ?? "/data/recordings", {
+      timeZone: ctx.cfg.recordingTimeZone,
+    }),
+    clocks = {},
+    clipOptions = {},
+  } = {},
 ) {
   const now = clocks.now ?? Date.now,
     mono = clocks.monotonic ?? (() => performance.now());
@@ -206,6 +213,11 @@ export function createRecordings(
         });
     },
   });
+  const skipCameraPolicy = () => ({
+    count: ctx.cfg.recordings?.skipCameras?.length ?? 0,
+    source: ctx.cfg.recordings?.skipCamerasSource ?? "default",
+    rejection: ctx.cfg.recordings?.skipCamerasRejection ?? null,
+  });
   const base = () => {
     const effective = progressivePolicy();
     return {
@@ -213,6 +225,7 @@ export function createRecordings(
       browseOnly: !playbackEnabled(),
       playback: playbackEnabled(),
       playbackModelPolicy: playbackModelPolicy(),
+      skipCameraPolicy: skipCameraPolicy(),
       progressivePolicy: { ...effective },
       ...(playbackEnabled() &&
         effective.fps === 15 && { progressivePlayback: true, progressivePlayableMs: effective.playableMs }),
@@ -225,7 +238,7 @@ export function createRecordings(
         !storeFailed &&
         !stopped,
       scopeId: adapter.account() === account ? (scope?.scopeId ?? null) : null,
-      timezone: "America/Chicago",
+      timezone: recordingTimeZone(ctx.cfg.recordingTimeZone),
       ...windowContract(),
       pageSize: 100,
       coverBudget: LIMITS.folderBudget,
@@ -1056,6 +1069,7 @@ export function createRecordings(
   const api = {
     capability: base,
     playbackModelPolicy,
+    skipCameraPolicy,
     catalogSettings,
     setPacing(args) {
       fields(args, ["reset", ...Object.keys(DEFAULT_PACING)]);
@@ -1116,6 +1130,7 @@ export function createRecordings(
         ...windowContract(),
         catalogSettings: catalogSettings(),
         playbackModelPolicy: playbackModelPolicy(),
+        skipCameraPolicy: skipCameraPolicy(),
         rowsKeptPerCamera: cameras.map((c) => ({
           name: c.name,
           rows: rows.filter((r) => r.cameraId === c.cameraId).length,
@@ -1190,7 +1205,11 @@ export function createRecordings(
       const sequence = ++inventoryGeneration,
         capturedAccount = adapter.account();
       try {
-        const binding = recordingBinding(store.key, capturedAccount, adapter.enrollment(records));
+        const binding = recordingBinding(
+          store.key,
+          capturedAccount,
+          adapter.enrollment(records, ctx.cfg.recordings?.skipCameras),
+        );
         const signature = (s) => JSON.stringify([s.scopeId, ...s.cameras.map((c) => c.cameraId).sort()]);
         if (!scope || signature(scope) !== signature(binding)) {
           latestCheckpoint = null;
@@ -1218,7 +1237,7 @@ export function createRecordings(
         preempt();
         scopeValid = false;
         latestCheckpoint = null;
-        if (adapter.account() !== account) scope = undefined;
+        if (adapter.account() !== account || ctx.cfg.recordings?.skipCameras?.length) scope = undefined;
         interests.clear();
       }
       publishCapability();

@@ -20,8 +20,8 @@ export function recordingsAdapter(eufy, identityKey) {
       const key = identityKey();
       return key ? (eufy.getRecordingAccountNamespace?.(key) ?? null) : null;
     },
-    enrollment: (rows) => {
-      const enrollment = recordingEnrollment(rows, eufy.getInventoryConflicts?.() ?? []);
+    enrollment: (rows, skipCameras = []) => {
+      const enrollment = recordingEnrollment(rows, eufy.getInventoryConflicts?.() ?? [], skipCameras);
       const valid = enrollment;
       const policy = policies.get(eufy);
       if (policy) {

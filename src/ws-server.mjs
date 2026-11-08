@@ -481,6 +481,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
             ...(ctx.recordings && {
               recordings: {
                 playbackModelPolicy: ctx.recordings.playbackModelPolicy(),
+                skipCameraPolicy: ctx.recordings.skipCameraPolicy(),
                 catalogSettings: ctx.recordings.catalogSettings(),
               },
             }),

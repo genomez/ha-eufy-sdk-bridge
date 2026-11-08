@@ -1,3 +1,4 @@
+import { recordingTimeZone } from "./config.mjs";
 import { CATALOG_QUERY_COUNT_MAX } from "@mega-yfue/eufy-sdk";
 import fs from "node:fs/promises";
 import { constants } from "node:fs";
@@ -109,7 +110,7 @@ export function publicRecording(row, coverState = "not_requested", playbackAllow
     startedAtUtc: valid ? iso(row.startedAtUtc, true) : null,
     startedAtLocal: valid ? iso(row.startedAtLocal) : null,
     sourceStartLocal: local(row.sourceStartLocal),
-    timezone: "America/Chicago",
+    timezone: recordingTimeZone(row.timezone),
     timeStatus,
     durationSeconds: duration,
     durationBasis: duration === null ? "unknown" : "end_minus_start",
@@ -130,7 +131,7 @@ const newest = (a, b) =>
   a.eventId.localeCompare(b.eventId);
 const empty = () => ({ version: 1, scopeId: null, revision: 0, rows: [], history: {}, lastSuccessfulQueryAtMs: null });
 
-export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = {}) {
+export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, timeZone = recordingTimeZone() } = {}) {
   root = path.resolve(root);
   let data = empty(),
     key,
@@ -312,6 +313,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs } = 
       startedAtUtc: valid ? iso(row.startedAtUtc, true) : null,
       startedAtLocal: valid ? iso(row.startedAtLocal) : null,
       sourceStartLocal: local(row.sourceStartLocal),
+      timezone: timeZone,
       timeStatus: status,
       durationSeconds: duration,
       durationBasis: duration === null ? "unknown" : "end_minus_start",

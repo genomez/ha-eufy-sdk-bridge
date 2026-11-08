@@ -95,3 +95,36 @@ test("progressive playable threshold accepts only integer milliseconds in range"
       Number(value),
     );
 });
+
+test("quick-start playback defaults on and explicit off disables it", () => {
+  for (const value of [undefined, "15", "", "invalid"])
+    assert.equal(loadConfig({ RECORDINGS_PROGRESSIVE_FPS: value }).cfg.recordings.progressiveFps, 15);
+  assert.equal(loadConfig({ RECORDINGS_PROGRESSIVE_FPS: "off" }).cfg.recordings.progressiveFps, null);
+  assert.equal(loadConfig({}).cfg.recordings.progressivePlayableMs, 3000);
+});
+
+test("skip cameras JSON preserves commas, normalizes and deduplicates atomically", () => {
+  const cfg = loadConfig({ RECORDINGS_SKIP_CAMERAS: '[" Camera, East ", "CAMERA, EAST", "Camera West"]' }).cfg
+    .recordings;
+  assert.deepEqual(cfg.skipCameras, ["camera, east", "camera west"]);
+  assert.equal(cfg.skipCamerasSource, "env");
+  assert.equal(cfg.skipCamerasRejection, null);
+  assert.deepEqual(loadConfig({}).cfg.recordings.skipCameras, []);
+  assert.deepEqual(loadConfig({ RECORDINGS_SKIP_CAMERAS: "[]" }).cfg.recordings.skipCameras, []);
+  for (const raw of [
+    "",
+    "{",
+    "null",
+    "{}",
+    '"Camera"',
+    '["Camera",null]',
+    '["Camera",1]',
+    '["Camera",""]',
+    '["Camera"," "]',
+  ]) {
+    const rejected = loadConfig({ RECORDINGS_SKIP_CAMERAS: raw }).cfg.recordings;
+    assert.deepEqual(rejected.skipCameras, []);
+    assert.equal(rejected.skipCamerasRejection, "skip_cameras");
+    assert.equal(rejected.skipCamerasSource, "default");
+  }
+});

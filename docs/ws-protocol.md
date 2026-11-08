@@ -48,7 +48,7 @@ the existing host HTTP/command policy hooks also apply to these routes.
 // Additional hello member:
 recordings: {
   version: 1; browseOnly: boolean; playback: boolean; enabled: boolean; scopeId: string | null;
-  timezone: "America/Chicago"; stationWindow: number; pageSize: 100; coverBudget: 100;
+  timezone: string; stationWindow: number; pageSize: 100; coverBudget: 100;
 }
 
 // Requests (no cursor, grant, serial, path, selector or URL fields):
@@ -118,7 +118,7 @@ type RecordingEvent = {
   startedAtUtc: string | null;
   startedAtLocal: string | null;
   sourceStartLocal: string | null;
-  timezone: "America/Chicago";
+  timezone: string;
   timeStatus: "valid" | "unknown_format" | "ambiguous" | "invalid";
   durationSeconds: number | null;
   durationBasis: "end_minus_start" | "unknown";
@@ -277,7 +277,9 @@ account namespace before source, camera, station, path and receipt time. The
 package exports neither the binding helper nor its selector verifier, so the
 adapter checks those tuples locally; the SDK independently verifies every fetch.
 The bridge verifies each returned scope/camera/event ID against its local binding.
-SDK normalization owns Chicago parsing and DST handling. Unknown type labels
+SDK normalization owns station-local parsing and DST handling using the host IANA
+`TZ` (or the station compatibility fallback). Capability and event `timezone` fields
+report the zone used; retained events preserve their original conversion zone. Unknown type labels
 remain fixed numeric fallbacks and numeric duration fields remain unqualified.
 
 Service construction shares the installed SDK policy
@@ -730,8 +732,8 @@ Recordings v1 retains all existing RPC/HTTP routes, fields, reason vocabulary an
 100-event response bound. Enrollment uses the existing inventory's camera/video
 classification and unambiguous station/channel ownership beneath the single
 T9000. It includes wired, battery and doorbell cameras, excludes other stations
-and non-camera devices, and always excludes a trimmed, case-insensitive J Safe
-name. Scope/camera HMAC inputs are unchanged when the camera set grows.
+and non-camera devices. `RECORDINGS_SKIP_CAMERAS` optionally excludes names
+using trimmed, case-insensitive matching. An omitted or rejected value skips nothing. Scope/camera HMAC inputs are unchanged when the camera set grows.
 
 Deployment order: **integration first; old integration + new bridge = recordings
 unavailable (fails closed)**. The 3o integration at `63d2048` accepts exactly five

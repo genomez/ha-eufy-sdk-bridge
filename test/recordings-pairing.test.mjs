@@ -90,7 +90,7 @@ class SyntheticSession extends EventEmitter {
   }
 }
 
-async function paired(t, roster = inventory) {
+async function paired(t, roster = inventory, timeZone = "America/Chicago") {
   const root = await temporary(t),
     clocks = clock(),
     logs = [];
@@ -103,7 +103,14 @@ async function paired(t, roster = inventory) {
     ["debug", "info", "warn", "error"].map((level) => [level, (...args) => logs.push(args)]),
   );
   const eufy = createEufy(
-    { cfg: { email: "synthetic@example.invalid", password: "synthetic", recordings: { enabled: true } } },
+    {
+      cfg: {
+        email: "synthetic@example.invalid",
+        password: "synthetic",
+        recordingTimeZone: timeZone,
+        recordings: { enabled: true },
+      },
+    },
     {
       store: new MemorySessionStore(),
       pushStore: new MemoryFcmStore(),
@@ -123,9 +130,14 @@ async function paired(t, roster = inventory) {
   eufy.realtimeGeneration = { epoch: eufy.realtimeEpoch, abort: new AbortController() };
   const session = new SyntheticSession();
   eufy.rtc.deps.createSession = () => session;
-  const store = createRecordingsStore(root, { clock: clocks.now });
+  const store = createRecordingsStore(root, { clock: clocks.now, timeZone });
   const ctx = {
-    cfg: { recordings: { enabled: true, background: false, root }, go2rtcApi: "", streamIdleMs: 0 },
+    cfg: {
+      recordingTimeZone: timeZone,
+      recordings: { enabled: true, background: false, root, skipCameras: ["excluded fixture"] },
+      go2rtcApi: "",
+      streamIdleMs: 0,
+    },
     eufy,
     state: createState(),
     SCHEMA_VERSION: 1,
@@ -449,7 +461,14 @@ const expandedInventory = [
   { sn: "display-fixture", model: "T87A0", name: "Display", stationSn: inventory[0].sn, isCamera: false },
   { sn: "other-station", model: "T8010", name: "Other station", stationSn: "other-station" },
   { sn: "other-camera", model: "T8170", name: "Other camera", stationSn: "other-station", isCamera: true, channel: 0 },
-  { sn: "excluded-indoor", model: "T8416", name: " j SaFe  ", stationSn: inventory[0].sn, isCamera: true, channel: 19 },
+  {
+    sn: "excluded-indoor",
+    model: "T8416",
+    name: " eXcLuDeD FiXtUrE  ",
+    stationSn: inventory[0].sn,
+    isCamera: true,
+    channel: 19,
+  },
 ];
 const syntheticPage = (start, camera = inventory[1].sn) =>
   Array.from({ length: 20 }, (_, i) =>
@@ -813,4 +832,20 @@ for (const count of [50, 100])
       reason: "none",
     });
     assert.equal(h.manager.catalogSettings().catalogQueryCount.lastGoodCount, count);
+  });
+
+for (const [timeZone, utc, local] of [
+  ["Europe/Berlin", "2026-11-05T11:00:00.000Z", "2026-11-05T12:00:00+01:00"],
+  ["Australia/Sydney", "2026-11-05T01:00:00.000Z", "2026-11-05T12:00:00+11:00"],
+])
+  test(`packed SDK and bridge report the actual ${timeZone} conversion zone`, async (t) => {
+    const h = await paired(t, inventory, timeZone);
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(() => h.store.snapshot.rows.length === 1);
+    const event = (await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "cache_only" })).events[0];
+    assert.equal(event.timezone, timeZone);
+    assert.equal(h.manager.capability().timezone, timeZone);
+    assert.equal(event.startedAtUtc, utc);
+    assert.equal(event.startedAtLocal, local);
+    assert.equal(event.startedAtMs, Date.parse(utc));
   });
