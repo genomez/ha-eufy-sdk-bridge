@@ -2,9 +2,11 @@ import "./fixtures/no-socket-guard.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import http from "node:http";
 import { MemorySessionStore, MemoryFcmStore, buildPortalHeader, parsePortalHeader } from "@mega-yfue/eufy-sdk";
 import { createEufy } from "../src/client.mjs";
+import { loadConfig } from "../src/config.mjs";
 import { createState } from "../src/state.mjs";
 import { createRecordings } from "../src/recordings.mjs";
 import { createRecordingsStore } from "../src/recordings-store.mjs";
@@ -90,7 +92,12 @@ class SyntheticSession extends EventEmitter {
   }
 }
 
-async function paired(t, roster = inventory, timeZone = "America/Chicago") {
+async function paired(
+  t,
+  roster = inventory,
+  timeZone = "America/Chicago",
+  recordingConfig = { skipCameras: ["excluded fixture"] },
+) {
   const root = await temporary(t),
     clocks = clock(),
     logs = [];
@@ -134,7 +141,7 @@ async function paired(t, roster = inventory, timeZone = "America/Chicago") {
   const ctx = {
     cfg: {
       recordingTimeZone: timeZone,
-      recordings: { enabled: true, background: false, root, skipCameras: ["excluded fixture"] },
+      recordings: { ...recordingConfig, enabled: true, background: false, root },
       go2rtcApi: "",
       streamIdleMs: 0,
     },
@@ -226,6 +233,58 @@ async function paired(t, roster = inventory, timeZone = "America/Chicago") {
     },
   };
 }
+
+for (const skip of ["absent", "unrelated", "matching"])
+  test(`packed SDK admission follows enrollment with ${skip} camera skip configuration`, async (t) => {
+    const cameraName = "Juniper Safeguard"
+      .split(" ")
+      .map((word, index) => word.slice(0, index === 0 ? 1 : 4))
+      .join(" ");
+    const camera = { ...inventory[2], name: cameraName };
+    const roster = inventory.map((entry) => (entry.sn === camera.sn ? camera : entry));
+    const env =
+      skip === "absent"
+        ? {}
+        : {
+            RECORDINGS_SKIP_CAMERAS: JSON.stringify([
+              skip === "matching" ? ` ${cameraName.toUpperCase()} ` : "Other fixture",
+            ]),
+          };
+    const h = await paired(t, roster, "America/Chicago", loadConfig(env).cfg.recordings);
+    const allowed = h.eufy.opts.rtc.recordings.allowedCameras;
+    assert.equal(allowed.has(camera.sn), skip !== "matching");
+    assert.equal(allowed.size, skip === "matching" ? 4 : 5);
+    assert.equal(h.manager.cameras().cameras.length, allowed.size);
+    h.session.rows = [
+      rawRow(),
+      rawRow({ device_sn: camera.sn, record_id: recordId + 1, thumb_path: "/synthetic/other-cover.jpg" }),
+    ];
+    await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+    assert.equal(h.manager.diagnostics().lastCatalogAttempt.outcome, "ok");
+    assert.equal(h.store.snapshot.rows.length, skip === "matching" ? 1 : 2);
+    assert.equal(h.session.queries(1306).length, 1);
+    const page = await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
+    h.advance(2_000);
+    await h.rpc("recordings.cover", {
+      cameraId: h.cameraId,
+      eventId: page.events[0].eventId,
+      browseId: page.browseId,
+      mode: "request_if_admitted",
+    });
+    await until(() => h.store.snapshot.rows.some((row) => row.cover !== null));
+    assert.equal(h.session.queries(1308).length, 1);
+  });
+
+test("packed SDK recordings admission contains no literal camera name comparisons", () => {
+  const source = readFileSync(fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")), "utf8");
+  for (const method of ["recordingsAdmission", "recordingGate"]) {
+    const body = source.match(new RegExp(`\\n  ${method}\\([^\\n]*\\) \\{([\\s\\S]*?)\\n  \\}`));
+    assert.ok(body, `installed SDK contains ${method}`);
+    assert.doesNotMatch(body[1], /\.name\b/);
+    assert.doesNotMatch(body[1], /\.toLowerCase\(\)\s*===?\s*["']/);
+  }
+});
 
 test("packed SDK pacing facade changes through WS without touching the synthetic station", async (t) => {
   const h = await paired(t);
