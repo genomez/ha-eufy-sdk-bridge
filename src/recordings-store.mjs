@@ -77,9 +77,14 @@ export function validRecordingJpeg(b) {
   return false;
 }
 
+/**
+ * Duration-only availability requires >3 s (no rounding), within the 24-hour catalog domain.
+ * Installation observations on 2026-11-06 found 3 s thumbnail-only events, including
+ * 100/100 rows on one floodlight with no stored video; longer rows played across several models.
+ * This is a heuristic, not proof of video. Cover selectors or retained path fingerprints bypass it;
+ * playback selectors identify event-table rows and do not establish stored video.
+ */
 function recordingAvailable(row) {
-  // Playback selectors identify event-table rows, including events with no stored video.
-  // Retained path fingerprints keep real recordings visible after selector loss.
   return (
     (row.pathKeys?.length ?? 0) > 0 ||
     !!row.selector ||
