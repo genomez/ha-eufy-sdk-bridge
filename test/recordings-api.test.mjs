@@ -233,7 +233,7 @@ test("WS pacing follows recordings command filtering, validates strictly and pas
   assert.equal(result.ok, true);
   assert.deepEqual(result.recordings.pacing, {
     backgroundCatalogInterval: 60000,
-    catalogQueryCount: 20,
+    catalogQueryCount: 50,
     prefetchGap: 0,
     coverGap: 0,
     coverRate: 0,
@@ -268,8 +268,8 @@ test("hello advertises additive browse-only capability without changing schema",
     enabled: true,
     scopeId: h.scope.scopeId,
     timezone: "America/Chicago",
-    stationWindow: 20,
-    disclosure: "latest 20 station-wide; history incomplete",
+    stationWindow: 50,
+    disclosure: "latest 50 station-wide; history incomplete",
     pageSize: 100,
     coverBudget: 100,
     catalogSettings: h.manager.capability().catalogSettings,
@@ -684,7 +684,7 @@ test("config.get and WS/HTTP diagnostics expose live catalog settings and source
   assert.equal(update.ok, true);
   const settings = update.recordings.catalogSettings;
   assert.deepEqual(settings.backgroundCatalogInterval, { value: 1000, source: "live" });
-  assert.deepEqual(settings.catalogQueryCount, { value: 100, source: "live", configuredValue: 100, lastGoodCount: 20 });
+  assert.deepEqual(settings.catalogQueryCount, { value: 100, source: "live", configuredValue: 100, lastGoodCount: 50 });
   assert.deepEqual((await s.rpc({ id: 2, cmd: "config.get" })).recordings.catalogSettings, settings);
   assert.deepEqual((await s.rpc({ id: 3, cmd: "recordings.diagnostics" })).recordings.catalogSettings, settings);
   assert.deepEqual(JSON.parse((await request(h, "/diagnostics")).body).recordings.catalogSettings, settings);

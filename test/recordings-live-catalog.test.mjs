@@ -23,6 +23,36 @@ function page(scope, count) {
     },
   };
 }
+test("default and reset query 50 rows and advertise the effective window everywhere", async (t) => {
+  let h;
+  h = await harness(t, { catalog: (_, opts) => page(h.scope, opts.queryCount) });
+  const readback = () => {
+    for (const payload of [h.manager.capability(), h.catalog(), h.manager.diagnostics()]) {
+      assert.equal(payload.stationWindow, 50);
+      assert.equal(payload.disclosure, "latest 50 station-wide; history incomplete");
+    }
+    assert.deepEqual(h.manager.catalogSettings().catalogQueryCount, {
+      value: 50,
+      source: "default",
+      configuredValue: 50,
+      lastGoodCount: 50,
+    });
+  };
+  readback();
+  h.catalog("if_due");
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
+  assert.equal(h.calls.catalog[0].o.queryCount, 50);
+  assert.equal(h.manager.catalogSettings().lastQuery.returnedCount, 50);
+  h.manager.setPacing({ catalogQueryCount: 20 });
+  h.manager.setPacing({ reset: true });
+  readback();
+  h.clocks.advance(120001);
+  h.catalog("if_due");
+  await until(() => h.calls.catalog.length === 2);
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
+  assert.equal(h.calls.catalog[1].o.queryCount, 50);
+});
+
 test("progressive default is 3000, environment defaults and live file still take precedence", async (t) => {
   const h = await harness(t);
   assert.equal(readProgressiveSettings(h.root).playableMs, 3000);
@@ -103,7 +133,7 @@ for (const outcome of ["short", "error", "full", "deferred"])
     await query();
     assert.equal(h.calls.catalog.at(-1).o.queryCount, fallback ? 50 : 100);
     h.manager.setPacing({ reset: true });
-    assert.equal(h.manager.diagnostics().catalogSettings.catalogQueryCount.value, 20);
+    assert.equal(h.manager.diagnostics().catalogSettings.catalogQueryCount.value, 50);
     assert.equal(h.manager.diagnostics().catalogSettings.catalogQueryCount.source, "default");
   });
 
@@ -120,7 +150,7 @@ test("larger query deadline records the request and falls back without an extra 
     status: "unavailable",
     reason: "timeout",
   });
-  assert.equal(h.manager.catalogSettings().catalogQueryCount.value, 20);
+  assert.equal(h.manager.catalogSettings().catalogQueryCount.value, 50);
   assert.equal(h.manager.catalogSettings().catalogQueryCount.source, "fallback");
   assert.equal(h.calls.catalog.length, 1);
 });
@@ -147,12 +177,12 @@ test("window and disclosure agree across capability, catalog and diagnostics thr
     }
     assert.equal(h.manager.capability().pageSize, 100);
   }
-  h.manager.setPacing({ catalogQueryCount: 50 });
+  h.manager.setPacing({ catalogQueryCount: 100 });
   h.catalog("if_due");
   await until(() => h.manager.diagnostics().lastCatalogAttempt?.outcome === "ok");
-  assert.equal(h.manager.diagnostics().lastPageCount, 50);
+  assert.equal(h.manager.diagnostics().lastPageCount, 100);
   h.manager.setPacing({ reset: true });
   assert.equal(h.manager.diagnostics().lastPageCount, 0);
-  assert.equal(h.manager.diagnostics().stationWindow, 20);
-  assert.equal(h.manager.diagnostics().disclosure, "latest 20 station-wide; history incomplete");
+  assert.equal(h.manager.diagnostics().stationWindow, 50);
+  assert.equal(h.manager.diagnostics().disclosure, "latest 50 station-wide; history incomplete");
 });

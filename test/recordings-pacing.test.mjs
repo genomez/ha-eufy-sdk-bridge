@@ -114,7 +114,7 @@ test("startup sends default cover pacing to the SDK before any runtime update", 
   const h = await harness(t);
   assert.deepEqual(DEFAULT_PACING, {
     backgroundCatalogInterval: 60000,
-    catalogQueryCount: 20,
+    catalogQueryCount: 50,
     prefetchGap: 3000,
     coverGap: 500,
     coverRate: 20,

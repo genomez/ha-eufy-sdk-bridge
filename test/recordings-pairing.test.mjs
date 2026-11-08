@@ -221,7 +221,7 @@ test("packed SDK pacing facade changes through WS without touching the synthetic
   const reply = await h.rpc("recordings.set_pacing", { prefetchGap: 0, coverGap: 0, coverQuiet: 0, coverRate: null });
   assert.deepEqual(reply.pacing, {
     backgroundCatalogInterval: 60000,
-    catalogQueryCount: 20,
+    catalogQueryCount: 50,
     prefetchGap: 0,
     coverGap: 0,
     coverQuiet: 0,
@@ -496,6 +496,8 @@ test("real SDK enrolls child wired, battery and doorbell cameras with stable exi
 
 test("real SDK pages at five-second gaps to four extra reads and exposes sanitized diagnostics", async (t) => {
   const h = await paired(t);
+  // These paging fixtures intentionally exercise an explicit 20-row window.
+  h.manager.setPacing({ catalogQueryCount: 20 });
   // Keep retention aligned with the entirely synthetic station date.
   h.clocks.wallJump(Date.parse("2026-11-05T20:00:00Z") - h.clocks.now());
   h.session.pages = (query) => syntheticPage(query.start_id === 0 ? 100 : query.start_id);
@@ -525,6 +527,8 @@ test("real SDK pages at five-second gaps to four extra reads and exposes sanitiz
 for (const mode of ["repeat", "empty", "invalid", "overlap", "newer_time"]) {
   test(`real SDK permanently stops inconsistent paging: ${mode}`, async (t) => {
     const h = await paired(t);
+    // These paging fixtures intentionally exercise an explicit 20-row window.
+    h.manager.setPacing({ catalogQueryCount: 20 });
     h.clocks.wallJump(Date.parse("2026-11-05T20:00:00Z") - h.clocks.now());
     h.session.pages = (q) => {
       if (!q.start_id) return syntheticPage(100);
@@ -551,6 +555,8 @@ for (const mode of ["repeat", "empty", "invalid", "overlap", "newer_time"]) {
 
 test("real SDK cancels deeper reads when folder interest expires", async (t) => {
   const h = await paired(t);
+  // These paging fixtures intentionally exercise an explicit 20-row window.
+  h.manager.setPacing({ catalogQueryCount: 20 });
   h.clocks.wallJump(Date.parse("2026-11-05T20:00:00Z") - h.clocks.now());
   h.session.pages = () => syntheticPage(100);
   await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
@@ -563,6 +569,8 @@ test("real SDK cancels deeper reads when folder interest expires", async (t) => 
 
 test("real SDK diagnostic time shapes and rejection reasons contain no source identifiers", async (t) => {
   const h = await paired(t);
+  // These paging fixtures intentionally exercise an explicit 20-row window.
+  h.manager.setPacing({ catalogQueryCount: 20 });
   h.session.rows = [
     rawRow({ start_time: "PRIVATE_CANARY123!?" }),
     rawRow({ device_sn: "excluded-fixture" }),
@@ -583,6 +591,8 @@ test("real SDK diagnostic time shapes and rejection reasons contain no source id
 for (const stop of ["retention", "cap"]) {
   test(`real SDK deeper read stops at ${stop}`, async (t) => {
     const h = await paired(t);
+    // These paging fixtures intentionally exercise an explicit 20-row window.
+    h.manager.setPacing({ catalogQueryCount: 20 });
     h.clocks.wallJump(Date.parse("2026-11-05T20:00:00Z") - h.clocks.now());
     h.session.pages = () =>
       syntheticPage(100).map((row) => (stop === "retention" ? { ...row, start_time: "2026-10-20 10:00:00" } : row));
@@ -614,6 +624,8 @@ for (const stop of ["retention", "cap"]) {
 
 test("real SDK continuation is preemptible and cannot publish a late table", async (t) => {
   const h = await paired(t);
+  // These paging fixtures intentionally exercise an explicit 20-row window.
+  h.manager.setPacing({ catalogQueryCount: 20 });
   h.session.pages = () => syntheticPage(100);
   await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
   await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
@@ -641,6 +653,8 @@ test("real SDK continuation is preemptible and cannot publish a late table", asy
 
 test("real SDK renewal reserve defers a deeper page without marking paging unsupported", async (t) => {
   const h = await paired(t);
+  // These paging fixtures intentionally exercise an explicit 20-row window.
+  h.manager.setPacing({ catalogQueryCount: 20 });
   h.session.pages = () => syntheticPage(100);
   await h.rpc("recordings.catalog", { cameraId: h.cameraId, refresh: "if_due" });
   await until(() => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle");
@@ -653,6 +667,8 @@ test("real SDK renewal reserve defers a deeper page without marking paging unsup
 
 test("real SDK scheduled 30-second refresh aborts continuations without permanently stopping paging", async (t) => {
   const h = await paired(t);
+  // These paging fixtures intentionally exercise an explicit 20-row window.
+  h.manager.setPacing({ catalogQueryCount: 20 });
   h.session.pages = (query) => syntheticPage(query.start_id === 0 ? 100 : query.start_id);
   h.eufy.opts.rtc.stateRefreshMs = 30_000;
   let scheduled;
@@ -706,6 +722,8 @@ test("real SDK scheduled 30-second refresh aborts continuations without permanen
 for (const malformed of ["one_invalid_time", "all_invalid_times", "invalid_record_id"]) {
   test(`real SDK malformed latest window skips only that cycle: ${malformed}`, async (t) => {
     const h = await paired(t);
+    // These paging fixtures intentionally exercise an explicit 20-row window.
+    h.manager.setPacing({ catalogQueryCount: 20 });
     h.session.pages = () =>
       syntheticPage(100).map((row, i) => {
         if (malformed === "all_invalid_times" || (malformed === "one_invalid_time" && i === 7))
@@ -733,6 +751,8 @@ for (const malformed of ["one_invalid_time", "all_invalid_times", "invalid_recor
 
 test("three real SDK continuation deadlines stop paging while latest catalogs remain usable", async (t) => {
   const h = await paired(t);
+  // These paging fixtures intentionally exercise an explicit 20-row window.
+  h.manager.setPacing({ catalogQueryCount: 20 });
   h.session.pages = () => syntheticPage(100);
   const idle = () => h.manager.catalog({}, { cameraId: h.cameraId, refresh: "cache_only" }).refresh.state === "idle";
   for (let i = 0; i < 3; i++) {

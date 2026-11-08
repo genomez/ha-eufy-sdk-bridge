@@ -567,7 +567,7 @@ test("background diagnostics are detached aggregate values with no row data", as
     paging: { enabled: true, runs: 0, pages: 0, stopReasons: {}, lastTrigger: "none" },
     pacing: {
       backgroundCatalogInterval: 60_000,
-      catalogQueryCount: 20,
+      catalogQueryCount: 50,
       prefetchGap: 3_000,
       coverGap: 500,
       coverRate: 20,
@@ -581,7 +581,7 @@ test("background diagnostics are detached aggregate values with no row data", as
         {
           pacing: {
             backgroundCatalogInterval: 60_000,
-            catalogQueryCount: 20,
+            catalogQueryCount: 50,
             prefetchGap: 3_000,
             coverGap: 500,
             coverRate: 20,

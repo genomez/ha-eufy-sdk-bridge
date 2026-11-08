@@ -217,7 +217,7 @@ Use the existing authorized WS command, with milliseconds for the interval:
 ```
 
 Either setting can be changed alone; `{"id":2,"cmd":"recordings.set_pacing","reset":true}`
-restores all pacing defaults, including 60000 ms and 20 rows. Settings are held in
+restores all pacing defaults, including 60000 ms and 50 rows. Settings are held in
 process memory and reset on restart, matching existing cover pacing. No control
 file, expiry or new timer is added. An interval change immediately cancels and
 rearms the existing background timer from the change time. Intervals must be finite
@@ -255,8 +255,9 @@ the default query count. The SDK artifact is unchanged and does not need repacki
 
 `stationWindow` and `disclosure` in capability, catalog and diagnostics describe
 the effective `catalogQueryCount` (including fallback), validated in 1..87381.
-The default fields remain `20` and `latest 20 station-wide; history incomplete`.
-Raising the count above 20 requires the updated HA integration. The HA catalog
+The built-in default is `50`, with `latest 50 station-wide; history incomplete`.
+This bridge requires integration revision `9c77c22` or later; `cd068ae` rejects
+station windows other than 20. Reset restores the 50-row default. The HA catalog
 page size and maximum returned rows remain 100. Diagnostic `lastPageCount` is
 current-window evidence: changing the effective count clears it until a matching
 page completes; historical requested/returned counts remain in `catalogSettings`.

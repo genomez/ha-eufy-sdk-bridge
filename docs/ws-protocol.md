@@ -741,7 +741,7 @@ not disconnect the shared bridge connection or change other bridge features.
 Integration `f7b7f4e` also accepts a five-camera roster from a 3o-style bridge,
 so install it before or together with the new bridge.
 
-A latest-catalog query defaults to 20 station-wide rows and retains the existing
+A latest-catalog query defaults to 50 station-wide rows and retains the existing
 60-second admission spacing. `catalogQueryCount` changes the per-query count.
 Foreground browse continuation keeps its 60-second interest, four-extra-page,
 retention and cursor rules. Background bursts use the stop rules above. Every
@@ -763,7 +763,7 @@ same command-policy filter and enrollment guards as other recordings commands:
 
 All fields are optional partial updates. Defaults are `prefetchGap: 3000`,
 `coverGap: 500`, `coverRate: 20`, `coverQuiet: 500`,
-`backgroundCatalogInterval: 60000`, `catalogQueryCount: 20`. Gap/quiet values are finite
+`backgroundCatalogInterval: 60000`, `catalogQueryCount: 50`. Gap/quiet values are finite
 nonnegative milliseconds; rate is a nonnegative safe integer. Rate 0 or null
 means no minute cap. Unknown fields, invalid numbers, empty updates and reset
 combined with pacing fields are rejected. `{ "id": 2, "cmd": "recordings.set_pacing",
@@ -989,17 +989,16 @@ adds `progressivePlayback: true` and `progressivePlayableMs` (effective integer
 `clips.progressive` session counters, fixed end reasons and the latest twenty
 job time-to-playable summary. Public MP4 state/reason enums are unchanged.
 
-
 ### Live catalog interval and row count
 
 Use the existing authorized WS command, with milliseconds for the interval:
 
 ```json
-{"id":1,"cmd":"recordings.set_pacing","backgroundCatalogInterval":60000,"catalogQueryCount":50}
+{ "id": 1, "cmd": "recordings.set_pacing", "backgroundCatalogInterval": 60000, "catalogQueryCount": 50 }
 ```
 
 Either setting can be changed alone; `{"id":2,"cmd":"recordings.set_pacing","reset":true}`
-restores all pacing defaults, including 60000 ms and 20 rows. Settings are held in
+restores all pacing defaults, including 60000 ms and 50 rows. Settings are held in
 process memory and reset on restart, matching existing cover pacing. No control
 file, expiry or new timer is added. An interval change immediately cancels and
 rearms the existing background timer from the change time. Intervals must be finite
@@ -1028,3 +1027,6 @@ disclosure reflect the effective count for the next query. The retired
 `recordings.test_playback_models` command returns the normal unknown-command error;
 use `<RECORDINGS_ROOT>/playback-models.json`, e.g.
 `{"version":1,"models":["T8425","T8171"]}`, for live playback eligibility.
+
+The 50-row built-in default requires Home Assistant integration revision
+`9c77c22` or later. Revision `cd068ae` rejects station windows other than 20.

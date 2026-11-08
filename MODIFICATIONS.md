@@ -587,3 +587,9 @@ Offline synthetic validation only; installation acceptance remains false.
 - Reject camera history labels containing IPv4/IPv6 literals, MAC forms, long hex values or serial-shaped tokens; retain ordinary display labels and short camera models. Add fail-first label/history regressions.
 - Correct companion HA documentation: its playable inventory floor is 1000 ms, and the bridge owns the configured early-delivery threshold.
 - Local offline qualification only; SDK source, dependency pins and all three protected probe pin files remain unchanged.
+
+### Default station catalog window, 2026-11-07
+
+- Change the built-in catalogQueryCount from 20 to 50, including reset and restart defaults. Capability, catalog and diagnostics continue to project the effective count and matching station-wide history disclosure through the shared window contract.
+- Require Home Assistant integration revision 9c77c22 or later; cd068ae rejects station windows other than 20. The SDK and its packed artifact are unchanged.
+- Add default/reset query and read-back coverage at 50; keep historical paging fixtures explicit about their 20-row test window. No timer, expiry, cap or other limit is added. Local offline validation only; no installation or device acceptance is claimed.

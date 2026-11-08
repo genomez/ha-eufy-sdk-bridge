@@ -20,6 +20,12 @@ function page(scope, before = 100, count = 20) {
 }
 
 const idle = (h) => until(() => h.catalog().refresh.state === "idle");
+async function pagingHarness(t, options) {
+  const h = await harness(t, options);
+  // Keep these cursor and failure-sequence fixtures at their explicit page size.
+  h.manager.setPacing({ catalogQueryCount: 20 });
+  return h;
+}
 async function cycle(h) {
   h.catalog("if_due");
   await until(() => h.calls.catalog.length % 2 === 1);
@@ -42,7 +48,7 @@ for (const reason of [
   "busy",
 ]) {
   test(`deeper ${reason} abandons each cycle without exhausting the failure limit`, async (t) => {
-    const h = await harness(t, {
+    const h = await pagingHarness(t, {
       catalog: (scope, opts) => (opts.beforeRecordId ? { status: "unavailable", reason } : page(h.scope)),
     });
     for (let i = 0; i < 4; i++) {
@@ -56,7 +62,7 @@ for (const reason of [
 
 for (const reason of ["timeout", "invalid_reply"]) {
   test(`three consecutive deeper ${reason} failures stop further continuations`, async (t) => {
-    const h = await harness(t, {
+    const h = await pagingHarness(t, {
       catalog: (scope, opts) => (opts.beforeRecordId ? { status: "unavailable", reason } : page(h.scope)),
     });
     for (let i = 0; i < 3; i++) {
@@ -75,7 +81,7 @@ for (const reason of ["timeout", "invalid_reply"]) {
 
 test("a valid deeper page resets the consecutive exchange failure count", async (t) => {
   let result = { status: "unavailable", reason: "timeout" };
-  const h = await harness(t, {
+  const h = await pagingHarness(t, {
     catalog: (scope, opts) => (opts.beforeRecordId ? result : page(h.scope)),
   });
   for (let i = 0; i < 2; i++) {
@@ -96,7 +102,7 @@ test("a valid deeper page resets the consecutive exchange failure count", async 
 
 test("a thrown transport error and deferred timeout do not exhaust the failure limit", async (t) => {
   let attempts = 0;
-  const h = await harness(t, {
+  const h = await pagingHarness(t, {
     catalog: (scope, opts) => {
       if (!opts.beforeRecordId) return page(h.scope);
       if (++attempts % 2) throw new Error("Synthetic transport failure");

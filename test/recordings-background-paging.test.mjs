@@ -43,6 +43,8 @@ async function setup(t, options = {}) {
   h.latest = (n) => {
     newest = n;
   };
+  // Historical overflow fixtures use an explicit 20-row window.
+  h.manager.setPacing({ catalogQueryCount: 20 });
   await background(h, 1);
   h.latest(140);
   return h;
@@ -295,6 +297,8 @@ test("an invalid latest page cannot become the overflow baseline for the same ro
       return p;
     },
   });
+  // Historical overflow fixtures use an explicit 20-row window.
+  h.manager.setPacing({ catalogQueryCount: 20 });
   await background(h, 1);
   invalid = false;
   await background(h, 2);

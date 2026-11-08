@@ -4,7 +4,7 @@ import { LIMITS, failure, reasonOf } from "./recordings-policy.mjs";
 
 export const DEFAULT_PACING = Object.freeze({
   backgroundCatalogInterval: LIMITS.backgroundCatalogInterval,
-  catalogQueryCount: 20,
+  catalogQueryCount: 50,
   prefetchGap: 3_000,
   coverGap: 500,
   coverRate: 20,
