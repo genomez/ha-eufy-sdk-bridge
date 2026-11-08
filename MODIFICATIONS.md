@@ -1,3 +1,126 @@
+Modified for genomez experimental.13, 2026-11-07
+
+Release packaging, current recordings/playback runtime and extra-model support.
+Modified paths since published experimental.12:
+
+- `.env.example`
+- `.gitignore`
+- `BUILD_PROVENANCE.json`
+- `EXPERIMENTAL.md`
+- `MODIFICATIONS.md`
+- `PUBLICATION.json`
+- `README.md`
+- `SOURCE_MANIFEST.json`
+- `bin/event-playback-probe-control.mjs`
+- `bin/event-table-probe-control.mjs`
+- `bin/event-thumb-probe-control.mjs`
+- `bin/pilot-process.mjs`
+- `docs/bounded-state-writes.md`
+- `docs/event-playback-multi-attempt.md`
+- `docs/progressive-pipe-20261107.md`
+- `docs/recordings-native-timing-validation.md`
+- `docs/recordings-pacing-validation.md`
+- `docs/recordings-pairing-validation.md`
+- `docs/recordings-playback-experiments.md`
+- `docs/recordings-progressive.md`
+- `docs/runtime-logging.md`
+- `docs/ws-protocol.md`
+- `package-lock.json`
+- `package.json`
+- `server.mjs`
+- `src/bounded-state-writes.mjs`
+- `src/client.mjs`
+- `src/config.mjs`
+- `src/device-events.mjs`
+- `src/device-view.mjs`
+- `src/diagnostics.mjs`
+- `src/event-playback-health.mjs`
+- `src/event-playback-probe-pins.mjs`
+- `src/event-playback-probe.mjs`
+- `src/event-table-probe-pins.mjs`
+- `src/event-table-probe.mjs`
+- `src/event-thumb-probe-pins.mjs`
+- `src/event-thumb-probe.mjs`
+- `src/http-routes.mjs`
+- `src/logging-control.mjs`
+- `src/pilot-log.mjs`
+- `src/recordings-adapter.mjs`
+- `src/recordings-background-paging.mjs`
+- `src/recordings-clips.mjs`
+- `src/recordings-download.mjs`
+- `src/recordings-experiments.mjs`
+- `src/recordings-job-evidence.mjs`
+- `src/recordings-pacing.mjs`
+- `src/recordings-playback-models.mjs`
+- `src/recordings-playback-sessions.mjs`
+- `src/recordings-policy.mjs`
+- `src/recordings-progressive-settings.mjs`
+- `src/recordings-progressive.mjs`
+- `src/recordings-store.mjs`
+- `src/recordings-timing.mjs`
+- `src/recordings-wire.mjs`
+- `src/recordings.mjs`
+- `src/rtc-connection-evidence.mjs`
+- `src/service.mjs`
+- `src/storage-probe.mjs`
+- `src/ws-server.mjs`
+- `test/bounded-state-writes.test.mjs`
+- `test/clock-margin.test.mjs`
+- `test/config.test.mjs`
+- `test/device-liveness.test.mjs`
+- `test/event-playback-capture.test.mjs`
+- `test/event-playback-multi-attempt.test.mjs`
+- `test/event-playback-probe.test.mjs`
+- `test/event-playback-safety.test.mjs`
+- `test/event-table-probe-control.test.mjs`
+- `test/event-table-probe.test.mjs`
+- `test/event-thumb-probe-control.test.mjs`
+- `test/event-thumb-probe.test.mjs`
+- `test/fixtures/sdk-tripwire.mjs`
+- `test/helpers/recordings-fixtures.mjs`
+- `test/helpers/recordings-variable-cadence.mjs`
+- `test/helpers/recordings-wire.mjs`
+- `test/helpers/sdk-resolve.mjs`
+- `test/ice-establishment-evidence.test.mjs`
+- `test/late-contrary-effects.test.mjs`
+- `test/media-topology.test.mjs`
+- `test/pilot-log-timestamps.test.mjs`
+- `test/pilot-process-timestamps.test.mjs`
+- `test/progressive-settings.test.mjs`
+- `test/recordings-api.test.mjs`
+- `test/recordings-availability.test.mjs`
+- `test/recordings-background-paging.test.mjs`
+- `test/recordings-background.test.mjs`
+- `test/recordings-catalog-attempt.test.mjs`
+- `test/recordings-clips.test.mjs`
+- `test/recordings-download.test.mjs`
+- `test/recordings-experiments.test.mjs`
+- `test/recordings-live-catalog.test.mjs`
+- `test/recordings-native-media.test.mjs`
+- `test/recordings-pacing.test.mjs`
+- `test/recordings-paging.test.mjs`
+- `test/recordings-pairing.test.mjs`
+- `test/recordings-playback-models.test.mjs`
+- `test/recordings-playback-sessions.test.mjs`
+- `test/recordings-policy.test.mjs`
+- `test/recordings-privacy.test.mjs`
+- `test/recordings-progressive-media.test.mjs`
+- `test/recordings-progressive-pipe-media.test.mjs`
+- `test/recordings-progressive.test.mjs`
+- `test/recordings-store.test.mjs`
+- `test/recordings-timing.test.mjs`
+- `test/recordings-wire.test.mjs`
+- `test/rtc-connection-evidence.test.mjs`
+- `test/rtc-keepalive.test.mjs`
+- `test/runtime-logging.test.mjs`
+- `test/stream-mime.test.mjs`
+- `test/wiring.test.mjs`
+- `tools/check-native-recording-media.mjs`
+- `tools/check-progressive-media.mjs`
+- `tools/check-progressive-pipe-media.mjs`
+
+## Previous notices
+
 # S1 experimental.12
 
 Update the add-on and integration together: add-on `0.4.1-s1.experimental.12`, integration and bridge `0.3.1-s1.experimental.12`, SDK `0.2.1-s1.experimental.12`.

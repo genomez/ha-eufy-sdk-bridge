@@ -1,17 +1,12 @@
 {
-  "schemaVersion": 1,
-  "version": "0.3.1-s1.experimental.12",
-  "status": "local-build-unpublished",
-  "published": false,
-  "exactInputCommit": "143fdc778c54014e26a536e17e43106a1660e728",
-  "relayDefault": false,
-  "keepaliveMs": 29000,
-  "lightCorrectionDefault": false,
-  "registryManifestDigest": null,
-  "runtimeSourceRelease": null,
-  "installationAcceptance": false,
-  "sdkSourceCommit": "07f7e15a5b17da7a3a6c03aa8af1d20214691742",
-  "sdkArtifactSha256": "403a8da0f3eb21b3d3b5cbce7f98fbe287738babee1b2640cb20e10de1c2dd9c",
-  "sdkArtifactIntegrity": "sha512-R++MdnnEGVhk0RQ1fsvlgobgayND4pndWHsrulxJi9545spAgzCQxBByuQFmmVN256xtk86SuAVRuzYpLJluiA==",
-  "sdkRuntimeSha256": "794e42f0b1508f504a57fb3b32da1f6f2f00690e68c360a3548ca38cf36b93ff"
+  "version": "0.3.1-s1.experimental.13",
+  "sourceCommit": "c7edfca5e9781083fd0d6a06fd45b539d090b58c",
+  "sdkCommit": "612661e51387f114d01103131bf872d031b2c546",
+  "sdkArtifact": {
+    "bytes": 2037097,
+    "sha256": "67a7a0dfbce3387909b621e0aa21d47e1a71828307bb2074c4f5e41eaa60e438",
+    "filename": "genomez-eufy-sdk-0.2.1-s1.experimental.13.tgz",
+    "integrity": "sha512-9jMXIMEFdfERh0+P6hh6faDsXCbrfgNwNhcv1F2FyJyyHHBJ9iq+74Lkb64y+LII7zD4bNkhJjEHHTCZPijgew==",
+    "runtimeSha256": "794e42f0b1508f504a57fb3b32da1f6f2f00690e68c360a3548ca38cf36b93ff"
+  }
 }
