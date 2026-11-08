@@ -9,7 +9,12 @@ import { WebSocketServer } from "ws";
 import { listLightEffects } from "@mega-yfue/eufy-sdk";
 import { SOLIX_CONTROLS, SOLIX_DISABLED } from "./solix.mjs";
 import { WEBRTC_ERRORS } from "./webrtc-relay.mjs";
-import { createBoundedStateWrites, boundedStateWritesCapability } from "./bounded-state-writes.mjs";
+import {
+  createBoundedStateWrites,
+  boundedStateWritesCapability,
+  createLightSettingsWritePolicy,
+  scalarLightSettings,
+} from "./bounded-state-writes.mjs";
 import { createLightConfirmations, lateContraryEffectsCapability } from "./late-contrary-effects.mjs";
 import { createRequestEvidence } from "./request-evidence.mjs";
 import { failure as recordingsFailure } from "./recordings-policy.mjs";
@@ -35,6 +40,9 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
   const { cfg, eufy, SCHEMA_VERSION, dbg } = ctx;
   const { flags, clients } = ctx.state;
   const requests = createRequestEvidence(requestClocks);
+  const lightSettings = createLightSettingsWritePolicy({
+    getDevice: (sn) => ctx.getDevice?.(sn) ?? eufy.getDevice(sn),
+  });
   const bounded = createBoundedStateWrites({
     eufy,
     available: () => flags.ready && !flags.sessionLost && !flags.stopping && !ctx.authPolicy?.blocked,
@@ -316,6 +324,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
         ok: false,
         error: publicError(error),
         ...(code ? { code } : {}),
+        ...(cmd === "device.set" && error?.sendAttempted === false ? { sendAttempted: false } : {}),
       });
     let commandErrorCode;
     // Reject a bad request by throwing — the outer catch renders it as { ok:false, error }, the same
@@ -382,7 +391,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           const dev = await (ctx.getDevice?.(msg.sn) ?? eufy.getDevice(msg.sn));
           return reply({
             sn: msg.sn,
-            properties: ctx.propertySpecs(dev),
+            properties: await lightSettings.properties(dev, ctx.propertySpecs(dev)),
             decodedProperties: ctx.decodedProperties(dev),
           });
         }
@@ -392,6 +401,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           ctx.recordCommand?.("started");
           dbg(`device.set → setProperty sn=${msg.sn} name=${msg.name} value=${JSON.stringify(msg.value)}`);
           try {
+            if (scalarLightSettings.has(msg.name)) await lightSettings.assertWritable(msg.sn, msg.name);
             await eufy.setProperty(msg.sn, msg.name, msg.value);
             pilotLog("command_completed");
             ctx.recordCommand?.("completed");

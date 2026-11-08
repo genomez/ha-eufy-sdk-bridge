@@ -35,6 +35,38 @@ export const boundedStatuses = new Set([
 const safeId = (id) => (typeof id === "string" && id.length > 0 && id.length <= 128) || Number.isSafeInteger(id);
 const finite = (n) => Number.isFinite(n) && Math.abs(n) <= Number.MAX_SAFE_INTEGER;
 const failure = (code) => Object.assign(new Error("Bounded command failed"), { code });
+
+/** Scalar light settings have no verified T9000 RTC encoding; the momentary switch is separate. */
+export const scalarLightSettings = new Set(["brightness", "spotlightEnabled", "colorTemp"]);
+
+/** Qualify scalar settings against the current parent, without retaining topology across roster changes. */
+export function createLightSettingsWritePolicy({ getDevice }) {
+  async function unsupported(dev) {
+    if (!dev.capabilities?.includes("light") || !dev.stationSn || dev.stationSn === dev.sn) return false;
+    const station = await getDevice(dev.stationSn);
+    return /^T9000/i.test(station?.model ?? "") && (!station.stationSn || station.stationSn === station.sn);
+  }
+  return {
+    async properties(dev, specs) {
+      if (!specs.some((spec) => scalarLightSettings.has(spec.name)) || !(await unsupported(dev))) return specs;
+      return specs.flatMap((spec) =>
+        scalarLightSettings.has(spec.name)
+          ? spec.writeOnly
+            ? []
+            : [{ ...spec, writable: false, unexposed: true }]
+          : [spec],
+      );
+    },
+    async assertWritable(sn, name) {
+      if (!scalarLightSettings.has(name)) return;
+      if (await unsupported(await getDevice(sn)))
+        throw Object.assign(new Error("Light setting has no verified T9000 command route"), {
+          code: "command_unsupported",
+          sendAttempted: false,
+        });
+    },
+  };
+}
 // Date.now quantization is <1 ms. Bracket every wall read with monotonic
 // reads and refuse gaps >1 ms. Allow at most 3 ms observed offset movement;
 // reserve that movement plus two conservative (1 ms tick + 1 ms gap) errors.
