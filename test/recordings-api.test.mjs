@@ -1,3 +1,4 @@
+import { socketTest } from "./helpers/socket-test.mjs";
 import { loadConfig } from "../src/config.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -105,7 +106,7 @@ test("progressive RPCs require capability, bind owners and idempotency, and keep
   assert.equal((await a.rpc({ ...args, cmd: "recordings.playback_release", id: 9 })).recordings.released, true);
 });
 
-test("progressive HTTP assets validate routes, HEAD, framing and pins without station admission", async (t) => {
+socketTest("progressive HTTP assets validate routes, HEAD, framing and pins without station admission", async (t) => {
   const h = await harness(t);
   const session = "p_" + "A".repeat(22),
     generation = "12345678-1234-1234-1234-123456789abc";
@@ -193,31 +194,34 @@ test("clip RPCs retain recordings authorization and expose the exact public clip
   );
 });
 
-test("clip HTTP route is cache-only, uses the cover policy boundary, and serves byte ranges offline", async (t) => {
-  const h = await harness(t),
-    eventId = row(h.scope).eventId;
-  const file = path.join(h.root, "synthetic.mp4");
-  await fs.writeFile(file, Buffer.from("0123456789"));
-  const clipPath = `/recordings/v1/clips/${h.cameraId}/${eventId}.mp4`;
-  assert.equal((await request(h, clipPath)).status, 404);
-  const handler = createHttpHandler(h.ctx);
-  h.ctx.recordings.cachedClip = (c, e) => {
-    assert.equal(c, h.cameraId);
-    assert.equal(e, eventId);
-    return { path: file, bytes: 10, release() {} };
-  };
-  h.ctx.state.flags.ready = false;
-  const server = http.createServer((req, res) => handler(req, res));
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  t.after(() => new Promise((r) => server.close(r)));
-  const response = await fetch(`http://127.0.0.1:${server.address().port}${clipPath}`, {
-    headers: { Range: "bytes=2-5" },
-  });
-  assert.equal(response.status, 206);
-  assert.equal(await response.text(), "2345");
-  assert.equal(response.headers.get("content-type"), "video/mp4");
-  assert.equal(h.calls.cover.length + h.calls.catalog.length, 0);
-});
+socketTest(
+  "clip HTTP route is cache-only, uses the cover policy boundary, and serves byte ranges offline",
+  async (t) => {
+    const h = await harness(t),
+      eventId = row(h.scope).eventId;
+    const file = path.join(h.root, "synthetic.mp4");
+    await fs.writeFile(file, Buffer.from("0123456789"));
+    const clipPath = `/recordings/v1/clips/${h.cameraId}/${eventId}.mp4`;
+    assert.equal((await request(h, clipPath)).status, 404);
+    const handler = createHttpHandler(h.ctx);
+    h.ctx.recordings.cachedClip = (c, e) => {
+      assert.equal(c, h.cameraId);
+      assert.equal(e, eventId);
+      return { path: file, bytes: 10, release() {} };
+    };
+    h.ctx.state.flags.ready = false;
+    const server = http.createServer((req, res) => handler(req, res));
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    t.after(() => new Promise((r) => server.close(r)));
+    const response = await fetch(`http://127.0.0.1:${server.address().port}${clipPath}`, {
+      headers: { Range: "bytes=2-5" },
+    });
+    assert.equal(response.status, 206);
+    assert.equal(await response.text(), "2345");
+    assert.equal(response.headers.get("content-type"), "video/mp4");
+    assert.equal(h.calls.cover.length + h.calls.catalog.length, 0);
+  },
+);
 test("WS pacing follows recordings command filtering, validates strictly and passes SDK values atomically", async (t) => {
   const h = await harness(t);
   const passed = [];

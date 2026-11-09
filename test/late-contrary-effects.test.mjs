@@ -1,3 +1,4 @@
+import { socketTest } from "./helpers/socket-test.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -82,45 +83,48 @@ async function fixture({ supported = true, allowCommand } = {}) {
   };
 }
 
-test("actual WS advertises SDK support, forwards service events, sanitizes read replies and cleans listeners", async () => {
-  const f = await fixture();
-  try {
-    assert.deepEqual((await f.next()).lateContraryEffects, { version: 1, watchWindowMs: 600000, confirmation: true });
-    for (const state of lateContraryStates) {
-      const rows = capture(() =>
-        f.eufy.emit("lateContraryEffect", { ...event(state), raw: "private-frame", station: "private-serial" }),
-      );
-      assert.deepEqual(await f.next(), { event: "lateContraryEffect", ...event(state) });
-      assert.deepEqual(rows, [{ event: `command_late_contrary_${state}` }]);
+socketTest(
+  "actual WS advertises SDK support, forwards service events, sanitizes read replies and cleans listeners",
+  async () => {
+    const f = await fixture();
+    try {
+      assert.deepEqual((await f.next()).lateContraryEffects, { version: 1, watchWindowMs: 600000, confirmation: true });
+      for (const state of lateContraryStates) {
+        const rows = capture(() =>
+          f.eufy.emit("lateContraryEffect", { ...event(state), raw: "private-frame", station: "private-serial" }),
+        );
+        assert.deepEqual(await f.next(), { event: "lateContraryEffect", ...event(state) });
+        assert.deepEqual(rows, [{ event: `command_late_contrary_${state}` }]);
+      }
+      f.ws.send(JSON.stringify({ id: 1, cmd: "device.confirmLight", sn: "synthetic", intent: 7 }));
+      assert.deepEqual(await f.next(), { id: 1, ok: true, confirmation: result() });
+      assert.equal(f.calls[0][2].signal.aborted, false);
+      assert.equal(f.calls[0][2].resumeSession, true);
+      const snapshot = f.service.ctx.diagnostics(false);
+      assert.deepEqual(snapshot.lateContraryEffects, {
+        contrary: 1,
+        matched: 1,
+        expired: 1,
+        superseded: 1,
+        closed: 1,
+        recovery_settled: 1,
+        suspended: 1,
+        detection_exhausted: 1,
+        verification_exhausted: 1,
+        confirmationsCompleted: 1,
+        confirmationsFailed: 0,
+      });
+      snapshot.lateContraryEffects.contrary = 999;
+      assert.equal(f.service.ctx.diagnostics(false).lateContraryEffects.contrary, 1);
+      assert.doesNotMatch(JSON.stringify(snapshot), /private-frame|private-serial|synthetic/);
+    } finally {
+      await f.stop();
     }
-    f.ws.send(JSON.stringify({ id: 1, cmd: "device.confirmLight", sn: "synthetic", intent: 7 }));
-    assert.deepEqual(await f.next(), { id: 1, ok: true, confirmation: result() });
-    assert.equal(f.calls[0][2].signal.aborted, false);
-    assert.equal(f.calls[0][2].resumeSession, true);
-    const snapshot = f.service.ctx.diagnostics(false);
-    assert.deepEqual(snapshot.lateContraryEffects, {
-      contrary: 1,
-      matched: 1,
-      expired: 1,
-      superseded: 1,
-      closed: 1,
-      recovery_settled: 1,
-      suspended: 1,
-      detection_exhausted: 1,
-      verification_exhausted: 1,
-      confirmationsCompleted: 1,
-      confirmationsFailed: 0,
-    });
-    snapshot.lateContraryEffects.contrary = 999;
-    assert.equal(f.service.ctx.diagnostics(false).lateContraryEffects.contrary, 1);
-    assert.doesNotMatch(JSON.stringify(snapshot), /private-frame|private-serial|synthetic/);
-  } finally {
-    await f.stop();
-  }
-  assert.equal(f.eufy.listenerCount("lateContraryEffect"), 0);
-});
+    assert.equal(f.eufy.listenerCount("lateContraryEffect"), 0);
+  },
+);
 
-test("old SDK hello omits capability and confirmation fails closed", async () => {
+socketTest("old SDK hello omits capability and confirmation fails closed", async () => {
   const f = await fixture({ supported: false });
   try {
     assert.equal((await f.next()).lateContraryEffects, undefined);
@@ -162,7 +166,7 @@ test("confirmation preserves only the finite verification exhaustion reason", as
   }
 });
 
-test("confirmation WS validates auth, policy, inputs and returns static SDK failure", async () => {
+socketTest("confirmation WS validates auth, policy, inputs and returns static SDK failure", async () => {
   const f = await fixture();
   try {
     await f.next();
@@ -290,7 +294,7 @@ test("confirmation result cannot cross owner or session loss during the read", a
   }
 });
 
-test("socket disconnect and service shutdown abort actual WS confirmation reads", async () => {
+socketTest("socket disconnect and service shutdown abort actual WS confirmation reads", async () => {
   for (const shutdown of [false, true]) {
     const f = await fixture();
     try {
@@ -799,7 +803,7 @@ test("ordinary cancel still closes a migrated correction observer when receipt s
   f.manager.stop();
 });
 
-test("actual WS pause replies to cancellation and later returns the original correction receipt", async () => {
+socketTest("actual WS pause replies to cancellation and later returns the original correction receipt", async () => {
   const f = await fixture(),
     cancelled = [];
   let signal, finish, entered;

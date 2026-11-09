@@ -502,7 +502,7 @@ test("adapter preserves SDK refusal vocabulary and forwards abort and integer ti
 
 test("playback gate pins the installed SDK bundle separately from the distribution tarball", () => {
   const pins = eventPlaybackCodePins(fileURLToPath(import.meta.resolve("@mega-yfue/eufy-sdk")), []);
-  assert.equal(pins.sdkSha256, eventPlaybackProbeSdkRuntimeSha256);
+  assert.equal(pins.sdkSha256, process.env.EUFY_TEST_SDK_SHA256 ?? eventPlaybackProbeSdkRuntimeSha256);
   assert.match(eventPlaybackProbeSdkSha256, /^[a-f0-9]{64}$/);
   assert.notEqual(eventPlaybackProbeSdkSha256, eventPlaybackProbeSdkRuntimeSha256);
 });

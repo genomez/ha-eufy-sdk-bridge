@@ -1,3 +1,4 @@
+import { stateEvidenceSummary } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { emptyCachedPropertyEvidence } from "./cached-property-evidence.mjs";
 import { createCameraHealthDiagnostics } from "./camera-health.mjs";
@@ -1012,6 +1013,13 @@ export function createDiagnostics(ctx, now = Date.now) {
       }
       const snapshot = {
         schemaVersion: 1,
+        stateEvidence: (() => {
+          try {
+            return stateEvidenceSummary(ctx.eufy.getStateEvidenceDiagnostics?.());
+          } catch {
+            return null;
+          }
+        })(),
         logging: ctx.logging?.snapshot() ?? null,
         inertSwitches: {
           prewarm: {

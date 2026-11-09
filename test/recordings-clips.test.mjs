@@ -1,3 +1,4 @@
+import { socketTest } from "./helpers/socket-test.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -1040,7 +1041,7 @@ test("strict Range grammar handles open, suffix, clamped and invalid ranges", ()
     assert.equal(clipRange(header, 10), null);
 });
 
-test("HTTP serves exact 206 bytes and 416, releasing read pins", async (t) => {
+socketTest("HTTP serves exact 206 bytes and 416, releasing read pins", async (t) => {
   const f = await fixture(t);
   await ready(f, "a");
   let releases = 0;

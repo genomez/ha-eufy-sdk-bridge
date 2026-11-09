@@ -1,3 +1,4 @@
+import { socketTest } from "./helpers/socket-test.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import "./fixtures/proof-loader.mjs";
 import { test } from "node:test";
@@ -59,7 +60,7 @@ class Socket extends EventEmitter {
   }
 }
 
-test("WS hello advertises the assembled relay as a boolean on every connection", async (t) => {
+socketTest("WS hello advertises the assembled relay as a boolean on every connection", async (t) => {
   for (const enabled of [false, true]) {
     const config = loadConfig({ BRIDGE_PORT: "0", BRIDGE_WEBRTC_RELAY: enabled ? "1" : "0" });
     config.cfg.host = "127.0.0.1";
@@ -97,7 +98,7 @@ test("WS hello advertises the assembled relay as a boolean on every connection",
   }
 });
 
-test("bounded scalar ownership aborts on actual loopback socket close and never replays", async (t) => {
+socketTest("bounded scalar ownership aborts on actual loopback socket close and never replays", async (t) => {
   const config = loadConfig({ BRIDGE_PORT: "0" });
   config.cfg.host = "127.0.0.1";
   const client = new EventEmitter();
@@ -164,7 +165,7 @@ test("bounded scalar ownership aborts on actual loopback socket close and never 
   assert.equal(signals.length, 1);
 });
 
-test("real loopback owner WS loss and service stop retain in-flight upstream requests", async (t) => {
+socketTest("real loopback owner WS loss and service stop retain in-flight upstream requests", async (t) => {
   const config = loadConfig({ EUFY_EMAIL: "synthetic", EUFY_PASSWORD: "synthetic", BRIDGE_PORT: "0" });
   config.cfg.port = 0;
   config.cfg.host = "127.0.0.1";
@@ -231,7 +232,7 @@ test("real loopback owner WS loss and service stop retain in-flight upstream req
   );
 });
 
-test("default loopback adapters exchange WS protocol and observe external consumers", async () => {
+socketTest("default loopback adapters exchange WS protocol and observe external consumers", async () => {
   let consumers = [],
     malformed = false,
     probes = 0;

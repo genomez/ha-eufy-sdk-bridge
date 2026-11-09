@@ -1,3 +1,4 @@
+import { stateEvidenceCapability } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { redactSecrets } from "./redact.mjs";
 import { pilotLog, publicError, commandFailureEvent } from "./pilot-log.mjs";
@@ -82,6 +83,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     send(ws, {
       event: "hello",
       schemaVersion: SCHEMA_VERSION,
+      ...(typeof eufy.getStateEvidenceScope === "function" ? { stateEvidence: stateEvidenceCapability } : {}),
       auth: ctx.authStatus(),
       webrtcRelay: Boolean(ctx.webrtcRelay),
       ...(ctx.recordings ? { recordings: ctx.recordings.capability() } : {}),

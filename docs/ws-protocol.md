@@ -1041,3 +1041,11 @@ use `<RECORDINGS_ROOT>/playback-models.json`, e.g.
 
 The 50-row built-in default requires Home Assistant integration revision
 `9c77c22` or later. Revision `cd068ae` rejects station windows other than 20.
+
+## Shadow state evidence (version 1)
+
+An SDK with evidence support advertises `stateEvidence: {version: 1, mode: "shadow"}` in `hello` and `ready`. The WebSocket schema remains 1. Existing state values, observations, command receipts and safety inputs retain their existing meaning.
+
+Device summaries add `stateEvidence[property]`; valued `propertyChanged` events add `evidence`; `propertiesObserved` adds an `evidence` map limited to its observed properties. `propertyEvidenceChanged` carries `{deviceSn, property, evidence}` for quality changes, including equal-value samples. These records are detached SDK decisions, validated and forwarded without getter substitution or receive-time restamping. Unavailable original receipt times are `null`, never a new snapshot timestamp. Local receive sequence and session renewal do not establish device sample order. Current information-read associations remain temporal-only and do not establish OFF proof.
+
+The cache-only diagnostics snapshot exposes `stateEvidence` with bounded totals/reason counts, command-level `offCommands`, `offCommandsWithProof`, `offCommandsWithoutProof`, sample-level `offAfterCommand`, `offProofEligible`, `offUnresolved`, and at most 32 recent decisions. Command counts include dispatches with no subsequent OFF sample. Counts describe the current runtime and are not persisted. Recent rows contain a stable, salted per-run numeric target index and finite property/source/decision fields; they contain no target identity or state value. Retention is capped at 2,048 parameter slots and 256 session watermarks; eviction is counted and affects evidence only. Legacy SDKs omit the capability and additive event/snapshot fields, and diagnostics reports null evidence support.

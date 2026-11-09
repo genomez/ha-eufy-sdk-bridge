@@ -1,3 +1,4 @@
+import { evidenceMap, evidenceRuntime, stateEvidence } from "./state-evidence.mjs";
 import { commandHealthEvent } from "./command-health.mjs";
 import { cameraHealthEvent } from "./camera-health.mjs";
 
@@ -38,6 +39,17 @@ export function wireDeviceEvents(ctx) {
     }
     ctx.broadcast({ event: "cameraHealth", ...health });
   });
+  on("propertyEvidenceChanged", (payload) => {
+    const projected = ctx.propertyEvent?.(payload);
+    const evidence = stateEvidence(payload?.evidence, evidenceRuntime(eufy));
+    if (projected && evidence)
+      ctx.broadcast({
+        event: "propertyEvidenceChanged",
+        deviceSn: projected.deviceSn,
+        property: projected.property,
+        evidence,
+      });
+  });
   on("propertiesObserved", (payload) => {
     const bridgeObservedAtMs = Date.now();
     if (
@@ -66,6 +78,7 @@ export function wireDeviceEvents(ctx) {
         source: "rtc",
         observedAtMs: payload.observedAtMs,
         properties,
+        ...(payload.evidence ? { evidence: evidenceMap(payload.evidence, properties, evidenceRuntime(eufy)) } : {}),
       });
       try {
         ctx.recordObservation?.(payload.deviceSn, payload.observedAtMs, properties.light, bridgeObservedAtMs);

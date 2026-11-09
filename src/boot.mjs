@@ -1,3 +1,4 @@
+import { stateEvidenceCapability } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-14. */
 import { pilotLog } from "./pilot-log.mjs";
 // The one-time post-login boot: wire the SDK event handlers, publish the go2rtc config, start go2rtc, arm
@@ -102,7 +103,11 @@ export function createBoot(ctx) {
       pilotLog("boot_7");
       // Channel diagnostics contain device identities and are not emitted by the pilot.
       if (flags.stopping) return;
-      ctx.broadcast({ event: "ready", schemaVersion: SCHEMA_VERSION });
+      ctx.broadcast({
+        event: "ready",
+        schemaVersion: SCHEMA_VERSION,
+        ...(typeof eufy.getStateEvidenceScope === "function" ? { stateEvidence: stateEvidenceCapability } : {}),
+      });
       // Both read the P2P DB via a shared `dbChunk` stream — run sequentially so their accumulators don't
       // cross-contaminate. Non-blocking so `ready` isn't held up.
       if (ctx.bootOptions?.warmup !== false)

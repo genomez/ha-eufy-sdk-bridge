@@ -1,3 +1,4 @@
+import { evidenceMap, evidenceRuntime, stateEvidence } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { createMediaTopology } from "./media-topology.mjs";
 import { publicError } from "./pilot-log.mjs";
@@ -179,6 +180,7 @@ export function createDeviceView(ctx) {
         // Optional cached health must not break the ordinary device snapshot.
       }
     }
+    const state = propertyState(dev);
     return {
       sn: m.sn,
       // The station this device hangs off and its channel there (null for a station itself / unknown).
@@ -194,7 +196,12 @@ export function createDeviceView(ctx) {
       ...(connectivity ? { cameraHealth: connectivity } : {}),
       ...(lastSeenMs === undefined ? {} : { lastSeenMs }),
       capabilities: m.capabilities,
-      state: propertyState(dev), // stored SDK values retained for existing consumers
+      ...(typeof eufy.getStateEvidence === "function"
+        ? {
+            stateEvidence: evidenceMap(eufy.getStateEvidence(m.sn), state, evidenceRuntime(eufy)),
+          }
+        : {}),
+      state, // stored SDK values retained for existing consumers
       ...decodedReadings(dev, m),
       decodedProperties: decodedProperties(dev, m),
       stream: isCamera ? `/stream/${m.sn}` : undefined,
@@ -322,7 +329,8 @@ export function createDeviceView(ctx) {
     }
     // A flat event cannot identify one of multiple capability reads for the same property.
     // Invalidate ambiguity instead of choosing a capability by iteration order.
-    return { deviceSn: payload.deviceSn, property, value };
+    const evidence = stateEvidence(payload.evidence, evidenceRuntime(eufy));
+    return { deviceSn: payload.deviceSn, property, value, ...(evidence ? { evidence } : {}) };
   }
 
   /** Anonymous cache-only snapshot of already retained camera models; never warm or await a cache. */
