@@ -744,13 +744,12 @@ T9000. It includes wired, battery and doorbell cameras, excludes other stations
 and non-camera devices. `RECORDINGS_SKIP_CAMERAS` optionally excludes names
 using trimmed, case-insensitive matching. An omitted or rejected value skips nothing. Scope/camera HMAC inputs are unchanged when the camera set grows.
 
-Deployment order: **integration first; old integration + new bridge = recordings
-unavailable (fails closed)**. The 3o integration at `63d2048` accepts exactly five
+Update the add-on and integration together, then restart Home Assistant after the add-on is running, so removed controls are cleaned up. An older, incompatible integration can show recordings unavailable. The 3o integration at `63d2048` accepts exactly five
 cameras and rejects an expanded roster. Its roster parser raises a recordings
 error, which media browsing translates into "Recordings unavailable"; it does
 not disconnect the shared bridge connection or change other bridge features.
 Integration `f7b7f4e` also accepts a five-camera roster from a 3o-style bridge,
-so install it before or together with the new bridge.
+so use a matching integration and bridge. Update the add-on and integration together, then restart Home Assistant after the add-on is running, so removed controls are cleaned up.
 
 A latest-catalog query defaults to 50 station-wide rows and retains the existing
 60-second admission spacing. `catalogQueryCount` changes the per-query count.

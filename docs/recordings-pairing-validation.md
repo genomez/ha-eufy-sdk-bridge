@@ -165,8 +165,7 @@ acceptance remain lead gates.
 
 ## Paging review fixes and mixed-version deployment (2026-11-05)
 
-Deployment order: **integration first; old integration + new bridge = recordings
-unavailable (fails closed)**. Source inspection of integration `63d2048` confirms
+Update the add-on and integration together, then restart Home Assistant after the add-on is running, so removed controls are cleaned up. An older, incompatible integration can show recordings unavailable. Source inspection of integration `63d2048` confirms
 that `recordings_models.cameras()` requires exactly five distinct camera IDs.
 `RecordingsApi.recordings_cameras()` validates before returning the roster,
 `RecordingRuntime.list_cameras()` cannot install a rejected roster, and media
@@ -176,8 +175,7 @@ roster before any catalog/cover work and verifies subsequent `config.get` and
 `auth.status` replies on the same WS connection. This test models the old count
 guard; it does not run an old HA instance. Integration `f7b7f4e` accepts both the
 old five-camera roster and larger rosters; the added integration API/runtime test
-proves the five-camera compatibility path. Install that integration before or
-together with this bridge.
+proves the five-camera compatibility path. Update the add-on and integration together, then restart Home Assistant after the add-on is running, so removed controls are cleaned up.
 
 Transient deeper-read failures now abandon only their cycle. Three consecutive
 deeper timeouts or invalid exchange replies latch `unsupported_stopped`; valid

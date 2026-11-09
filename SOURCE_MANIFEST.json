@@ -92,8 +92,8 @@
       "sha256": "210a51fe1d6e2c4135266db112cab241291c4746918a378ae6016defcec709e4"
     },
     "docs/recordings-pairing-validation.md": {
-      "bytes": 14229,
-      "sha256": "0cbf2cc8892bf26aa54d8ccd50f4a05d9ffe52737a558e0fc726cd93cdbbfa49"
+      "bytes": 14398,
+      "sha256": "9b3c342e75ae98cdba8a1a3ba383904bef0f2c4c617c6f8b613f837dcf238520"
     },
     "docs/recordings-playback-experiments.md": {
       "bytes": 10225,
@@ -112,8 +112,8 @@
       "sha256": "aeb3c1ce207bad995028f2a3364054072e4252357927296a04bbd372cb000e4a"
     },
     "docs/ws-protocol.md": {
-      "bytes": 56641,
-      "sha256": "a7b19ebd98f057d32fec7157c1b3b65417e20fa9573d24b8ad2d2e440c674da2"
+      "bytes": 56860,
+      "sha256": "a3d2cbbe97ee61511ed7520b796476d6724486494427fcd19454f585b8d31cc6"
     },
     "go2rtc-config.mjs": {
       "bytes": 3437,
