@@ -1,9 +1,8 @@
 Modified for genomez experimental.14, 2026-11-09
 
-Hide unsupported T9000 brightness/spotlight controls; retain numeric domains and recording-duration rules; expose playback eligibility and bounded progressive-playback diagnostics.
+Unsupported controls, model-specific number ranges and recording-playback diagnostics.
 
-DRAFT for owner review. Version and documentation changes only relative to the soaked inputs.
-
+Update the add-on and integration together, then restart Home Assistant after the add-on is running, so removed controls are cleaned up.
 
 Modified paths relative to the pinned input:
 
@@ -13,6 +12,7 @@ Modified paths relative to the pinned input:
 - `SOURCE_MANIFEST.json`
 - `package-lock.json`
 - `package.json`
+
 
 ## Previous notices
 
@@ -160,7 +160,7 @@ Runtime and corresponding source: https://github.com/genomez/ha-eufy-sdk-addon/r
 
 Integration ZIP and checksum: https://github.com/genomez/ha-eufy-sdk/releases/tag/0.3.1-s1.experimental.12
 
-Publication availability is pending. The accepted image is delivered without rebuilding. Earlier release records below are historical.
+The accepted image is delivered without rebuilding. Earlier release records below are historical.
 
 Modified for genomez experimental.11, 2026-10-31
 
@@ -316,7 +316,7 @@ Modified for genomez experimental.9, 2026-10-27.
 
 # Experimental.8 local preparation
 
-Version `0.3.1-s1.experimental.8` is prepared locally and unpublished. Pair add-on `0.4.1-s1.experimental.8`, integration/bridge `0.3.1-s1.experimental.8` and SDK `0.2.1-s1.experimental.8`.
+Version `0.3.1-s1.experimental. Pair add-on `0.4.1-s1.experimental.8`, integration/bridge `0.3.1-s1.experimental.8` and SDK `0.2.1-s1.experimental.8`.
 
 RTC late-viewer keyframe gating; bounded refresh backoff and recovery; isolated slow replies; camera connectivity and hub reply evidence; T8171 detection; opt-in floodlight safety with bounded confirmation and problem notices; observation-only media stall evidence.
 
@@ -421,7 +421,7 @@ Version `0.3.1-s1.experimental.5`: Storage collection attempt/failure status and
 
 ## Experimental.6 preparation, 2026-10-16
 
-Version `0.3.1-s1.experimental.6` is prepared locally and has not been published. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
+Version `0.3.1-s1.experimental. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
 
 The relay remains off by default in source. The proposed add-on option is `webrtc_relay: false`; enabling it sets `BRIDGE_WEBRTC_RELAY=1`. The planned image retains command keepalive at 29000 ms. Companion integration 0.3.1.dev3 uses native live view only when the bridge advertises the relay. Earlier source-preview streaming restrictions above describe historical inputs. Owner-reported review.3/review.4 tests passed on several wired cameras and one battery camera, including switching and busy behavior; this is prior test-build evidence, not acceptance of the final .6 image.
 
@@ -467,7 +467,7 @@ Bridge implementation `02afeda1846e01e07ba154c48fd8401564eb1fb5` and the exact r
 
 ## Experimental.6 watchdog packaging refresh, 2026-10-16
 
-Implementation `0d6b16f5e9760dc8f4d4d6966bc6aee5b5e5ce79` changes `src/watchdog.mjs` and its tests: quiet device activity does not trigger re-login. When enabled station refreshes keep failing without a success for 30 minutes, recovery re-logs in; repeated failures back off through 30 minutes, 1 hour, 2 hours, 4 hours and a 6-hour cap. A successful refresh resets the backoff. Session-loss and push-disconnect recovery, auth holds and lifecycle gates remain. Both changed files already carry the dated 2026-10-16 modification notice. This record supersedes the earlier implementation input and 192-test packaging receipt; the local bridge suite now passes 197 tests. SDK implementation and package binding are unchanged. Final image qualification and publication remain pending.
+Implementation `0d6b16f5e9760dc8f4d4d6966bc6aee5b5e5ce79` changes `src/watchdog.mjs` and its tests: quiet device activity does not trigger re-login. When enabled station refreshes keep failing without a success for 30 minutes, recovery re-logs in; repeated failures back off through 30 minutes, 1 hour, 2 hours, 4 hours and a 6-hour cap. A successful refresh resets the backoff. Session-loss and push-disconnect recovery, auth holds and lifecycle gates remain. Both changed files already carry the dated 2026-10-16 modification notice. This record supersedes the earlier implementation input and 192-test packaging receipt; the local bridge suite now passes 197 tests. SDK implementation and package binding are unchanged.
 
 ## Bounded floodlight late effects, 2026-10-16
 
@@ -501,7 +501,7 @@ no image, installation or device validation performed.
 
 ## Experimental.6 package refresh, 2026-10-17
 
-This replaces the earlier review.7 candidate with review.9 input `681efd9` (implementation `d4335b9`, on review.8 `f6a59d9`). Runtime source is unchanged. Includes bounded pending acceptance for eligible correlated floodlight late replies with authoritative correction, supported S1 camera sirens, standard doorbell ring events and faster demand-only live-view admission, alongside the battery stream fix and native relay. The add-on relay option defaults to false; command keepalive remains 29000 independently. Package versions are SDK `0.2.1-s1.experimental.6` and bridge `0.3.1-s1.experimental.6`. Earlier candidate status statements above are historical. Original licenses and attribution remain. This is local packaging; publication and final device/soak qualification are pending.
+This replaces the earlier review.7 candidate with review.9 input `681efd9` (implementation `d4335b9`, on review.8 `f6a59d9`). Runtime source is unchanged. Includes bounded pending acceptance for eligible correlated floodlight late replies with authoritative correction, supported S1 camera sirens, standard doorbell ring events and faster demand-only live-view admission, alongside the battery stream fix and native relay. The add-on relay option defaults to false; command keepalive remains 29000 independently. Package versions are SDK `0.2.1-s1.experimental.6` and bridge `0.3.1-s1.experimental.6`. Earlier candidate status statements above are historical. Original licenses and attribution remain.
 
 ## Experimental.7, 2026-10-22
 
@@ -602,7 +602,7 @@ Version `0.3.1-s1.experimental.5`: Storage collection attempt/failure status and
 
 ## Experimental.6 preparation, 2026-10-16
 
-Version `0.3.1-s1.experimental.6` is prepared locally and has not been published. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
+Version `0.3.1-s1.experimental. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
 
 The relay remains off by default in source. The proposed add-on option is `webrtc_relay: false`; enabling it sets `BRIDGE_WEBRTC_RELAY=1`. The planned image retains command keepalive at 29000 ms. Companion integration 0.3.1.dev3 uses native live view only when the bridge advertises the relay. Earlier source-preview streaming restrictions above describe historical inputs. Owner-reported review.3/review.4 tests passed on several wired cameras and one battery camera, including switching and busy behavior; this is prior test-build evidence, not acceptance of the final .6 image.
 
@@ -648,7 +648,7 @@ Bridge implementation `02afeda1846e01e07ba154c48fd8401564eb1fb5` and the exact r
 
 ## Experimental.6 watchdog packaging refresh, 2026-10-16
 
-Implementation `0d6b16f5e9760dc8f4d4d6966bc6aee5b5e5ce79` changes `src/watchdog.mjs` and its tests: quiet device activity does not trigger re-login. When enabled station refreshes keep failing without a success for 30 minutes, recovery re-logs in; repeated failures back off through 30 minutes, 1 hour, 2 hours, 4 hours and a 6-hour cap. A successful refresh resets the backoff. Session-loss and push-disconnect recovery, auth holds and lifecycle gates remain. Both changed files already carry the dated 2026-10-16 modification notice. This record supersedes the earlier implementation input and 192-test packaging receipt; the local bridge suite now passes 197 tests. SDK implementation and package binding are unchanged. Final image qualification and publication remain pending.
+Implementation `0d6b16f5e9760dc8f4d4d6966bc6aee5b5e5ce79` changes `src/watchdog.mjs` and its tests: quiet device activity does not trigger re-login. When enabled station refreshes keep failing without a success for 30 minutes, recovery re-logs in; repeated failures back off through 30 minutes, 1 hour, 2 hours, 4 hours and a 6-hour cap. A successful refresh resets the backoff. Session-loss and push-disconnect recovery, auth holds and lifecycle gates remain. Both changed files already carry the dated 2026-10-16 modification notice. This record supersedes the earlier implementation input and 192-test packaging receipt; the local bridge suite now passes 197 tests. SDK implementation and package binding are unchanged.
 
 ## Bounded floodlight late effects, 2026-10-16
 
@@ -682,7 +682,7 @@ no image, installation or device validation performed.
 
 ## Experimental.6 package refresh, 2026-10-17
 
-This replaces the earlier review.7 candidate with review.9 input `681efd9` (implementation `d4335b9`, on review.8 `f6a59d9`). Runtime source is unchanged. Includes bounded pending acceptance for eligible correlated floodlight late replies with authoritative correction, supported S1 camera sirens, standard doorbell ring events and faster demand-only live-view admission, alongside the battery stream fix and native relay. The add-on relay option defaults to false; command keepalive remains 29000 independently. Package versions are SDK `0.2.1-s1.experimental.6` and bridge `0.3.1-s1.experimental.6`. Earlier candidate status statements above are historical. Original licenses and attribution remain. This is local packaging; publication and final device/soak qualification are pending.
+This replaces the earlier review.7 candidate with review.9 input `681efd9` (implementation `d4335b9`, on review.8 `f6a59d9`). Runtime source is unchanged. Includes bounded pending acceptance for eligible correlated floodlight late replies with authoritative correction, supported S1 camera sirens, standard doorbell ring events and faster demand-only live-view admission, alongside the battery stream fix and native relay. The add-on relay option defaults to false; command keepalive remains 29000 independently. Package versions are SDK `0.2.1-s1.experimental.6` and bridge `0.3.1-s1.experimental.6`. Earlier candidate status statements above are historical. Original licenses and attribution remain.
 
 ## Media gap evidence, 2026-10-24
 

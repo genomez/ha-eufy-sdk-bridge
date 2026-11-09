@@ -28,24 +28,24 @@
       "sha256": "000a5f67f803460da3e1defa805ffd27035670109c2a4d40f9c6bb6aa6b2a322"
     },
     "EXPERIMENTAL.md": {
-      "bytes": 38684,
-      "sha256": "0642dec49459686b1ac69f3963cfca6689762c7d11197f5a23ccee17b1e9e353"
+      "bytes": 2420,
+      "sha256": "0d0c4c1cd166572d89f4f64b209f98583c655b5a7f109bffa6015f4813d0910a"
     },
     "LICENSE": {
       "bytes": 11339,
       "sha256": "b208eae7041fb7818ebd636d0778b49e242543be9a980ac9dcbaf98449660a2b"
     },
     "MODIFICATIONS.md": {
-      "bytes": 55812,
-      "sha256": "3f7b016195d43ad7f2ca44bfa0d36684ff1428a981ef073c0930f12445bfda76"
+      "bytes": 55297,
+      "sha256": "424df03b588452242b0b212746c7a11c2a430fd0fa9376306b0cb6e1c14fb884"
     },
     "PUBLICATION.json": {
       "bytes": 659,
       "sha256": "e35478e5da1829efe321e4d3f014669fcc64012732b7d10c2d1b7c151095417d"
     },
     "README.md": {
-      "bytes": 27713,
-      "sha256": "8503c25cab655b9e2d955bfb9ab0f2f4a575068d7e452851b28803092656ddd5"
+      "bytes": 2971,
+      "sha256": "cf80a2ddb44c54ea8b3674720f22ded9855accd5ffa2ac791c66ba15970ba73c"
     },
     "bin/event-playback-probe-control.mjs": {
       "bytes": 9853,
