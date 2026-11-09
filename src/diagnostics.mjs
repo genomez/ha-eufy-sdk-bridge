@@ -1015,7 +1015,8 @@ export function createDiagnostics(ctx, now = Date.now) {
         schemaVersion: 1,
         stateEvidence: (() => {
           try {
-            return stateEvidenceSummary(ctx.eufy.getStateEvidenceDiagnostics?.());
+            const summary = stateEvidenceSummary(ctx.eufy.getStateEvidenceDiagnostics?.());
+            return summary ? { ...summary, forwardingFailures: ctx.state.stateEvidenceForwardingFailures ?? 0 } : null;
           } catch {
             return null;
           }

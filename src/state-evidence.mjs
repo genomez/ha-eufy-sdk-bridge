@@ -138,15 +138,28 @@ export function evidenceRuntime(eufy) {
 }
 
 export function evidenceMap(raw, properties, runtime) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  return Object.fromEntries(
-    Object.keys(properties)
-      .slice(0, 128)
-      .flatMap((property) => {
-        const record = stateEvidence(raw[property], runtime);
-        return record ? [[property, record]] : [];
-      }),
-  );
+  try {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    return Object.fromEntries(
+      Object.keys(properties)
+        .slice(0, 128)
+        .flatMap((property) => {
+          const record = stateEvidence(raw[property], runtime);
+          return record ? [[property, record]] : [];
+        }),
+    );
+  } catch {
+    return {};
+  }
+}
+
+/** Evidence failure cannot suppress the legacy device summary. */
+export function deviceEvidence(eufy, target, properties) {
+  try {
+    return evidenceMap(eufy.getStateEvidence(target), properties, evidenceRuntime(eufy));
+  } catch {
+    return {};
+  }
 }
 
 /** Anonymous bounded aggregate projection; no target identity, value or exception payload is copied. */
@@ -174,6 +187,7 @@ export function stateEvidenceSummary(raw) {
     return {
       ...stateEvidenceCapability,
       ...Object.fromEntries(counters.map((key) => [key, raw[key]])),
+      failures: integer(raw.failures) ? raw.failures : 0,
       reasons: Object.fromEntries(
         [...reasons].filter((reason) => integer(raw.reasons?.[reason])).map((reason) => [reason, raw.reasons[reason]]),
       ),

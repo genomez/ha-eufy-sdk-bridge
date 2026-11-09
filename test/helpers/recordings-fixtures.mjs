@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import { createState } from "../../src/state.mjs";
 import { createRecordingsStore } from "../../src/recordings-store.mjs";
@@ -26,7 +26,7 @@ export const jpeg = Buffer.from([
   255, 216, 255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0, 255, 218, 0, 8, 1, 1, 0, 0, 63, 0, 32, 255, 217,
 ]);
 export async function temporary(t) {
-  const base = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
+  const base = path.resolve(tmpdir());
   const root = await fs.mkdtemp(path.join(base, ".recordings-test-"));
   t.after(async () => {
     if (path.dirname(root) !== base || !path.basename(root).startsWith(".recordings-test-"))

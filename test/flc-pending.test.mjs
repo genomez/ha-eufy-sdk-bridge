@@ -198,8 +198,10 @@ for (const finalValue of [0, 1])
       await flush();
       f.session.information(finalValue);
       await flush();
-      assert.deepEqual(f.events.at(-1).properties, { light: Boolean(finalValue) });
-      assert.equal(f.events.at(-1).event, "propertiesObserved");
+      const legacy = f.events.filter((event) => event.event !== "propertyEvidenceChanged");
+      assert.deepEqual(legacy.at(-1).properties, { light: Boolean(finalValue) });
+      assert.equal(legacy.at(-1).event, "propertiesObserved");
+      assert.equal(f.events.at(-1).event, "propertyEvidenceChanged");
       assert.equal(f.events.filter((event) => event.event === "propertyChanged").length, finalValue === 0 ? 1 : 0);
       assert.equal(f.eufy.getRtcCommandDiagnostics().lateEffect.confirmed, finalValue === 0 ? 1 : 0);
       assert.equal(f.session.sent.filter((packet) => parsePortalHeader(packet).commandId === 1700).length, 1);

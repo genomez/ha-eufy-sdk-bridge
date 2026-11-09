@@ -89,10 +89,11 @@ for (const initial of [true, false])
       assert.equal(sdk.reason, "incomparable_conflict");
       const changed = f.output.filter((event) => event.event === "propertyChanged");
       assert.equal(changed.at(-1).value, !initial);
-      assert.deepEqual(changed.at(-1).evidence, sdk);
+      assert.equal(changed.at(-1).evidence, undefined);
+      assert.deepEqual(f.output.filter((event) => event.event === "propertyEvidenceChanged").at(-1).evidence, sdk);
       const observed = f.output.filter((event) => event.event === "propertiesObserved").at(-1);
       assert.equal(observed.properties.light, !initial);
-      assert.deepEqual(observed.evidence.light, sdk);
+      assert.equal(observed.evidence, undefined);
       const summary = await f.ctx.describeDevice(camera);
       assert.equal(summary.state.light, !initial);
       assert.deepEqual(summary.stateEvidence.light, sdk);
@@ -150,7 +151,7 @@ test("retired session decisions forward unchanged and runtime mismatch evidence 
     f.report(false, { sessionGeneration: 1 });
     const e = f.eufy.getStateEvidence(camera).light;
     assert.equal(e.reason, "retired_session");
-    assert.deepEqual(f.output.filter((event) => event.event === "propertyChanged").at(-1).evidence, e);
+    assert.deepEqual(f.output.filter((event) => event.event === "propertyEvidenceChanged").at(-1).evidence, e);
     const old = structuredClone(e);
     f.eufy.realtimeEpoch++;
     const event = f.ctx.propertyEvent({ deviceSn: camera, property: "light", value: false, evidence: old });
@@ -176,6 +177,71 @@ test("equal-value quality events forward without a getter read or transport acti
     };
     f.eufy.emit("propertyEvidenceChanged", { deviceSn: camera, property: "light", evidence: e });
     assert.deepEqual(f.output.at(-1).evidence, e);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const failure of ["projection", "broadcast"])
+  test(`shadow ${failure} failure preserves legacy forwarding and increments anonymous diagnostics`, async () => {
+    const f = await fixture();
+    try {
+      const broadcast = f.ctx.broadcast;
+      const project = f.ctx.propertyEvent;
+      if (failure === "broadcast")
+        f.ctx.broadcast = (event) => {
+          if (event.event === "propertyEvidenceChanged") throw new Error("synthetic shadow fault");
+          broadcast(event);
+        };
+      else
+        f.ctx.propertyEvent = (event) => {
+          if (event.evidence) throw new Error("synthetic shadow fault");
+          return project(event);
+        };
+      assert.doesNotThrow(() => f.report(true));
+      assert.deepEqual(
+        f.output.map((event) => event.event),
+        ["propertyChanged", "propertiesObserved"],
+      );
+      assert.equal(f.output[0].value, true);
+      const diagnostics = f.ctx.diagnostics(false).stateEvidence;
+      assert.equal(diagnostics.forwardingFailures, 1);
+      assert.equal(JSON.stringify(diagnostics).includes("synthetic shadow fault"), false);
+    } finally {
+      await f.close();
+    }
+  });
+
+test("legacy events finish before any evidence runtime projection", async () => {
+  const f = await fixture();
+  try {
+    const scope = f.eufy.getStateEvidenceScope.bind(f.eufy);
+    let checked = 0;
+    f.eufy.getStateEvidenceScope = () => {
+      assert.deepEqual(
+        f.output.map((event) => event.event),
+        ["propertyChanged", "propertiesObserved"],
+      );
+      checked++;
+      return scope();
+    };
+    f.report(true);
+    assert.ok(checked > 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a failed evidence snapshot cannot suppress legacy summary values", async () => {
+  const f = await fixture();
+  try {
+    f.report(true);
+    f.eufy.getStateEvidence = () => {
+      throw new Error("synthetic shadow fault");
+    };
+    const summary = await f.ctx.describeDevice(camera);
+    assert.equal(summary.state.light, true);
+    assert.deepEqual(summary.stateEvidence, {});
   } finally {
     await f.close();
   }

@@ -1,4 +1,4 @@
-import { evidenceMap, evidenceRuntime, stateEvidence } from "./state-evidence.mjs";
+import { deviceEvidence, evidenceRuntime, stateEvidence } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { createMediaTopology } from "./media-topology.mjs";
 import { publicError } from "./pilot-log.mjs";
@@ -198,7 +198,7 @@ export function createDeviceView(ctx) {
       capabilities: m.capabilities,
       ...(typeof eufy.getStateEvidence === "function"
         ? {
-            stateEvidence: evidenceMap(eufy.getStateEvidence(m.sn), state, evidenceRuntime(eufy)),
+            stateEvidence: deviceEvidence(eufy, m.sn, state),
           }
         : {}),
       state, // stored SDK values retained for existing consumers
@@ -329,7 +329,7 @@ export function createDeviceView(ctx) {
     }
     // A flat event cannot identify one of multiple capability reads for the same property.
     // Invalidate ambiguity instead of choosing a capability by iteration order.
-    const evidence = stateEvidence(payload.evidence, evidenceRuntime(eufy));
+    const evidence = payload.evidence ? stateEvidence(payload.evidence, evidenceRuntime(eufy)) : null;
     return { deviceSn: payload.deviceSn, property, value, ...(evidence ? { evidence } : {}) };
   }
 
