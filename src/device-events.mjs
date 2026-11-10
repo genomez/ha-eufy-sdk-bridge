@@ -1,3 +1,4 @@
+import { guardConfirmation } from "./guard-confirmation.mjs";
 import { evidenceMap, evidenceRuntime, stateEvidence } from "./state-evidence.mjs";
 import { commandHealthEvent } from "./command-health.mjs";
 import { cameraHealthEvent } from "./camera-health.mjs";
@@ -15,6 +16,10 @@ export function wireDeviceEvents(ctx) {
     listeners.push([event, listener]);
   };
   on("deviceState", ctx.bumpActivity);
+  on("guardConfirmation", (raw) => {
+    const receipt = guardConfirmation(raw);
+    if (receipt) ctx.broadcast({ event: "guardConfirmation", ...receipt });
+  });
   on("deviceMetadata", (raw) => {
     if (typeof raw?.deviceSn !== "string" || !raw.deviceSn || raw.deviceSn.length > 128) return;
     const value = raw.firmwareVersion;

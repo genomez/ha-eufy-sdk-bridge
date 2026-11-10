@@ -1049,3 +1049,77 @@ An SDK with evidence support advertises `stateEvidence: {version: 1, mode: "shad
 Device summaries add `stateEvidence[property]`. Legacy `propertyChanged` and `propertiesObserved` events may carry optional evidence when supplied by the SDK. Shadow processing runs after all legacy handling for a frame; current SDK ingress events omit those optional fields and publish the evidence separately afterward. `propertyEvidenceChanged` carries `{deviceSn, property, evidence}` for quality changes, including equal-value samples. These records are detached SDK decisions, validated and forwarded without getter substitution or receive-time restamping. Unavailable original receipt times are `null`, never a new snapshot timestamp. Local receive sequence and session renewal do not establish device sample order. Current information-read associations remain temporal-only and do not establish OFF proof.
 
 The cache-only diagnostics snapshot exposes `stateEvidence` with bounded totals/reason counts, saturating anonymous `failures` (SDK shadow work) and `forwardingFailures` (bridge shadow event projection/send), command-level `offCommands`, `offCommandsWithProof`, `offCommandsWithoutProof`, sample-level `offAfterCommand`, `offProofEligible`, `offUnresolved`, and at most 32 recent decisions. Command counts include dispatches with no subsequent OFF sample. Counts describe the current runtime and are not persisted. Recent rows contain a stable, salted per-run numeric target index and finite property/source/decision fields; they contain no target identity or state value. Retention is capped at 2,048 parameter slots and 256 session watermarks; eviction is counted and affects evidence only. Legacy SDKs omit the capability and additive event/snapshot fields, and diagnostics reports null evidence support.
+
+## Guard report outcomes (additive schema 1)
+
+When supported by the SDK, `hello` and `ready` include
+`guardConfirmation: {version: 1, maxAttempts: 1, enabledRetry: false}`.
+There is one SDK owner per station/property, with a 55-second monotonic overall
+budget and a 20-second report window starting at dispatch completion. No layer
+resends a guard command automatically.
+
+`device.set` for `armingMode` accepts optional `intentGeneration`, an opaque
+caller token of 1–64 ASCII letters, digits, underscores or hyphens. Callers should
+use globally unique tokens per deliberate intent. Repeated tokens join the original
+operation (including a retained terminal receipt); reusing a token for a different
+mode is rejected. Pending requests without a token for the same mode join. A new
+deliberate mode supersedes its predecessor and serializes behind unavoidable active
+transport work. SDK callers and fluent arming setters share this owner.
+
+The ACK RPC reply adds `guardConfirmation`, with `version`, opaque
+`runtimeGeneration` and `handle`, increasing runtime-local `generation`, `deviceSn`,
+raw numeric `requestedMode`, `outcome`, finite `reason`, actual `attempts` (0 or 1),
+and nullable wall-clock `outcomeAtMs`. It ordinarily returns `pending`; a terminal
+outcome can race the ACK. Transport ACK is not a mode report. Dispatch rejection
+returns an RPC error with code `guard_dispatch_rejected`.
+
+`guardConfirmation` events carry those same fields, independently of normal state
+updates. Outcomes are:
+
+- `pending`: `waiting_dispatch` or `waiting_report`, nonterminal.
+- `reported`: `reported_after_command`; requested parameter 1224 arrived after
+  dispatch in the current runtime/session and observation window. This means
+  **reported after command**, temporal-only evidence. It is never confirmation,
+  proof of command application, or producer-ordered evidence.
+- `contradicted`: `different_mode_reported`, terminal on a different requested-mode
+  report. `currentMode` never settles a requested guard mode.
+- `not_reported`: `window_expired`, `budget_expired`, `ack_missing`,
+  `transport_uncertain`, `cancelled`, `superseded`, `session_changed`,
+  `runtime_closed`, or `dispatch_rejected`. Pre-existing matching state cannot
+  settle this intent. Reports after a terminal result cannot rewrite its receipt.
+
+`guard.confirmation.get` takes `handle` and returns `{guardConfirmation: receipt}`
+or `{guardConfirmation: null}` when unavailable. It is read-only and never replays
+commands. Retention is current-runtime only, at most 32 terminal receipts for ten
+monotonic minutes, plus bounded active operations. Runtime replacement makes old
+handles unavailable. Socket reconnect leaves the SDK owner running so clients can
+recover a missed outcome through this method. Diagnostics expose outcome counts
+and pending count only, without serials, handles, modes or caller tokens.
+
+## Cloud inventory evidence (additive schema 1)
+
+`devices.list` preserves its `devices` array and adds `inventoryEvidence` when the
+SDK supports atomic roster evidence. Each summary also gains row
+`inventoryEvidence: {quality: "fresh"|"retained", lastSuccessfulObservationMs}`.
+The top-level evidence contains `version: 1`, `generation`, `completedAtMs`,
+`quality: "complete"|"partial"|"retained"`, `attempted`/`failed` query counts,
+`lastCompleteSuccessMs`, and `rows` keyed only by serials in that returned array.
+These fields are captured with the exact roster before asynchronous descriptions.
+A successful query refreshes only returned rows. Retained rows keep their original
+successful observation time. Complete successful absence uses normal removal;
+partial absence preserves topology. Inventory quality says nothing about property
+truth. The existing operation timing label `fresh_sdk` is not cloud freshness.
+Unknown versions, invalid fields or missing metadata mean unknown quality.
+
+`bridge.diagnostics.inventoryErrors` adds bounded sanitized inventory failures:
+`origin: "device_registry"`, `operation: "house_list"|"device_list"`, finite
+`kind: "http"|"vendor"|"timeout"|"dns"|"connect"|"tls"|"decode"|"unknown"`,
+nullable int32 `vendorCode`, nullable HTTP 100–599 `httpStatus`, and local `atMs`.
+The SDK retains 32 samples, saturating total/eviction and kind/operation/status-class
+counts, first/last failure, and last complete success. These failures use
+`inventory_<kind>` in the existing SDK error history instead of `other`, with the
+sanitized row alongside it. No exception message, body, stack, URL, identifier,
+header or arbitrary error key is projected into these diagnostics. Authentication
+expiration retains its existing explicit error path. No retry, timeout or login
+policy changes are introduced. Legacy SDKs omit inventory/guard capability fields;
+legacy clients can ignore these additive schema-1 fields.

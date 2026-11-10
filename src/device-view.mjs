@@ -1,3 +1,4 @@
+import { inventoryEvidence, inventoryRow } from "./inventory-evidence.mjs";
 import { deviceEvidence, evidenceRuntime, stateEvidence } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { createMediaTopology } from "./media-topology.mjs";
@@ -25,6 +26,8 @@ export function createDeviceView(ctx) {
   const { streaming } = ctx.state;
   const retained = new Map();
   const resolving = new Map();
+  const inventoryByRoster = new WeakMap();
+  const inventoryBySummary = new WeakMap();
   const deviceListObservations = createDeviceListEvidence();
   let account = eufy.api?.auth?.userId;
   let epoch = 0;
@@ -119,7 +122,12 @@ export function createDeviceView(ctx) {
     observation?.rosterSource("fresh_sdk");
     const entry = { epoch, sdkEpoch };
     entry.promise = Promise.resolve()
-      .then(() => eufy.getDevices())
+      .then(async () => {
+        if (typeof eufy.getDevicesWithInventory !== "function") return eufy.getDevices();
+        const snapshot = await eufy.getDevicesWithInventory();
+        inventoryByRoster.set(snapshot.devices, inventoryEvidence(snapshot.inventoryEvidence, snapshot.devices));
+        return snapshot.devices;
+      })
       .then((devices) => {
         checkAccount();
         if (entry.epoch !== epoch || entry.sdkEpoch !== eufy.getInventoryScope?.().epoch)
@@ -498,6 +506,14 @@ export function createDeviceView(ctx) {
           );
         }),
       );
+      const evidence = inventoryByRoster.get(devices);
+      if (evidence) {
+        inventoryBySummary.set(summaries, evidence);
+        for (const summary of summaries) {
+          const row = inventoryRow(evidence.rows[summary.sn]);
+          if (row) summary.inventoryEvidence = row;
+        }
+      }
       observation.descriptionsSettled();
       await ctx.recordings?.syncInventory(
         devices.map((record, index) => ({
@@ -552,6 +568,7 @@ export function createDeviceView(ctx) {
     propertySpecs,
     decodedProperties,
     deviceList,
+    getInventoryEvidence: (devices) => inventoryBySummary.get(devices) ?? null,
     getDeviceListEvidence: deviceListObservations.getEvidence,
     resolveMediaTopology: topology.resolve,
     topologySnapshotDiagnostics: topology.diagnostics,

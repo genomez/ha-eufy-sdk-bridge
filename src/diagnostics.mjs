@@ -1,3 +1,5 @@
+import { guardSummary } from "./guard-confirmation.mjs";
+import { inventoryError, inventorySummary } from "./inventory-evidence.mjs";
 import { stateEvidenceSummary } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { emptyCachedPropertyEvidence } from "./cached-property-evidence.mjs";
@@ -856,10 +858,16 @@ export function createDiagnostics(ctx, now = Date.now) {
       scope();
       errors.count++;
       errors.lastAtMs = now();
-      errors.lastKind = sdkErrorKind(error);
+      const inventory = inventoryError(ownDataValue(context, "inventoryError"));
+      errors.lastKind = inventory ? `inventory_${inventory.kind}` : sdkErrorKind(error);
       errors.lastOrigin = sdkErrorOrigin(context);
       errors.byOrigin[errors.lastOrigin] = (errors.byOrigin[errors.lastOrigin] ?? 0) + 1;
-      errors.recent.push({ atMs: errors.lastAtMs, kind: errors.lastKind, origin: errors.lastOrigin });
+      errors.recent.push({
+        atMs: errors.lastAtMs,
+        kind: errors.lastKind,
+        origin: errors.lastOrigin,
+        ...(inventory ? { inventoryError: inventory } : {}),
+      });
       if (errors.recent.length > SDK_ERROR_HISTORY_LIMIT) errors.recent.shift();
       return "sdk_" + errors.lastKind;
     },
@@ -1013,6 +1021,8 @@ export function createDiagnostics(ctx, now = Date.now) {
       }
       const snapshot = {
         schemaVersion: 1,
+        guardConfirmation: guardSummary(ctx.eufy.getGuardConfirmationDiagnostics?.()),
+        inventoryErrors: inventorySummary(ctx.eufy.getInventoryErrorDiagnostics?.()),
         stateEvidence: (() => {
           try {
             const summary = stateEvidenceSummary(ctx.eufy.getStateEvidenceDiagnostics?.());
@@ -1151,7 +1161,10 @@ export function createDiagnostics(ctx, now = Date.now) {
         sdkErrors: {
           ...errors,
           byOrigin: { ...errors.byOrigin },
-          recent: errors.recent.map((row) => ({ ...row })),
+          recent: errors.recent.map((row) => ({
+            ...row,
+            ...(row.inventoryError ? { inventoryError: inventoryError(row.inventoryError) } : {}),
+          })),
         },
         propertyCommands: {
           ...commands,

@@ -1,3 +1,4 @@
+import { guardConfirmationCapability } from "./guard-confirmation.mjs";
 import { stateEvidenceCapability } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-14. */
 import { pilotLog } from "./pilot-log.mjs";
@@ -106,6 +107,9 @@ export function createBoot(ctx) {
       ctx.broadcast({
         event: "ready",
         schemaVersion: SCHEMA_VERSION,
+        ...(typeof eufy.setGuardModeWithReceipt === "function"
+          ? { guardConfirmation: guardConfirmationCapability }
+          : {}),
         ...(typeof eufy.getStateEvidenceScope === "function" ? { stateEvidence: stateEvidenceCapability } : {}),
       });
       // Both read the P2P DB via a shared `dbChunk` stream — run sequentially so their accumulators don't

@@ -1,3 +1,4 @@
+import { guardConfirmationCapability, guardConfirmation } from "./guard-confirmation.mjs";
 import { stateEvidenceCapability } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { redactSecrets } from "./redact.mjs";
@@ -83,6 +84,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     send(ws, {
       event: "hello",
       schemaVersion: SCHEMA_VERSION,
+      ...(typeof eufy.setGuardModeWithReceipt === "function" ? { guardConfirmation: guardConfirmationCapability } : {}),
       ...(typeof eufy.getStateEvidenceScope === "function" ? { stateEvidence: stateEvidenceCapability } : {}),
       auth: ctx.authStatus(),
       webrtcRelay: Boolean(ctx.webrtcRelay),
@@ -385,8 +387,20 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
         }
 
         // ── device control (require auth — gated above) ──
-        case "devices.list":
-          return reply({ devices: await ctx.deviceList() });
+        case "devices.list": {
+          const devices = await ctx.deviceList();
+          const inventoryEvidence = ctx.getInventoryEvidence?.(devices);
+          return reply({ devices, ...(inventoryEvidence ? { inventoryEvidence } : {}) });
+        }
+        case "guard.confirmation.get": {
+          if (
+            typeof msg.handle !== "string" ||
+            !/^[a-f0-9-]{36}$/.test(msg.handle) ||
+            typeof eufy.getGuardConfirmation !== "function"
+          )
+            return fail("guard_confirmation_unavailable");
+          return reply({ guardConfirmation: guardConfirmation(eufy.getGuardConfirmation(msg.handle)) });
+        }
         case "device.state":
           return reply({ device: await ctx.describeDevice(msg.sn) });
         case "device.properties": {
@@ -402,20 +416,26 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           pilotLog("command_started");
           ctx.recordCommand?.("started");
           dbg(`device.set → setProperty sn=${msg.sn} name=${msg.name} value=${JSON.stringify(msg.value)}`);
+          let guardReceipt;
           try {
             if (scalarLightSettings.has(msg.name)) await lightSettings.assertWritable(msg.sn, msg.name);
-            await eufy.setProperty(msg.sn, msg.name, msg.value);
+            if (msg.name === "armingMode" && typeof eufy.setGuardModeWithReceipt === "function") {
+              guardReceipt = guardConfirmation(
+                await eufy.setGuardModeWithReceipt(msg.sn, msg.value, msg.intentGeneration),
+              );
+            } else await eufy.setProperty(msg.sn, msg.name, msg.value);
             pilotLog("command_completed");
             ctx.recordCommand?.("completed");
             dbg(`device.set OK sn=${msg.sn} name=${msg.name} (${Date.now() - t0}ms)`);
           } catch (e) {
             pilotLog("ws_server_2");
-            commandErrorCode = commandFailureEvent(e);
+            commandErrorCode =
+              e?.code === "guard_dispatch_rejected" ? "guard_dispatch_rejected" : commandFailureEvent(e);
             ctx.recordCommand?.("failed", e, { property: msg.name, elapsedMs: Math.max(0, Date.now() - t0) });
             pilotLog(commandErrorCode);
             throw e; // outer catch surfaces it to the frontend (+ triggers session recovery if kicked)
           }
-          return reply({});
+          return reply(guardReceipt ? { guardConfirmation: guardReceipt } : {});
         }
         case "device.action": {
           // Invoke a capability ACTION — a typed method that isn't a scalar writable property, so
