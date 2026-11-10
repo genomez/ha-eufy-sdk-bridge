@@ -1132,3 +1132,20 @@ header or arbitrary error key is projected into these diagnostics. Authenticatio
 expiration retains its existing explicit error path. No retry, timeout or login
 policy changes are introduced. Legacy SDKs omit inventory/guard capability fields;
 legacy clients can ignore these additive schema-1 fields.
+
+Inventory shape diagnostics are additive within schema 1. Optional decode sample
+`shape` is limited to `envelope_null`, `envelope_primitive`, `envelope_array`, or
+`field_not_array`. Null/undefined envelopes, primitive envelopes, nonempty top-level
+arrays, and present list fields other than arrays or null remain decode failures
+and retain missing prior inventory. Empty objects remain complete empty lists.
+Null lists, missing list fields on envelopes with other keys, empty top-level
+arrays, non-object rows, and rows lacking a valid identity are tolerated without
+errors or partial evidence. Valid house siblings are still queried. Diagnostics
+add per-operation saturating `toleratedShapes` counters with only `field_null`,
+`field_missing_with_keys`, `envelope_empty_array`, `row_not_object`, and
+`row_missing_serial` (`house_list` uses the last label for missing house identity).
+Each occurrence increments its counter, including every skipped row. Counts are
+cumulative for the recorder lifetime; tolerated shapes do not increment error
+counts or failure times. Bridge projections strip unknown shapes and operations,
+invalid counts, and all raw values, keys, serials and IDs. Older summaries may omit
+`toleratedShapes`; older samples may omit `shape`.

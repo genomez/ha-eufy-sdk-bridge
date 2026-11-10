@@ -114,3 +114,105 @@ test("malformed inventory error context cannot throw or leak through diagnostics
   );
   assert.equal(inventoryError(revoked.proxy), null);
 });
+
+const toleratedShapeNames = [
+  "field_null",
+  "field_missing_with_keys",
+  "envelope_empty_array",
+  "row_not_object",
+  "row_missing_serial",
+];
+const rejectedShapeNames = ["envelope_null", "envelope_primitive", "envelope_array", "field_not_array"];
+const decodeSample = {
+  origin: "device_registry",
+  operation: "device_list",
+  kind: "decode",
+  vendorCode: null,
+  httpStatus: null,
+  atMs: 1000,
+};
+test("inventory error projection passes only finite rejected decode shapes", () => {
+  for (const shape of rejectedShapeNames)
+    assert.deepEqual(inventoryError({ ...decodeSample, shape, PRIVATE: "PRIVATE" }), { ...decodeSample, shape });
+  for (const shape of ["PRIVATE", null, {}, 42, ...toleratedShapeNames])
+    assert.deepEqual(inventoryError({ ...decodeSample, shape }), decodeSample);
+  assert.equal(
+    Object.hasOwn(inventoryError({ ...decodeSample, kind: "unknown", shape: "envelope_null" }), "shape"),
+    false,
+  );
+});
+test("inventory summary projects finite tolerated counters and preserves legacy omission", () => {
+  const summary = {
+    version: 1,
+    total: 1,
+    evicted: 0,
+    firstFailureMs: 1,
+    lastFailureMs: 1000,
+    lastCompleteSuccessMs: 500,
+    byKind: { decode: 1 },
+    byOperation: { device_list: 1 },
+    byStatusClass: { unknown: 1 },
+    recent: [{ ...decodeSample, shape: "field_not_array" }],
+  };
+  const valid = Object.fromEntries(
+    toleratedShapeNames.map((shape, index) => [shape, index === 0 ? Number.MAX_SAFE_INTEGER : index]),
+  );
+  const projected = inventorySummary({
+    ...summary,
+    toleratedShapes: {
+      device_list: { ...valid, PRIVATE: 1, envelope_null: 7 },
+      house_list: {
+        field_null: -1,
+        field_missing_with_keys: 0.5,
+        envelope_empty_array: Number.MAX_SAFE_INTEGER + 1,
+        row_not_object: "PRIVATE",
+        row_missing_serial: 0,
+      },
+      PRIVATE: { field_null: 1 },
+    },
+  });
+  assert.deepEqual(projected.toleratedShapes, { house_list: { row_missing_serial: 0 }, device_list: valid });
+  assert.equal(projected.recent[0].shape, "field_not_array");
+  assert.equal(JSON.stringify(projected).includes("PRIVATE"), false);
+  projected.toleratedShapes.device_list.field_null = 7;
+  assert.equal(valid.field_null, Number.MAX_SAFE_INTEGER);
+  assert.equal(Object.hasOwn(inventorySummary(summary), "toleratedShapes"), false);
+  for (const toleratedShapes of [null, "PRIVATE", 42, []])
+    assert.equal(Object.hasOwn(inventorySummary({ ...summary, toleratedShapes }), "toleratedShapes"), false);
+});
+for (const operation of ["house_list", "device_list"]) {
+  test(`rebuilt SDK ${operation} shape diagnostics survive bridge projection without payload`, async () => {
+    const eufy = new EufyMega({ email: "test@example.com", password: "synthetic", autoRealtime: false, pollMs: 0 });
+    const diagnostics = createDiagnostics({ eufy, state: createState(), cfg: {} });
+    eufy.on("error", (error, context) => diagnostics.recordSdkError(error, context));
+    const field = operation === "house_list" ? "house_infos" : "devices";
+    let envelope;
+    eufy.mega.post = async (_service, path) => {
+      if (path.endsWith("get_house_list")) return operation === "house_list" ? envelope : {};
+      return operation === "device_list" ? envelope : { devices: [] };
+    };
+    try {
+      for (envelope of [{ [field]: null }, { PRIVATE: "PRIVATE" }, [], { [field]: [null] }, { [field]: [{}] }]) {
+        const snapshot = await eufy.getDevicesWithInventory();
+        assert.equal(snapshot.inventoryEvidence.quality, "complete");
+      }
+      let projected = diagnostics.diagnostics(false).inventoryErrors;
+      assert.deepEqual(projected.toleratedShapes, {
+        [operation]: Object.fromEntries(toleratedShapeNames.map((shape) => [shape, 1])),
+      });
+      assert.equal(projected.total, 0);
+      assert.deepEqual(projected.recent, []);
+      for (envelope of [null, 42, ["PRIVATE"], { [field]: "PRIVATE" }]) await eufy.getDevices();
+      projected = diagnostics.diagnostics(false).inventoryErrors;
+      assert.equal(projected.total, 4);
+      assert.deepEqual(
+        projected.recent.map((sample) => sample.shape),
+        rejectedShapeNames,
+      );
+      assert.equal(JSON.stringify(projected).includes("PRIVATE"), false);
+      assert.equal(diagnostics.diagnostics(false).sdkErrors.lastKind, "inventory_decode");
+    } finally {
+      await eufy.disconnect();
+    }
+  });
+}

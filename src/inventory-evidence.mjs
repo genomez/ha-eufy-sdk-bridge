@@ -1,11 +1,20 @@
 const count = (v) => Number.isSafeInteger(v) && v >= 0;
 const time = (v) => v === null || count(v);
 const kinds = ["http", "vendor", "timeout", "dns", "connect", "tls", "decode", "unknown"];
+const operations = ["house_list", "device_list"];
+const toleratedShapes = [
+  "field_null",
+  "field_missing_with_keys",
+  "envelope_empty_array",
+  "row_not_object",
+  "row_missing_serial",
+];
+const rejectedShapes = ["envelope_null", "envelope_primitive", "envelope_array", "field_not_array"];
 export function inventoryError(raw) {
   try {
     if (
       raw?.origin !== "device_registry" ||
-      !["house_list", "device_list"].includes(raw.operation) ||
+      !operations.includes(raw.operation) ||
       !kinds.includes(raw.kind) ||
       !count(raw.atMs) ||
       !(
@@ -15,9 +24,11 @@ export function inventoryError(raw) {
       !(raw.httpStatus === null || (Number.isInteger(raw.httpStatus) && raw.httpStatus >= 100 && raw.httpStatus <= 599))
     )
       return null;
-    return Object.fromEntries(
+    const sample = Object.fromEntries(
       ["origin", "operation", "kind", "vendorCode", "httpStatus", "atMs"].map((key) => [key, raw[key]]),
     );
+    if (raw.kind === "decode" && rejectedShapes.includes(raw.shape)) sample.shape = raw.shape;
+    return sample;
   } catch {
     return null;
   }
@@ -78,8 +89,17 @@ export function inventorySummary(raw) {
     lastFailureMs: raw.lastFailureMs,
     lastCompleteSuccessMs: raw.lastCompleteSuccessMs,
     byKind: counters(raw.byKind, kinds),
-    byOperation: counters(raw.byOperation, ["house_list", "device_list"]),
+    byOperation: counters(raw.byOperation, operations),
     byStatusClass: counters(raw.byStatusClass, ["1xx", "2xx", "3xx", "4xx", "5xx", "unknown"]),
+    ...(raw.toleratedShapes && typeof raw.toleratedShapes === "object" && !Array.isArray(raw.toleratedShapes)
+      ? {
+          toleratedShapes: Object.fromEntries(
+            operations
+              .filter((operation) => Object.hasOwn(raw.toleratedShapes, operation))
+              .map((operation) => [operation, counters(raw.toleratedShapes[operation], toleratedShapes)]),
+          ),
+        }
+      : {}),
     recent: (Array.isArray(raw.recent) ? raw.recent.slice(-32) : []).map(inventoryError).filter(Boolean),
   };
 }
