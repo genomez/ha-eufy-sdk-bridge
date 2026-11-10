@@ -1,4 +1,4 @@
-import { guardConfirmationCapability } from "./guard-confirmation.mjs";
+import { guardConfirmationCapability, guardRuntimeAdvertisement } from "./guard-confirmation.mjs";
 import { stateEvidenceCapability } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-14. */
 import { pilotLog } from "./pilot-log.mjs";
@@ -80,6 +80,7 @@ export function createBoot(ctx) {
 
   /** Runs once, after a successful login: wire events, write go2rtc.yaml, start go2rtc, go ready. */
   async function completeBoot() {
+    guardRuntimeAdvertisement(eufy);
     if (flags.ready || flags.booting || flags.stopping) return;
     flags.booting = true;
     try {
@@ -107,6 +108,7 @@ export function createBoot(ctx) {
       ctx.broadcast({
         event: "ready",
         schemaVersion: SCHEMA_VERSION,
+        ...guardRuntimeAdvertisement(eufy),
         ...(typeof eufy.setGuardModeWithReceipt === "function"
           ? { guardConfirmation: guardConfirmationCapability }
           : {}),

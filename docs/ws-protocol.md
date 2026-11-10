@@ -1054,6 +1054,15 @@ The cache-only diagnostics snapshot exposes `stateEvidence` with bounded totals/
 
 When supported by the SDK, `hello` and `ready` include
 `guardConfirmation: {version: 1, maxAttempts: 1, enabledRetry: false}`.
+SDKs with lifecycle advertisements also include
+`guardRuntime: {version: 1, runtimeGeneration: "<opaque UUID>"}` in hello/ready.
+Every SDK guard-owner replacement emits an additive `guardRuntime` event with
+those two fields before the replacement's first receipt. This includes watchdog
+disconnect and successful auth recovery even when boot is already ready. A
+consumer retires the previous receipt scope only from this advertisement, never
+from an arbitrary different-runtime receipt, and fences in-flight ACK/recovery
+results across scope changes. Older SDKs omit the advertisement and keep the
+existing capability/receipt contract.
 There is one SDK owner per station/property, with a 55-second monotonic overall
 budget and a 20-second report window starting at dispatch completion. No layer
 resends a guard command automatically.

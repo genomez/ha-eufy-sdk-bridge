@@ -1,4 +1,4 @@
-import { guardConfirmationCapability, guardConfirmation } from "./guard-confirmation.mjs";
+import { guardConfirmationCapability, guardConfirmation, guardRuntimeAdvertisement } from "./guard-confirmation.mjs";
 import { stateEvidenceCapability } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
 import { redactSecrets } from "./redact.mjs";
@@ -84,6 +84,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     send(ws, {
       event: "hello",
       schemaVersion: SCHEMA_VERSION,
+      ...guardRuntimeAdvertisement(eufy),
       ...(typeof eufy.setGuardModeWithReceipt === "function" ? { guardConfirmation: guardConfirmationCapability } : {}),
       ...(typeof eufy.getStateEvidenceScope === "function" ? { stateEvidence: stateEvidenceCapability } : {}),
       auth: ctx.authStatus(),

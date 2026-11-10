@@ -15,6 +15,17 @@ const reasons = new Set([
   "dispatch_rejected",
 ]);
 const uuid = (v) => typeof v === "string" && /^[a-f0-9-]{36}$/.test(v);
+export function guardRuntime(raw) {
+  return raw?.version === 1 && uuid(raw.runtimeGeneration)
+    ? { version: 1, runtimeGeneration: raw.runtimeGeneration }
+    : null;
+}
+export function guardRuntimeAdvertisement(eufy) {
+  if (typeof eufy.setGuardModeWithReceipt !== "function" || typeof eufy.getGuardConfirmationScope !== "function")
+    return {};
+  const scope = guardRuntime(eufy.getGuardConfirmationScope());
+  return scope ? { guardRuntime: scope } : {};
+}
 export function guardConfirmation(raw) {
   if (
     !raw ||
