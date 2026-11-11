@@ -92,18 +92,16 @@ function guardClock(t) {
 }
 
 function guardReport(f, mode, sessionGeneration = 1, sequence = 1) {
-  f.eufy.rtc.deps.onFrame(
-    sn,
-    {
-      commandId: 1103,
-      channel: 255,
-      segment: 1,
-      isResponse: 0,
-      linkType: 3,
-      data: { params: [{ channel: 255, param_type: 1224, param_value: mode }] },
-    },
-    { sessionGeneration, sequence, receivedAtMonotonicMs: performance.now() },
-  );
+  const frame = {
+    commandId: 1103,
+    channel: 255,
+    segment: 1,
+    isResponse: 0,
+    linkType: 3,
+    data: { params: [{ channel: 255, param_type: 1224, param_value: mode }] },
+  };
+  f.eufy.rtc.deps.onFrame(sn, frame, { sessionGeneration, sequence, receivedAtMonotonicMs: performance.now() });
+  return frame;
 }
 
 for (const supported of [true, false])
@@ -120,10 +118,21 @@ for (const supported of [true, false])
       await f.close();
     }
   });
-for (const matching of [false, true])
-  test(`actual SDK duplicate join, provisional wrong mode, immutable terminal and read-only get recovery: matching=${matching}`, async (t) => {
+for (const response of ["differs", "matches", "incomplete"])
+  test(`actual SDK duplicate join, provisional wrong mode, immutable terminal and read-only get recovery: confirmation=${response}`, async (t) => {
     const advance = guardClock(t);
     const f = await fixture();
+    const confirmingRead = Promise.withResolvers();
+    let readResult;
+    let reads = 0;
+    t.mock.method(f.eufy.rtc, "refreshInformation", (station, options) => {
+      assert.equal(station, sn);
+      assert.ok(Number.isSafeInteger(options.timeoutMs));
+      assert.ok(options.timeoutMs > 7_900 && options.timeoutMs <= 8_000);
+      reads++;
+      return confirmingRead.promise;
+    });
+    t.mock.method(f.eufy.rtc, "informationResultCurrent", (station, result) => station === sn && result === readResult);
     try {
       const first = await f.rpc({ cmd: "device.set", sn, name: "armingMode", value: 1, intentGeneration: "same" });
       const second = await f.rpc({ cmd: "device.set", sn, name: "armingMode", value: 1, intentGeneration: "same" });
@@ -136,27 +145,48 @@ for (const matching of [false, true])
         f.output.some((e) => e.event === "guardConfirmation" && e.outcome === "contradicted"),
         false,
       );
-      if (matching) {
+      if (response === "matches") {
         advance(1);
         guardReport(f, 1, 1, 2);
       } else {
-        advance(19_998);
+        advance(11_999);
+        assert.equal(reads, 1);
+        advance(1);
+        if (response === "differs") {
+          readResult = {
+            frame: guardReport(f, 63, 1, 2),
+            sessionGeneration: 1,
+            currentAtArrival: true,
+            notificationCorrelation: "temporal-only",
+          };
+          confirmingRead.resolve(readResult);
+        }
+        await new Promise(setImmediate);
+        advance(7_998);
         assert.equal(f.eufy.getGuardConfirmation(first.guardConfirmation.handle).outcome, "pending");
         advance(1);
       }
-      const outcome = matching ? "reported" : "contradicted";
+      const outcome = response === "matches" ? "reported" : response === "differs" ? "contradicted" : "not_reported";
       const event = f.output.find((e) => e.event === "guardConfirmation" && e.outcome === outcome);
       assert.ok(event);
-      assert.equal(event.reason, matching ? "reported_after_command" : "different_mode_reported");
+      assert.equal(
+        event.reason,
+        response === "matches"
+          ? "reported_after_command"
+          : response === "differs"
+            ? "different_mode_reported"
+            : "window_expired",
+      );
       const get = await f.rpc({ cmd: "guard.confirmation.get", handle: first.guardConfirmation.handle });
       assert.deepEqual(get.guardConfirmation, guardConfirmation(event));
       advance(1);
-      guardReport(f, matching ? 63 : 1, 1, 3);
+      guardReport(f, response === "matches" ? 63 : 1, 1, 3);
       advance(20_000);
       const terminal = await f.rpc({ cmd: "guard.confirmation.get", handle: first.guardConfirmation.handle });
       assert.deepEqual(terminal.guardConfirmation, get.guardConfirmation);
       assert.equal(f.output.filter((e) => e.event === "guardConfirmation" && e.outcome !== "pending").length, 1);
       assert.equal(f.sends, 1);
+      assert.equal(reads, response === "matches" ? 0 : 1);
       const summary = f.ctx.diagnostics(false).guardConfirmation;
       assert.equal(summary[outcome], 1);
       assert.equal(JSON.stringify(summary).includes(sn), false);
