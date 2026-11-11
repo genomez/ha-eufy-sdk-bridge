@@ -4,12 +4,15 @@ const kinds = ["http", "vendor", "timeout", "dns", "connect", "tls", "decode", "
 const operations = ["house_list", "device_list"];
 const toleratedShapes = [
   "field_null",
+  "field_missing",
   "field_missing_with_keys",
   "envelope_empty_array",
+  "envelope_null",
+  "envelope_empty_string",
   "row_not_object",
   "row_missing_serial",
 ];
-const rejectedShapes = ["envelope_null", "envelope_primitive", "envelope_array", "field_not_array"];
+const rejectedShapes = ["envelope_primitive", "envelope_array", "field_not_array"];
 export function inventoryError(raw) {
   try {
     if (

@@ -117,12 +117,15 @@ test("malformed inventory error context cannot throw or leak through diagnostics
 
 const toleratedShapeNames = [
   "field_null",
+  "field_missing",
   "field_missing_with_keys",
   "envelope_empty_array",
+  "envelope_null",
+  "envelope_empty_string",
   "row_not_object",
   "row_missing_serial",
 ];
-const rejectedShapeNames = ["envelope_null", "envelope_primitive", "envelope_array", "field_not_array"];
+const rejectedShapeNames = ["envelope_primitive", "envelope_array", "field_not_array"];
 const decodeSample = {
   origin: "device_registry",
   operation: "device_list",
@@ -160,7 +163,7 @@ test("inventory summary projects finite tolerated counters and preserves legacy 
   const projected = inventorySummary({
     ...summary,
     toleratedShapes: {
-      device_list: { ...valid, PRIVATE: 1, envelope_null: 7 },
+      device_list: { ...valid, PRIVATE: 1, envelope_primitive: 7 },
       house_list: {
         field_null: -1,
         field_missing_with_keys: 0.5,
@@ -188,13 +191,17 @@ for (const operation of ["house_list", "device_list"]) {
     const field = operation === "house_list" ? "house_infos" : "devices";
     let envelope;
     eufy.mega.post = async (_service, path) => {
-      if (path.endsWith("get_house_list")) return operation === "house_list" ? envelope : {};
+      if (path.endsWith("get_house_list")) return operation === "house_list" ? envelope : { house_infos: [] };
       return operation === "device_list" ? envelope : { devices: [] };
     };
     try {
-      for (envelope of [{ [field]: null }, { PRIVATE: "PRIVATE" }, [], { [field]: [null] }, { [field]: [{}] }]) {
+      for (envelope of [{ [field]: null }, {}, [], null, ""]) {
         const snapshot = await eufy.getDevicesWithInventory();
         assert.equal(snapshot.inventoryEvidence.quality, "complete");
+      }
+      for (envelope of [{ PRIVATE: "PRIVATE" }, { [field]: [null] }, { [field]: [{}] }]) {
+        const snapshot = await eufy.getDevicesWithInventory();
+        assert.equal(snapshot.inventoryEvidence.quality, "partial");
       }
       let projected = diagnostics.diagnostics(false).inventoryErrors;
       assert.deepEqual(projected.toleratedShapes, {
@@ -202,9 +209,9 @@ for (const operation of ["house_list", "device_list"]) {
       });
       assert.equal(projected.total, 0);
       assert.deepEqual(projected.recent, []);
-      for (envelope of [null, 42, ["PRIVATE"], { [field]: "PRIVATE" }]) await eufy.getDevices();
+      for (envelope of [42, ["PRIVATE"], { [field]: "PRIVATE" }]) await eufy.getDevices();
       projected = diagnostics.diagnostics(false).inventoryErrors;
-      assert.equal(projected.total, 4);
+      assert.equal(projected.total, 3);
       assert.deepEqual(
         projected.recent.map((sample) => sample.shape),
         rejectedShapeNames,
