@@ -1,0 +1,48 @@
+{
+  "kind": "local-source-candidate",
+  "branch": "s1-post-repack-build",
+  "base_commit": "7705c163f54aa5251539c5e7d112465cd398164e",
+  "delivery_files": [
+    {
+      "path": "src/device-events.mjs",
+      "sha256": "1458670a987192c529f1f207eee73e6821a447cc351f960140eb1d04b98faeab"
+    },
+    {
+      "path": "src/faces.mjs",
+      "sha256": "f4c42fdd044d028ef82356b53ba312e173979686250748a77076fe8f8a18a137"
+    }
+  ],
+  "changed_test_files": [
+    "test/faces.test.mjs",
+    "test/flc-pending.test.mjs",
+    "test/state-evidence.test.mjs"
+  ],
+  "receipt_file": "POST_REPACK_BUILD.json",
+  "changes": {
+    "propertyEvidenceChanged": "Removed the unused WebSocket forwarding subscription; integration has no consumers. SDK evidence generation, stateEvidence snapshots, propertyChanged/propertiesObserved and diagnostics are preserved.",
+    "faces": "Explicit Human placeholder matches case-insensitively, after trimming, and cannot establish recognition. Positive IDs still resolve roster names; strangers and explicit real names remain unchanged."
+  },
+  "validation": {
+    "node": "v24.15.0",
+    "command": "node --import ./test/fixtures/no-socket-guard.mjs --import ./.offline/inventory-fixes/use-local-sdk.mjs --test test/*.test.mjs",
+    "environment": {
+      "TEMP": "C:/Dev/eufy-s1-phasec-20261107/ha-eufy-sdk-bridge/.offline/post-repack/temp",
+      "TMP": "C:/Dev/eufy-s1-phasec-20261107/ha-eufy-sdk-bridge/.offline/post-repack/temp",
+      "EUFY_TEST_SDK_SHA256": "17c7a5b213355d8a2e162086446034f68c56b045846d6375db76e1d8e26eee87"
+    },
+    "sdk_fixture": "Existing .offline/inventory-fixes/use-local-sdk.mjs loader resolves the pre-existing ../eufy-sdk/.offline/inventory-fixes/sdk.mjs bundle read-only. Installed node_modules SDK lacks stateEvidenceCapability; no dependency installation or sibling source change performed.",
+    "reproduce_script": ".offline/post-repack/validate.ps1",
+    "log": ".offline/post-repack/full.log",
+    "total": 1397,
+    "passed": 1332,
+    "failed": 0,
+    "skipped": 65,
+    "skips": "Socket/process or other gated cases remain skipped under the existing offline test guards; no live-device acceptance.",
+    "lint": "Prettier passes for all five changed source/test files. git diff --check passes.",
+    "scope": "No SSH, HA API, cloud, push, install or service actions. All tests run with the no-socket/process guard. Final suite uses repo-local TEMP/TMP. Earlier runs used the test harness default Windows Temp for temporary synthetic fixtures before confinement was corrected."
+  },
+  "owner_followup": [
+    "Rebuild/repackage only under later authorization; this commit is source-only.",
+    "Any third-party WebSocket consumer relying on propertyEvidenceChanged would need to use snapshots; the specified HA integration has no such consumer."
+  ]
+}

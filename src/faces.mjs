@@ -56,7 +56,7 @@ export function createFaces(ctx) {
   function enrichPersonName(event, payload) {
     if (event !== "personDetected") return payload;
     const explicit = typeof payload?.person_name === "string" ? payload.person_name.trim() : "";
-    if (explicit && !/^(?:unknown(?: person)?|unavailable|no person|stranger\d*)$/i.test(explicit))
+    if (explicit && !/^(?:unknown(?: person)?|human|unavailable|no person|stranger\d*)$/i.test(explicit))
       return { ...payload, person_name: explicit, recognized: payload.recognized !== false };
     const pid = Number(payload?.person_id);
     if (!Number.isFinite(pid) || pid <= 0) return { ...payload, recognized: false };

@@ -47,3 +47,23 @@ test("enrichPersonName: resolves a known person, leaves others", () => {
   const motion = { deviceSn: "CAM1" };
   assert.equal(enrichPersonName("motion", motion), motion);
 });
+
+for (const placeholder of ["Human", "human", " HUMAN "]) {
+  test(`enrichPersonName: ${JSON.stringify(placeholder)} is a placeholder without a face match`, () => {
+    const { enrichPersonName } = createFaces({ state: { faceNames: new Map() } });
+    const payload = { person_name: placeholder, person_id: -1, recognized: true };
+    assert.deepEqual(enrichPersonName("personDetected", payload), { ...payload, recognized: false });
+  });
+}
+
+test("enrichPersonName: Human placeholder permits roster resolution without changing explicit names or strangers", () => {
+  const { enrichPersonName } = createFaces({ state: { faceNames: new Map([[5, { name: "Alice", familiar: true }]]) } });
+  assert.deepEqual(enrichPersonName("personDetected", { person_name: "Human", person_id: 5 }), {
+    person_name: "Alice",
+    person_id: 5,
+    recognized: true,
+  });
+  assert.equal(enrichPersonName("personDetected", { person_name: "Alice", person_id: -1 }).person_name, "Alice");
+  const stranger = { person_name: "Human", person_id: 5 };
+  assert.equal(enrichPersonName("strangerDetected", stranger), stranger);
+});

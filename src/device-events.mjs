@@ -1,5 +1,5 @@
 import { guardConfirmation, guardRuntime, guardRuntimeAdvertisement } from "./guard-confirmation.mjs";
-import { evidenceMap, evidenceRuntime, stateEvidence } from "./state-evidence.mjs";
+import { evidenceMap, evidenceRuntime } from "./state-evidence.mjs";
 import { commandHealthEvent } from "./command-health.mjs";
 import { cameraHealthEvent } from "./camera-health.mjs";
 
@@ -49,24 +49,7 @@ export function wireDeviceEvents(ctx) {
     }
     ctx.broadcast({ event: "cameraHealth", ...health });
   });
-  on("propertyEvidenceChanged", (payload) => {
-    try {
-      const projected = ctx.propertyEvent?.(payload);
-      const evidence = stateEvidence(payload?.evidence, evidenceRuntime(eufy));
-      if (projected && evidence)
-        ctx.broadcast({
-          event: "propertyEvidenceChanged",
-          deviceSn: projected.deviceSn,
-          property: projected.property,
-          evidence,
-        });
-    } catch {
-      ctx.state.stateEvidenceForwardingFailures = Math.min(
-        Number.MAX_SAFE_INTEGER,
-        (ctx.state.stateEvidenceForwardingFailures ?? 0) + 1,
-      );
-    }
-  });
+  // HA consumes propertyChanged/propertiesObserved; evidence remains in SDK snapshots.
   on("propertiesObserved", (payload) => {
     const bridgeObservedAtMs = Date.now();
     if (

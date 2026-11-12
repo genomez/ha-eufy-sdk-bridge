@@ -90,7 +90,10 @@ for (const initial of [true, false])
       const changed = f.output.filter((event) => event.event === "propertyChanged");
       assert.equal(changed.at(-1).value, !initial);
       assert.equal(changed.at(-1).evidence, undefined);
-      assert.deepEqual(f.output.filter((event) => event.event === "propertyEvidenceChanged").at(-1).evidence, sdk);
+      assert.equal(
+        f.output.some((event) => event.event === "propertyEvidenceChanged"),
+        false,
+      );
       const observed = f.output.filter((event) => event.event === "propertiesObserved").at(-1);
       assert.equal(observed.properties.light, !initial);
       assert.equal(observed.evidence, undefined);
@@ -144,14 +147,18 @@ test("echo/ACK never becomes OFF proof and temporal-only fresh read remains unre
   }
 });
 
-test("retired session decisions forward unchanged and runtime mismatch evidence is dropped additively", async () => {
+test("retired session decisions remain in snapshots and runtime mismatch evidence is dropped additively", async () => {
   const f = await fixture();
   try {
     f.report(true, { sessionGeneration: 2 });
     f.report(false, { sessionGeneration: 1 });
     const e = f.eufy.getStateEvidence(camera).light;
     assert.equal(e.reason, "retired_session");
-    assert.deepEqual(f.output.filter((event) => event.event === "propertyEvidenceChanged").at(-1).evidence, e);
+    assert.deepEqual((await f.ctx.describeDevice(camera)).stateEvidence.light, e);
+    assert.equal(
+      f.output.some((event) => event.event === "propertyEvidenceChanged"),
+      false,
+    );
     const old = structuredClone(e);
     f.eufy.realtimeEpoch++;
     const event = f.ctx.propertyEvent({ deviceSn: camera, property: "light", value: false, evidence: old });
@@ -162,57 +169,50 @@ test("retired session decisions forward unchanged and runtime mismatch evidence 
   }
 });
 
-test("equal-value quality events forward without a getter read or transport activity bump", async () => {
+test("equal-value quality events stay off WS without a getter read or extra activity bump", async () => {
   const f = await fixture();
   try {
     f.report(false);
     const activity = f.activity.length;
     f.report(false);
     assert.equal(f.output.filter((event) => event.event === "propertyChanged").length, 0);
-    assert.equal(f.output.filter((event) => event.event === "propertyEvidenceChanged").length, 2);
+    assert.equal(f.output.filter((event) => event.event === "propertyEvidenceChanged").length, 0);
     assert.equal(f.activity.length, activity + 1);
     const e = f.eufy.getStateEvidence(camera).light;
     f.device.getProperties = () => {
       throw new Error("getter forbidden");
     };
+    const sent = f.output.length;
     f.eufy.emit("propertyEvidenceChanged", { deviceSn: camera, property: "light", evidence: e });
-    assert.deepEqual(f.output.at(-1).evidence, e);
+    assert.equal(f.output.length, sent);
+    assert.deepEqual(f.eufy.getStateEvidence(camera).light, e);
   } finally {
     await f.close();
   }
 });
 
-for (const failure of ["projection", "broadcast"])
-  test(`shadow ${failure} failure preserves legacy forwarding and increments anonymous diagnostics`, async () => {
-    const f = await fixture();
-    try {
-      const broadcast = f.ctx.broadcast;
-      const project = f.ctx.propertyEvent;
-      if (failure === "broadcast")
-        f.ctx.broadcast = (event) => {
-          if (event.event === "propertyEvidenceChanged") throw new Error("synthetic shadow fault");
-          broadcast(event);
-        };
-      else
-        f.ctx.propertyEvent = (event) => {
-          if (event.evidence) throw new Error("synthetic shadow fault");
-          return project(event);
-        };
-      assert.doesNotThrow(() => f.report(true));
-      assert.deepEqual(
-        f.output.map((event) => event.event),
-        ["propertyChanged", "propertiesObserved"],
-      );
-      assert.equal(f.output[0].value, true);
-      const diagnostics = f.ctx.diagnostics(false).stateEvidence;
-      assert.equal(diagnostics.forwardingFailures, 1);
-      assert.equal(JSON.stringify(diagnostics).includes("synthetic shadow fault"), false);
-    } finally {
-      await f.close();
-    }
-  });
+test("unused evidence notifications cannot invoke projection or broadcasting", async () => {
+  const f = await fixture();
+  try {
+    f.report(true);
+    const evidence = f.eufy.getStateEvidence(camera).light;
+    f.ctx.propertyEvent = () => {
+      throw new Error("unused projection forbidden");
+    };
+    f.ctx.broadcast = () => {
+      throw new Error("unused broadcast forbidden");
+    };
+    assert.doesNotThrow(() =>
+      f.eufy.emit("propertyEvidenceChanged", { deviceSn: camera, property: "light", evidence }),
+    );
+    assert.equal(f.ctx.diagnostics(false).stateEvidence.forwardingFailures, 0);
+    assert.deepEqual(f.eufy.getStateEvidence(camera).light, evidence);
+  } finally {
+    await f.close();
+  }
+});
 
-test("legacy events finish before any evidence runtime projection", async () => {
+test("legacy forwarding does not project unused evidence notifications", async () => {
   const f = await fixture();
   try {
     const scope = f.eufy.getStateEvidenceScope.bind(f.eufy);
@@ -226,7 +226,7 @@ test("legacy events finish before any evidence runtime projection", async () => 
       return scope();
     };
     f.report(true);
-    assert.ok(checked > 0);
+    assert.equal(checked, 0);
   } finally {
     await f.close();
   }
