@@ -138,7 +138,7 @@ test("uses four windows, pins the record, and observes a positive person id at f
       new RegExp(`update_changed=${i >= 2 ? 1 : 0} changed_since_baseline=${i >= 2 ? 1 : 0}$`),
     );
   }
-  assert.ok(f.calls.every(({ args }) => args[1].count === 20 && args[1].timeoutMs === 2000 && args[1].signal));
+  assert.ok(f.calls.every(({ args }) => args[1].count === 100 && args[1].timeoutMs === 2000 && args[1].signal));
 });
 
 test("textual update clocks are compared in memory without logging their contents", async (t) => {
@@ -426,14 +426,14 @@ test("rejects out-of-tolerance and malformed crop clocks and identities", async 
   assert.match(f.samples()[1], /candidates=1 records=1 pinned=0 record_id=null/);
 });
 
-test("capacity is eight without evicting pending cases", async (t) => {
+test("capacity is sixteen without evicting pending cases", async (t) => {
   const f = fixture(t);
-  for (let i = 0; i < 12; i++) f.enroll({ ...occurrence, create_time: occurrence.create_time + i });
-  assert.equal(f.check.diagnostics().enrolled, 8);
+  for (let i = 0; i < 20; i++) f.enroll({ ...occurrence, create_time: occurrence.create_time + i });
+  assert.equal(f.check.diagnostics().enrolled, 16);
   assert.equal(f.check.diagnostics().rejectedCapacity, 4);
   await f.advance();
   assert.equal(f.calls.length, 1);
-  assert.equal(f.samples().length, 8);
+  assert.equal(f.samples().length, 16);
 });
 
 test("EUFY_LATE_NAME_CHECK=0 creates no enrollment, reads or logs", async (t) => {

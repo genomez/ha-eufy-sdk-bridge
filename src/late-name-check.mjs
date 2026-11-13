@@ -183,7 +183,7 @@ export function createLateNameCheck(
         counts.reads++;
         try {
           result = await ctx.eufy.readRecentPersonCrops(stationSn, {
-            count: 20,
+            count: 100,
             timeoutMs: 2000,
             signal: controller.signal,
           });
@@ -261,7 +261,7 @@ export function createLateNameCheck(
       const triggerTime = milliseconds(payload.trigger_time);
       const key = JSON.stringify([payload.deviceSn, payload.create_time, payload.trigger_time ?? null]);
       if (pending.has(key)) return;
-      if (pending.size >= 8) {
+      if (pending.size >= 16) {
         counts.rejectedCapacity++;
         return;
       }
