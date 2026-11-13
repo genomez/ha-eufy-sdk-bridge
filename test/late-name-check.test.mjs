@@ -306,6 +306,23 @@ test("a miss reports the nearest signed same-device delta from either clock", as
   );
 });
 
+test("each sample adds a value-free table summary with relative row ages", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ start_utc: EPOCH - 3_600_000 }),
+      crop({ start_utc: EPOCH - 7_200_000 }),
+      crop({ device_sn: "different-camera", start_utc: EPOCH - 60_000 }),
+    ],
+  }));
+  f.enroll();
+  await f.advance();
+  const table = f.lines.filter((line) => line.includes(" table slot="));
+  assert.match(table[0], /case=1 table slot=0 rows=3 same_device=2 devices=2 newest_age_s=60 oldest_age_s=7200$/);
+  assert.doesNotMatch(table.join("\n"), /different-camera|private-station-sentinel/);
+});
+
 test("null-to-value transitions alone cannot establish a change", async (t) => {
   const f = fixture(t);
   f.read(async () => ({

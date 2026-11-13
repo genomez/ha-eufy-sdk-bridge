@@ -83,7 +83,16 @@ export function createLateNameCheck(
 
   function sample(entry, result, slot) {
     let nearestDelta = null;
-    const candidates = (Array.isArray(result.rows) ? result.rows : []).slice(0, 20).flatMap((row) => {
+    const rows = (Array.isArray(result.rows) ? result.rows : []).slice(0, 20);
+    // Value-free table summary: row ages are relative to this detection, device identities are only counted.
+    const starts = rows.map((row) => milliseconds(row?.start_utc)).filter((start) => start !== null);
+    const age = (start) => (start === undefined ? null : Math.round((entry.clocks[0] - start) / 1000));
+    const summary =
+      ` rows=${rows.length} same_device=${rows.filter((row) => row?.device_sn === entry.deviceSn).length}` +
+      ` devices=${new Set(rows.map((row) => row?.device_sn)).size}` +
+      ` newest_age_s=${age(starts.length ? Math.max(...starts) : undefined)}` +
+      ` oldest_age_s=${age(starts.length ? Math.min(...starts) : undefined)}`;
+    const candidates = rows.flatMap((row) => {
       if (row?.device_sn !== entry.deviceSn) return [];
       const start = milliseconds(row.start_utc);
       if (start === null) return [];
@@ -135,6 +144,7 @@ export function createLateNameCheck(
         ` baseline_slot=${baseline?.slot ?? null} person_id_pos=${personIdPos}` +
         ` recog_flag=${flags.length ? Math.max(...flags) : null} update_changed=${updateChanged} changed_since_baseline=${changed}`,
     );
+    log(`case=${entry.id} table slot=${WINDOWS[slot][2]}${summary}`);
     return candidates.length;
   }
 
