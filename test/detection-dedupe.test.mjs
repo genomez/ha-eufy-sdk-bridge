@@ -126,7 +126,7 @@ test("valid millisecond clocks distinguish occurrences within one second", (t) =
   assert.equal(f.events.length, 2);
 });
 
-test("new recognition, name and ID pass once each without forgetting prior information", (t) => {
+test("a more informative copy passes once; partial copies cannot downgrade what was forwarded", (t) => {
   const f = fixture(t);
   f.emit(0);
   f.emit(9, { ...occurrence, recognized: true, person_name: "Private Name" });
@@ -134,8 +134,17 @@ test("new recognition, name and ID pass once each without forgetting prior infor
   f.emit(500, { ...occurrence, person_id: 123 });
   f.emit(600);
   f.emit(700, { ...occurrence, person_id: "123", nick_name: "Private Name" });
+  f.emit(800, { ...occurrence, recognized: true, person_name: "Private Name", person_id: 123 });
   assert.equal(f.events.length, 3);
-  assert.deepEqual(f.stats(), { suppressed: 3, passedEnriched: 2, cacheSize: 1 });
+  assert.deepEqual(f.stats(), { suppressed: 4, passedEnriched: 2, cacheSize: 1 });
+});
+
+test("an ID-only copy after a named copy is suppressed", (t) => {
+  const f = fixture(t);
+  f.emit(0, { ...occurrence, recognized: true, person_name: "Private Name" });
+  f.emit(9, { ...occurrence, person_id: 123 });
+  assert.equal(f.events.length, 1);
+  assert.equal(f.stats().suppressed, 1);
 });
 
 test("placeholder identity does not prevent later real identity enrichment", (t) => {

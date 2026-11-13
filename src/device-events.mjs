@@ -51,9 +51,11 @@ export function wireDeviceEvents(ctx, now = Date.now) {
       const information = detectionInformation(payload);
       const entry = detectionCache.get(key);
       if (entry) {
-        // Only newly present recognition, person name or positive ID enriches; other payload changes are noise.
-        outcome = information & ~entry.information ? "passedEnriched" : "suppressed";
-        entry.information |= information;
+        // A copy passes only if it keeps everything already forwarded (recognition, person name, positive ID)
+        // and adds more, so a partial copy cannot downgrade a forwarded name; other payload changes are noise.
+        const keeps = (information & entry.information) === entry.information;
+        outcome = keeps && information & ~entry.information ? "passedEnriched" : "suppressed";
+        if (outcome === "passedEnriched") entry.information = information;
       } else {
         if (detectionCache.size >= DETECTION_CACHE_LIMIT) detectionCache.delete(detectionCache.keys().next().value);
         detectionCache.set(key, { firstAt: arrivedAt, information });
