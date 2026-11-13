@@ -2,6 +2,7 @@ import { guardConfirmation, guardRuntime, guardRuntimeAdvertisement } from "./gu
 import { evidenceMap, evidenceRuntime } from "./state-evidence.mjs";
 import { commandHealthEvent } from "./command-health.mjs";
 import { cameraHealthEvent } from "./camera-health.mjs";
+import { createLateNameCheck } from "./late-name-check.mjs";
 
 const subscriptions = new WeakMap();
 const DETECTION_WINDOW_MS = 30_000;
@@ -28,6 +29,8 @@ export function wireDeviceEvents(ctx, now = Date.now) {
   const { eufy, dbg, DETECTION_EVENTS, FORWARDED_EVENTS } = ctx;
   const listeners = [];
   const detectionCache = new Map();
+  const lateNameCheck = createLateNameCheck(ctx, { now });
+  ctx.lateNameCheck = lateNameCheck;
   const recordDedupe = (outcome) => {
     try {
       ctx.recordDetectionDedupe?.(outcome, detectionCache.size);
@@ -169,6 +172,9 @@ export function wireDeviceEvents(ctx, now = Date.now) {
       );
       const enriched = ctx.enrichPersonName(event, payload);
       ctx.recordDetection?.(event, payload, enriched);
+      try {
+        lateNameCheck.enroll(event, enriched);
+      } catch {}
       ctx.broadcast({ event, ...enriched });
     });
   const stop = () => {
@@ -176,6 +182,7 @@ export function wireDeviceEvents(ctx, now = Date.now) {
     for (const [event, listener] of listeners) eufy.off(event, listener);
     listeners.length = 0;
     detectionCache.clear();
+    lateNameCheck.stop();
     recordDedupe();
     subscriptions.delete(ctx);
   };

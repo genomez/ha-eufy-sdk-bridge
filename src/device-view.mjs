@@ -560,6 +560,10 @@ export function createDeviceView(ctx) {
 
   return {
     getDevice,
+    getCachedStationSn(sn) {
+      checkAccount();
+      return retained.get(sn)?.stationSn;
+    },
     clearDeviceModels,
     describeDevice,
     propertyState,

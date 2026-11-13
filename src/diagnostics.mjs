@@ -1161,6 +1161,13 @@ export function createDiagnostics(ctx, now = Date.now) {
         })(),
         eventRouting: eventRouting(ctx.eufy.getEventRoutingDiagnostics?.()),
         detectionDedupe: { ...detectionDedupe },
+        lateNameCheck: ctx.lateNameCheck?.diagnostics() ?? {
+          enrolled: 0,
+          rejectedCapacity: 0,
+          samples: 0,
+          reads: 0,
+          refusals: 0,
+        },
         detectionProjection: {
           total: detections.total,
           evicted: detections.total - detections.recent.length,
