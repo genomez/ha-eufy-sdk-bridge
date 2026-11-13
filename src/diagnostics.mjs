@@ -757,7 +757,7 @@ function thumbnailCounters(raw, sdk = false) {
 /** Cached diagnostics; reading this snapshot never opens a device or cloud connection. */
 export function createDiagnostics(ctx, now = Date.now) {
   let account = ctx.eufy.api?.auth?.userId;
-  let errors, commands, detections, windows, contrary, camera;
+  let errors, commands, detections, detectionDedupe, windows, contrary, camera;
   function reset() {
     camera = createCameraHealthDiagnostics(now);
     contrary = {
@@ -776,6 +776,7 @@ export function createDiagnostics(ctx, now = Date.now) {
     windows = createCommandWindows();
     errors = { count: 0, lastAtMs: null, lastKind: null, lastOrigin: null, byOrigin: {}, recent: [] };
     detections = { total: 0, recent: [] };
+    detectionDedupe = { suppressed: 0, passedEnriched: 0, cacheSize: 0 };
     commands = {
       attempts: 0,
       completed: 0,
@@ -836,6 +837,12 @@ export function createDiagnostics(ctx, now = Date.now) {
       const key =
         outcome === "completed" ? "confirmationsCompleted" : outcome === "failed" ? "confirmationsFailed" : null;
       if (key) contrary[key] = Math.min(Number.MAX_SAFE_INTEGER, contrary[key] + 1);
+    },
+    recordDetectionDedupe(outcome, cacheSize) {
+      scope();
+      if (outcome === "suppressed" || outcome === "passedEnriched")
+        detectionDedupe[outcome] = Math.min(Number.MAX_SAFE_INTEGER, detectionDedupe[outcome] + 1);
+      if (number(cacheSize) !== null) detectionDedupe.cacheSize = Math.min(512, cacheSize);
     },
     recordDetection(event, input, output) {
       if (!["personDetected", "strangerDetected"].includes(event)) return;
@@ -1153,6 +1160,7 @@ export function createDiagnostics(ctx, now = Date.now) {
           }
         })(),
         eventRouting: eventRouting(ctx.eufy.getEventRoutingDiagnostics?.()),
+        detectionDedupe: { ...detectionDedupe },
         detectionProjection: {
           total: detections.total,
           evicted: detections.total - detections.recent.length,

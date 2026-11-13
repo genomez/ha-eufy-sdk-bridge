@@ -4,13 +4,65 @@ import { commandHealthEvent } from "./command-health.mjs";
 import { cameraHealthEvent } from "./camera-health.mjs";
 
 const subscriptions = new WeakMap();
+const DETECTION_WINDOW_MS = 30_000;
+const DETECTION_CACHE_LIMIT = 512;
+const occurrenceClock = (value) => Number.isSafeInteger(value) && value >= 0;
+function detectionInformation(payload) {
+  const name = [payload.person_name, payload.nick_name].some(
+    (value) =>
+      typeof value === "string" &&
+      value.trim() &&
+      !/^(?:unknown(?: person)?|human|unavailable|no person|stranger\d*)$/i.test(value.trim()),
+  );
+  const id =
+    typeof payload.person_id === "number"
+      ? Number.isSafeInteger(payload.person_id) && payload.person_id > 0
+      : typeof payload.person_id === "string" && /^[1-9][0-9]*$/.test(payload.person_id);
+  return (payload.recognized === true ? 1 : 0) | (name ? 2 : 0) | (id ? 4 : 0);
+}
 
 /** Subscribe state/event forwarding without starting services, warmups or timers; return cleanup. */
-export function wireDeviceEvents(ctx) {
+export function wireDeviceEvents(ctx, now = Date.now) {
   const existing = subscriptions.get(ctx);
   if (existing) return existing;
   const { eufy, dbg, DETECTION_EVENTS, FORWARDED_EVENTS } = ctx;
   const listeners = [];
+  const detectionCache = new Map();
+  const recordDedupe = (outcome) => {
+    try {
+      ctx.recordDetectionDedupe?.(outcome, detectionCache.size);
+    } catch {
+      // Instrumentation must not change forwarding.
+    }
+  };
+  const suppressDetection = (event, payload) => {
+    const arrivedAt = now();
+    for (const [key, entry] of detectionCache) {
+      if (arrivedAt - entry.firstAt >= DETECTION_WINDOW_MS) detectionCache.delete(key);
+    }
+    let outcome;
+    if (
+      typeof payload?.deviceSn === "string" &&
+      payload.deviceSn &&
+      occurrenceClock(payload.create_time) &&
+      (payload.trigger_time === undefined || occurrenceClock(payload.trigger_time))
+    ) {
+      const key = JSON.stringify([payload.deviceSn, event, payload.create_time, payload.trigger_time ?? null]);
+      const information = detectionInformation(payload);
+      const entry = detectionCache.get(key);
+      if (entry) {
+        // Only newly present recognition, person name or positive ID enriches; other payload changes are noise.
+        outcome = information & ~entry.information ? "passedEnriched" : "suppressed";
+        entry.information |= information;
+      } else {
+        if (detectionCache.size >= DETECTION_CACHE_LIMIT) detectionCache.delete(detectionCache.keys().next().value);
+        detectionCache.set(key, { firstAt: arrivedAt, information });
+      }
+    }
+    recordDedupe(outcome);
+    return outcome === "suppressed";
+  };
+  recordDedupe();
   const on = (event, listener) => {
     eufy.on(event, listener);
     listeners.push([event, listener]);
@@ -100,6 +152,7 @@ export function wireDeviceEvents(ctx) {
         return;
       }
       const detection = DETECTION_EVENTS.has(event);
+      if (detection && suppressDetection(event, payload)) return;
       if (detection) {
         ctx.recordings?.markDirty();
         ctx.noteDetection(payload?.deviceSn);
@@ -117,9 +170,12 @@ export function wireDeviceEvents(ctx) {
       ctx.broadcast({ event, ...enriched });
     });
   const stop = () => {
+    if (subscriptions.get(ctx) !== stop) return;
     for (const [event, listener] of listeners) eufy.off(event, listener);
     listeners.length = 0;
-    if (subscriptions.get(ctx) === stop) subscriptions.delete(ctx);
+    detectionCache.clear();
+    recordDedupe();
+    subscriptions.delete(ctx);
   };
   subscriptions.set(ctx, stop);
   return stop;
