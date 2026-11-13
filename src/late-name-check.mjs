@@ -83,7 +83,7 @@ export function createLateNameCheck(
 
   function sample(entry, result, slot) {
     let nearestDelta = null;
-    const rows = (Array.isArray(result.rows) ? result.rows : []).slice(0, 20);
+    const rows = (Array.isArray(result.rows) ? result.rows : []).slice(0, 100);
     // Value-free table summary: row ages are relative to this detection, device identities are only counted.
     const starts = rows.map((row) => milliseconds(row?.start_utc)).filter((start) => start !== null);
     const age = (start) => (start === undefined ? null : Math.round((entry.clocks[0] - start) / 1000));
