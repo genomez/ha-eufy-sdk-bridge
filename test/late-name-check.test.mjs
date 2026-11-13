@@ -69,13 +69,27 @@ test("enrolls only unnamed unrecognized person occurrences with valid creation c
     { recognized: true },
     { person_name: "Private Name" },
     { nick_name: "Private Nick" },
-    ...[undefined, null, "1700000000", -1, 0, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER].map((create_time) => ({
+    ...[
+      undefined,
+      null,
+      "1.5",
+      "1e9",
+      "9007199254740993",
+      "private-clock",
+      -1,
+      0,
+      1.5,
+      NaN,
+      Infinity,
+      Number.MAX_SAFE_INTEGER,
+    ].map((create_time) => ({
       create_time,
     })),
     { deviceSn: "" },
   ])
     f.enroll({ ...occurrence, ...change });
   assert.equal(f.check.diagnostics().enrolled, 0);
+  assert.equal(f.check.diagnostics().skippedNoClock, 12);
   f.ctx.getCachedStationSn = () => undefined;
   f.enroll();
   assert.equal(f.check.diagnostics().enrolled, 0);
@@ -87,7 +101,7 @@ test("enrolls only unnamed unrecognized person occurrences with valid creation c
   assert.equal(f.calls.length, 1);
 });
 
-test("uses four windows, pins the crop, and observes a positive person id at five minutes", async (t) => {
+test("uses four windows, pins the record, and observes a positive person id at five minutes", async (t) => {
   const f = fixture(t);
   f.read(async () => ({
     outcome: "success",
@@ -103,11 +117,20 @@ test("uses four windows, pins the crop, and observes a positive person id at fiv
     f.calls.map(({ at }) => at),
     [0, 60_000, 300_000, 900_000],
   );
-  assert.deepEqual(f.check.diagnostics(), { enrolled: 1, rejectedCapacity: 0, samples: 4, reads: 4, refusals: 0 });
+  assert.deepEqual(f.check.diagnostics(), {
+    enrolled: 1,
+    rejectedCapacity: 0,
+    skippedNoClock: 0,
+    samples: 4,
+    reads: 4,
+    refusals: 0,
+  });
   for (const [i, label] of [0, 1, 5, 15].entries()) {
     assert.match(
       f.samples()[i],
-      new RegExp(`sample=${label} outcome=success candidates=1 pinned=1 record_id=71 dt_ms=0`),
+      new RegExp(
+        `sample=${label} outcome=success candidates=1 records=1 pinned=1 record_id=71 crops=1 dt_ms=0 nearest_dt_ms=0 baseline_slot=0`,
+      ),
     );
     assert.match(f.samples()[i], new RegExp(`person_id_pos=${i >= 2 ? 1 : 0} recog_flag=${i >= 2 ? 7 : 0}`));
     assert.match(
@@ -176,6 +199,136 @@ test("a refused baseline can succeed within its window", async (t) => {
   assert.equal(f.check.diagnostics().refusals, 2);
 });
 
+test("a row appearing on the second slot-0 read establishes the baseline", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({ outcome: "success", rows: f.calls.length === 1 ? [] : [crop()] }));
+  f.enroll();
+  await f.advance();
+  assert.match(f.samples()[0], /baseline_slot=null/);
+  await f.advance(9999);
+  assert.equal(f.calls.length, 1);
+  await f.advance(1);
+  assert.match(f.samples()[1], /sample=0 .*baseline_slot=0 .*update_changed=0 changed_since_baseline=0$/);
+  f.read(async () => ({ outcome: "success", rows: [crop({ update_time: 3 })] }));
+  await f.advance(50_000);
+  assert.match(f.samples()[2], /sample=1 .*baseline_slot=0 .*update_changed=1 changed_since_baseline=1$/);
+});
+
+test("empty slot-0 reads are capped at three with ten seconds after each completion", async (t) => {
+  const f = fixture(t);
+  f.read(async () => {
+    t.mock.timers.tick(2000);
+    return { outcome: "empty", rows: [] };
+  });
+  f.enroll();
+  await f.advance();
+  await f.advance(10_000);
+  await f.advance(10_000);
+  await f.advance(20_000);
+  assert.deepEqual(
+    f.calls.map(({ at }) => at),
+    [0, 12_000, 24_000],
+  );
+  assert.equal(f.samples().length, 3);
+  assert.ok(f.samples().every((line) => line.includes("baseline_slot=null")));
+  assert.ok(Date.parse(f.samples()[2].split(" ")[0]) - EPOCH <= 45_000);
+});
+
+for (const [label, at] of [
+  [1, 60_000],
+  [5, 300_000],
+  [15, 900_000],
+])
+  test(`an empty slot 0 can set its first baseline in slot ${label}`, async (t) => {
+    const f = fixture(t);
+    f.read(async () => ({ outcome: "empty", rows: [] }));
+    f.enroll();
+    await f.advance();
+    await f.advance(10_000);
+    await f.advance(10_000);
+    f.read(async () => ({ outcome: "success", rows: [crop()] }));
+    await f.advance(at - 20_000);
+    assert.match(
+      f.samples().at(-1),
+      new RegExp(`sample=${label} .*baseline_slot=${label} .*changed_since_baseline=0$`),
+    );
+  });
+
+test("multiple crops of one record pin together and compare each crop against the baseline", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [crop(), crop({ crop_id: 5, person_id: 9, person_recog_flag: 7 })],
+  }));
+  f.enroll();
+  await f.advance();
+  assert.match(f.samples()[0], /candidates=2 records=1 pinned=1 record_id=71 crops=2/);
+  assert.match(
+    f.samples()[0],
+    /baseline_slot=0 person_id_pos=1 recog_flag=7 update_changed=0 changed_since_baseline=0$/,
+  );
+  f.read(async () => ({
+    outcome: "success",
+    rows: [crop({ crop_id: 5, person_id: 9, person_recog_flag: 7, update_time: 3 }), crop()],
+  }));
+  await f.advance(60_000);
+  assert.match(f.samples()[1], /person_id_pos=1 recog_flag=7 update_changed=1 changed_since_baseline=1$/);
+});
+
+test("new crops within a pinned record remain visible without fabricating a change", async (t) => {
+  const f = fixture(t);
+  f.enroll();
+  await f.advance();
+  f.read(async () => ({
+    outcome: "success",
+    rows: [crop(), crop({ crop_id: 5, person_id: 9, person_recog_flag: 7 })],
+  }));
+  await f.advance(60_000);
+  assert.match(f.samples()[1], /pinned=1 record_id=71 crops=2/);
+  assert.match(f.samples()[1], /person_id_pos=1 recog_flag=7 update_changed=null changed_since_baseline=null$/);
+});
+
+test("a miss reports the nearest signed same-device delta from either clock", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ start_utc: EPOCH + 7000 }),
+      crop({ start_utc: EPOCH + 14_000 }),
+      crop({ device_sn: "different-camera", start_utc: EPOCH }),
+    ],
+  }));
+  f.enroll({ ...occurrence, trigger_time: EPOCH + 20_000 });
+  await f.advance();
+  assert.match(
+    f.samples()[0],
+    /candidates=0 records=0 pinned=0 record_id=null crops=0 dt_ms=null nearest_dt_ms=-6000 baseline_slot=null/,
+  );
+});
+
+test("null-to-value transitions alone cannot establish a change", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [crop({ person_id: null, person_recog_flag: null, update_time: null })],
+  }));
+  f.enroll();
+  await f.advance();
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 9, person_recog_flag: 7, update_time: 3 })] }));
+  await f.advance(60_000);
+  assert.match(f.samples()[1], /person_id_pos=1 recog_flag=7 update_changed=null changed_since_baseline=null$/);
+});
+
+test("a known field change is conclusive even if the update clock is unknown", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({ outcome: "success", rows: [crop({ update_time: null })] }));
+  f.enroll();
+  await f.advance();
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 9, update_time: 3 })] }));
+  await f.advance(60_000);
+  assert.match(f.samples()[1], /update_changed=null changed_since_baseline=1$/);
+});
+
 test("issued failures consume slots and missed windows never replay in a burst", async (t) => {
   const f = fixture(t);
   f.read(async () => ({ outcome: "timeout" }));
@@ -191,42 +344,55 @@ test("issued failures consume slots and missed windows never replay in a burst",
   assert.equal(f.check.diagnostics().enrolled, 2);
 });
 
-test("a pinned crop cannot switch to another named crop or another camera", async (t) => {
+test("a pinned record cannot switch to another record or another camera", async (t) => {
   const f = fixture(t);
   f.enroll();
   await f.advance();
   f.read(async () => ({
     outcome: "success",
-    rows: [crop({ crop_id: 9, person_id: 123456789 }), crop({ device_sn: "different-camera", person_id: 123456789 })],
+    rows: [
+      crop({ record_id: 72, person_id: 123456789 }),
+      crop({ device_sn: "different-camera", person_id: 123456789 }),
+    ],
   }));
   await f.advance(60_000);
-  assert.match(f.samples()[1], /candidates=1 pinned=1 record_id=null dt_ms=null person_id_pos=null/);
+  assert.match(
+    f.samples()[1],
+    /candidates=1 records=1 pinned=1 record_id=null crops=0 dt_ms=null nearest_dt_ms=0 baseline_slot=0 person_id_pos=null/,
+  );
   assert.match(f.samples()[1], /changed_since_baseline=null$/);
 });
 
-test("ambiguity does not pin; a later unique match without a baseline stays inconclusive", async (t) => {
+test("ambiguous records do not pin; a later unique record sets the baseline", async (t) => {
   const f = fixture(t);
-  f.read(async () => ({ outcome: "success", rows: [crop(), crop({ crop_id: 5 })] }));
+  f.read(async () => ({ outcome: "success", rows: [crop(), crop({ record_id: 72, crop_id: 5 })] }));
   f.enroll();
   await f.advance();
-  assert.match(f.samples()[0], /candidates=2 pinned=0 record_id=null/);
+  assert.match(f.samples()[0], /candidates=2 records=2 pinned=0 record_id=null/);
+  assert.match(f.samples()[0], /baseline_slot=null/);
   f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 123456789 })] }));
   await f.advance(60_000);
   assert.match(f.samples()[1], /pinned=1 record_id=71/);
-  assert.match(f.samples()[1], /changed_since_baseline=null$/);
+  assert.match(f.samples()[1], /baseline_slot=1/);
+  assert.match(f.samples()[1], /changed_since_baseline=0$/);
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 123456789, update_time: 3 })] }));
+  await f.advance(240_000);
+  assert.match(f.samples()[2], /baseline_slot=1/);
+  assert.match(f.samples()[2], /update_changed=1 changed_since_baseline=1$/);
 });
 
 for (const [name, push, row, delta] of [
   ["seconds", {}, { start_utc: EPOCH / 1000 - 5 }, -5000],
   ["milliseconds", { create_time: EPOCH }, { start_utc: EPOCH + 4321 }, 4321],
   ["trigger clock", { trigger_time: EPOCH + 20_000 }, { start_utc: EPOCH / 1000 + 21 }, 1000],
+  ["numeric-string clock", { create_time: String(EPOCH / 1000) }, { start_utc: String(EPOCH / 1000 + 2) }, 2000],
 ])
   test(`normalizes ${name} and records the signed matching delta`, async (t) => {
     const f = fixture(t);
     f.read(async () => ({ outcome: "success", rows: [crop(row)] }));
     f.enroll({ ...occurrence, ...push });
     await f.advance();
-    assert.match(f.samples()[0], new RegExp(`candidates=1 pinned=1 record_id=71 dt_ms=${delta} `));
+    assert.match(f.samples()[0], new RegExp(`candidates=1 records=1 pinned=1 record_id=71 crops=1 dt_ms=${delta} `));
   });
 
 test("rejects out-of-tolerance and malformed crop clocks and identities", async (t) => {
@@ -237,10 +403,10 @@ test("rejects out-of-tolerance and malformed crop clocks and identities", async 
   }));
   f.enroll();
   await f.advance();
-  assert.match(f.samples()[0], /candidates=0 pinned=0 record_id=null/);
+  assert.match(f.samples()[0], /candidates=0 records=0 pinned=0 record_id=null/);
   f.read(async () => ({ outcome: "success", rows: [crop({ record_id: "private-id" })] }));
   await f.advance(60_000);
-  assert.match(f.samples()[1], /candidates=1 pinned=0 record_id=null/);
+  assert.match(f.samples()[1], /candidates=1 records=1 pinned=0 record_id=null/);
 });
 
 test("capacity is eight without evicting pending cases", async (t) => {
@@ -263,7 +429,14 @@ test("EUFY_LATE_NAME_CHECK=0 creates no enrollment, reads or logs", async (t) =>
   const f = fixture(t);
   f.enroll();
   await f.advance(1_020_000);
-  assert.deepEqual(f.check.diagnostics(), { enrolled: 0, rejectedCapacity: 0, samples: 0, reads: 0, refusals: 0 });
+  assert.deepEqual(f.check.diagnostics(), {
+    enrolled: 0,
+    rejectedCapacity: 0,
+    skippedNoClock: 0,
+    samples: 0,
+    reads: 0,
+    refusals: 0,
+  });
   assert.equal(f.lines.length, 0);
   assert.equal(f.calls.length, 0);
 });
@@ -342,7 +515,7 @@ test("file output is numeric-only and excludes sensitive values and arbitrary er
   for (const line of f.samples())
     assert.match(
       line,
-      /^\S+ late_name case=\d+ sample=(0|1|5|15) outcome=[a-z_/]+ candidates=\d+ pinned=[01] record_id=(\d+|null) dt_ms=(-?\d+|null) person_id_pos=([01]|null) recog_flag=(-?\d+|null) update_changed=([01]|null) changed_since_baseline=([01]|null)$/,
+      /^\S+ late_name case=\d+ sample=(0|1|5|15) outcome=[a-z_/]+ candidates=\d+ records=\d+ pinned=[01] record_id=(\d+|null) crops=\d+ dt_ms=(-?\d+|null) nearest_dt_ms=(-?\d+|null) baseline_slot=(0|1|5|15|null) person_id_pos=([01]|null) recog_flag=(-?\d+|null) update_changed=([01]|null) changed_since_baseline=([01]|null)$/,
     );
   if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.doesNotThrow(() => appendLateNameLine("ignored", join(dir, "missing", "log")));
@@ -386,6 +559,33 @@ test("forwarding, dedupe and name enrichment remain unchanged while diagnostics 
   eufy.emit("personDetected", { ...occurrence, create_time: occurrence.create_time + 10, person_name: "Private Name" });
   assert.equal(ctx.diagnostics(false).lateNameCheck.enrolled, 1);
   assert.equal(events.at(-1).person_name, "Private Name");
+});
+
+test("HA broadcast precedes the enrollment write even when enrollment throws", () => {
+  const eufy = new EventEmitter();
+  const order = [];
+  const ctx = {
+    eufy,
+    state: createState(),
+    FORWARDED_EVENTS: new Set(["personDetected"]),
+    DETECTION_EVENTS: new Set(["personDetected"]),
+    bumpActivity() {},
+    noteDetection() {},
+    eventLog() {},
+    enrichPersonName: (_event, payload) => payload,
+    broadcast: (event) => order.push(event),
+  };
+  const stop = wireDeviceEvents(ctx);
+  ctx.lateNameCheck.enroll = () => {
+    order.push("enrollment write");
+    throw new Error("synthetic write failure");
+  };
+  try {
+    assert.doesNotThrow(() => eufy.emit("personDetected", occurrence));
+    assert.deepEqual(order, [{ event: "personDetected", ...occurrence }, "enrollment write"]);
+  } finally {
+    stop();
+  }
 });
 
 test("station resolution uses only retained models and never fetches", async () => {

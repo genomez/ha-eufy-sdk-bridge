@@ -1,7 +1,7 @@
 import { openSync, fchmodSync, writeSync, closeSync } from "node:fs";
 
 const WINDOWS = [
-  [0, 30_000, 0],
+  [0, 45_000, 0],
   [60_000, 120_000, 1],
   [300_000, 420_000, 5],
   [900_000, 1_020_000, 15],
@@ -29,6 +29,7 @@ const usableName = (value) =>
 
 /** Normalize epoch seconds or milliseconds without parsing local wall-clock strings. */
 function milliseconds(value) {
+  if (typeof value === "string" && /^\d+$/.test(value)) value = Number(value);
   if (!Number.isSafeInteger(value) || value <= 0) return null;
   const result = value < 100_000_000_000 ? value * 1000 : value;
   return Number.isSafeInteger(result) && result <= 8_640_000_000_000_000 ? result : null;
@@ -51,12 +52,12 @@ export function appendLateNameLine(line, file = "/tmp/eufy-late-name-check.log")
   }
 }
 
-/** Four bounded, station-coalesced samples; all correlation and identity values stay in memory. */
+/** Four bounded, station-coalesced sample windows; all correlation and identity values stay in memory. */
 export function createLateNameCheck(
   ctx,
   { now = Date.now, writeLine = appendLateNameLine, enabled = process.env.EUFY_LATE_NAME_CHECK !== "0" } = {},
 ) {
-  const counts = { enrolled: 0, rejectedCapacity: 0, samples: 0, reads: 0, refusals: 0 };
+  const counts = { enrolled: 0, rejectedCapacity: 0, skippedNoClock: 0, samples: 0, reads: 0, refusals: 0 };
   const pending = new Map();
   const cameras = new Map();
   let caseNumber = 0;
@@ -81,45 +82,60 @@ export function createLateNameCheck(
   }
 
   function sample(entry, result, slot) {
+    let nearestDelta = null;
     const candidates = (Array.isArray(result.rows) ? result.rows : []).slice(0, 20).flatMap((row) => {
       if (row?.device_sn !== entry.deviceSn) return [];
       const start = milliseconds(row.start_utc);
       if (start === null) return [];
-      const deltas = entry.clocks.map((clock) => start - clock).filter((delta) => Math.abs(delta) <= 5000);
-      if (!deltas.length) return [];
-      return [{ row, delta: deltas.reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b)) }];
+      const delta = entry.clocks.map((clock) => start - clock).reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b));
+      if (nearestDelta === null || Math.abs(delta) < Math.abs(nearestDelta)) nearestDelta = delta;
+      return Math.abs(delta) <= 5000 ? [{ row, delta }] : [];
     });
-    const matches = entry.pin
-      ? candidates.filter(({ row }) => row.record_id === entry.pin.record_id && row.crop_id === entry.pin.crop_id)
-      : candidates;
-    const match =
-      matches.length === 1 && identity(matches[0].row.record_id) && identity(matches[0].row.crop_id)
-        ? matches[0]
-        : null;
-    if (match && !entry.pin) entry.pin = { record_id: match.row.record_id, crop_id: match.row.crop_id };
-    const row = match?.row;
-    if (row && slot === 0)
-      entry.baseline = {
-        person_id: row.person_id,
-        person_recog_flag: row.person_recog_flag,
-        update_time: row.update_time,
-      };
+    const records = new Set(candidates.map(({ row }) => row.record_id));
+    const matches =
+      records.size === 1 &&
+      candidates.every(({ row }) => identity(row.record_id) && identity(row.crop_id)) &&
+      (!entry.pin || candidates[0].row.record_id === entry.pin.record_id)
+        ? candidates
+        : [];
+    const match = matches.length ? matches.reduce((a, b) => (Math.abs(a.delta) <= Math.abs(b.delta) ? a : b)) : null;
+    const crops = new Map(matches.map(({ row }) => [row.crop_id, { ...row }]));
+    if (match && !entry.pin) entry.pin = { record_id: match.row.record_id };
+    if (match && !entry.baseline) entry.baseline = { slot: WINDOWS[slot][2], crops };
     const baseline = entry.baseline;
-    const updateChanged =
-      row && baseline && row.update_time != null && baseline.update_time != null
-        ? Number(row.update_time !== baseline.update_time)
-        : null;
-    const changed =
-      row && baseline
-        ? Number(["person_id", "person_recog_flag", "update_time"].some((key) => row[key] !== baseline[key]))
+    const comparisons = [];
+    const updates = [];
+    if (match && baseline) {
+      for (const cropId of new Set([...baseline.crops.keys(), ...crops.keys()])) {
+        for (const key of ["person_id", "person_recog_flag", "update_time"]) {
+          const before = baseline.crops.get(cropId)?.[key];
+          const after = crops.get(cropId)?.[key];
+          const comparison = before != null && after != null ? Number(before !== after) : null;
+          comparisons.push(comparison);
+          if (key === "update_time") updates.push(comparison);
+        }
+      }
+    }
+    // A change is 1 for any unequal non-null crop-field pair, 0 if all pairs are equal and known, otherwise null.
+    const changedFlag = (values) => (values.includes(1) ? 1 : values.length && values.every((v) => v === 0) ? 0 : null);
+    const updateChanged = changedFlag(updates);
+    const changed = changedFlag(comparisons);
+    const persons = matches.map(({ row }) => integer(row.person_id));
+    const flags = matches.map(({ row }) => integer(row.person_recog_flag)).filter((flag) => flag !== null);
+    const personIdPos = persons.some((id) => id > 0)
+      ? 1
+      : persons.length && persons.every((id) => id !== null)
+        ? 0
         : null;
     counts.samples++;
     log(
       `case=${entry.id} sample=${WINDOWS[slot][2]} outcome=${result.outcome} candidates=${candidates.length}` +
-        ` pinned=${entry.pin ? 1 : 0} record_id=${row ? row.record_id : null} dt_ms=${match?.delta ?? null}` +
-        ` person_id_pos=${row && integer(row.person_id) !== null ? Number(row.person_id > 0) : null}` +
-        ` recog_flag=${integer(row?.person_recog_flag)} update_changed=${updateChanged} changed_since_baseline=${changed}`,
+        ` records=${records.size} pinned=${entry.pin ? 1 : 0} record_id=${match?.row.record_id ?? null}` +
+        ` crops=${matches.length} dt_ms=${match?.delta ?? null} nearest_dt_ms=${nearestDelta}` +
+        ` baseline_slot=${baseline?.slot ?? null} person_id_pos=${personIdPos}` +
+        ` recog_flag=${flags.length ? Math.max(...flags) : null} update_changed=${updateChanged} changed_since_baseline=${changed}`,
     );
+    return candidates.length;
   }
 
   async function sampleDue() {
@@ -182,11 +198,21 @@ export function createLateNameCheck(
             entry.next = now() + 10_000;
             continue;
           }
-          sample(
+          const candidates = sample(
             entry,
             { outcome, rows: outcome === "success" || outcome === "empty" ? result.rows : undefined },
             entry.slot,
           );
+          if (
+            entry.slot === 0 &&
+            candidates === 0 &&
+            (outcome === "success" || outcome === "empty") &&
+            entry.attempts < 3 &&
+            now() + 10_000 <= entry.arrived + WINDOWS[0][1]
+          ) {
+            entry.next = now() + 10_000;
+            continue;
+          }
           entry.slot++;
           entry.attempts = 0;
           if (entry.slot === WINDOWS.length) pending.delete(entry.key);
@@ -215,7 +241,11 @@ export function createLateNameCheck(
       )
         return;
       const createTime = milliseconds(payload?.create_time);
-      if (createTime === null || typeof payload?.deviceSn !== "string" || !payload.deviceSn) return;
+      if (createTime === null) {
+        counts.skippedNoClock++;
+        return;
+      }
+      if (typeof payload?.deviceSn !== "string" || !payload.deviceSn) return;
       const stationSn = ctx.getCachedStationSn?.(payload.deviceSn);
       if (typeof stationSn !== "string" || !stationSn) return;
       const triggerTime = milliseconds(payload.trigger_time);

@@ -172,10 +172,10 @@ export function wireDeviceEvents(ctx, now = Date.now) {
       );
       const enriched = ctx.enrichPersonName(event, payload);
       ctx.recordDetection?.(event, payload, enriched);
+      ctx.broadcast({ event, ...enriched });
       try {
         lateNameCheck.enroll(event, enriched);
       } catch {}
-      ctx.broadcast({ event, ...enriched });
     });
   const stop = () => {
     if (subscriptions.get(ctx) !== stop) return;
