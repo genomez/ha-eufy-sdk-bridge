@@ -185,58 +185,70 @@ export function createLateNameCheck(
         timeoutMs: 2000,
         signal: controller.signal,
       });
-      if (stopped || controller.signal.aborted) return new Map();
+      if (stopped || controller.signal.aborted) return null;
       if (result?.outcome !== "success" && result?.outcome !== "empty") {
         counts.rosterRefusals++;
-        return new Map();
+        return null;
       }
       const names = new Map();
       for (const row of (Array.isArray(result.rows) ? result.rows : []).slice(0, 100)) {
-        if (integer(row?.person_id) > 0 && !row.ignore_flag && usableName(row.name) && !names.has(row.person_id))
-          names.set(row.person_id, row.name.trim());
+        // Retain suppressed ids so warm-up names cannot override an ignored or unusable roster name.
+        if (integer(row?.person_id) > 0 && !names.has(row.person_id))
+          names.set(row.person_id, !row.ignore_flag && usableName(row.name) ? row.name.trim() : null);
       }
       if ((ctx.eufy.getInventoryScope?.() ?? null) === entry.scope)
         rosters.set(entry.stationSn, { names, at: now(), scope: entry.scope });
       return names;
     } catch {
       if (!stopped) counts.rosterRefusals++;
-      return new Map();
+      return null;
     }
   }
 
   async function identify(entry, rows, refreshes) {
     if (!lateNameEnabled || !active(entry)) return false;
-    const candidates = rows
+    // Every in-window row of this camera, regardless of person id; only the nearest recording may name the case,
+    // so a different person's later recording on the same camera can never attach its name to this occurrence.
+    const inWindow = rows
       .flatMap((row) => {
-        if (row?.device_sn !== entry.deviceSn || !(integer(row.person_id) > 0)) return [];
+        if (row?.device_sn !== entry.deviceSn) return [];
         const start = epoch(row.start_utc) ?? epoch(row.start_time);
         const at = start ?? epoch(row.image_cutout_timestamp);
         if (at === null) return [];
         const gap = entry.clocks.map((clock) => at - clock).reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b));
-        return gap >= -5000 && gap <= (start === null ? 45_000 : 15_000) ? [{ id: row.person_id, gap }] : [];
+        return gap >= -5000 && gap <= (start === null ? 45_000 : 15_000) ? [{ row, gap }] : [];
       })
       .sort((a, b) => Math.abs(a.gap) - Math.abs(b.gap));
-    const ids = [...new Set(candidates.map(({ id }) => id))];
+    if (!inWindow.length) return false;
+    const nearest = inWindow[0].row;
+    const recordId = integer(nearest.record_id);
+    const ids = [
+      ...new Set(
+        inWindow
+          .filter(({ row }) => (recordId === null ? row === nearest : integer(row.record_id) === recordId))
+          .map(({ row }) => integer(row.person_id))
+          .filter((id) => id > 0),
+      ),
+    ];
     if (!ids.length) return false;
     const cached = rosters.get(entry.stationSn);
-    const fresh = cached && cached.scope === entry.scope && now() - cached.at < ROSTER_TTL_MS;
-    let roster = fresh ? cached.names : new Map();
-    if (
-      ids.some((id) => !ctx.state.faceNames?.has(id) && !roster.has(id)) &&
-      !entry.rosterRefreshed &&
-      typeof ctx.eufy.readStationPersonRoster === "function" &&
-      !fresh
-    ) {
-      entry.rosterRefreshed = true;
+    const sameScope = cached && cached.scope === entry.scope;
+    const fresh = sameScope && now() - cached.at < ROSTER_TTL_MS;
+    let roster = fresh ? cached.names : null;
+    if (!fresh && !entry.rosterRefreshed && typeof ctx.eufy.readStationPersonRoster === "function") {
       if (!refreshes.has(entry.stationSn)) refreshes.set(entry.stationSn, readRoster(entry));
       roster = await refreshes.get(entry.stationSn);
+      // Only a successful read uses up this case's refresh; a busy or failed read may retry on a later sample.
+      if (roster !== null) entry.rosterRefreshed = true;
     }
+    if (roster === null) roster = sameScope ? cached.names : new Map();
     if (!active(entry)) return false;
+    // The station roster (ignore flags and renames applied) wins; the warm-up roster only fills familiar gaps.
     const names = [
       ...new Set(
         ids.flatMap((id) => {
           const face = ctx.state.faceNames?.get(id);
-          const name = ctx.state.faceNames?.has(id) ? (!face?.ignore_flag ? face?.name : null) : roster.get(id);
+          const name = roster.has(id) ? roster.get(id) : face?.familiar === true ? face.name : null;
           return usableName(name) ? [name.trim()] : [];
         }),
       ),
@@ -244,17 +256,21 @@ export function createLateNameCheck(
     if (!names.length) return false;
     resolved.set(entry.key, now());
     pending.delete(entry.key);
-    ctx.broadcast({
-      event: "personIdentified",
-      deviceSn: entry.deviceSn,
-      create_time: entry.createTime,
-      ...(entry.hasTriggerTime ? { trigger_time: entry.triggerTime } : {}),
-      person_name: names.join(", "),
-      person_names: names,
-      recognized: true,
-      detected_at_ms: entry.clocks[0],
-      identified_at_ms: now(),
-    });
+    try {
+      ctx.broadcast({
+        event: "personIdentified",
+        deviceSn: entry.deviceSn,
+        create_time: entry.createTime,
+        ...(entry.hasTriggerTime ? { trigger_time: entry.triggerTime } : {}),
+        person_name: names.join(", "),
+        person_names: names,
+        recognized: true,
+        detected_at_ms: entry.clocks[0],
+        identified_at_ms: now(),
+      });
+    } catch {
+      // A failed send must not clear other pending cases; this occurrence stays resolved.
+    }
     counts.identified++;
     log(`case=${entry.id} identified slot=${WINDOWS[entry.slot][2]} names=${names.length}`);
     return true;
@@ -586,8 +602,10 @@ export function createLateNameCheck(
         return;
       pruneResolved();
       const key = occurrenceKey(payload);
-      if (pending.delete(key)) counts.cancelledByPush++;
-      if (!resolved.has(key) && resolved.size + pending.size < RESOLVED_LIMIT) resolved.set(key, now());
+      // Only a named copy that cancels an open case is recorded; other named pushes never enter the ledger.
+      if (!pending.delete(key)) return;
+      counts.cancelledByPush++;
+      if (!resolved.has(key)) resolved.set(key, now());
       schedule();
     },
     diagnostics: () => ({ ...counts }),
