@@ -307,7 +307,11 @@ export function commandFailureEvent(error) {
   if (message === "RTC command ACK timed out; outcome unknown") return "command_ack_timeout";
   if (message === "RTC command timed out before send") return "command_expired_before_send";
   if (message === "RTC command timed out after send; outcome unknown") return "command_expired_after_send";
-  if (/^rtc: .+ rejected cmd \d+ \(err -?\d+\)$/.test(message)) return "command_rejected";
+  if (/^rtc: (?:.+ )?rejected cmd \d+ \(err -?\d+\)$/.test(message)) return "command_rejected";
+  if (/^RTC command channel not open, cmd \d+ not sent$/.test(message)) return "command_not_sent";
+  if (/^RTC session closed (before command send|while waiting for cmd \d+ ACK|while opening)$/.test(message))
+    return "command_session_closed";
+  if (message === "RTC command kind or scalar shape is not routable") return "command_unsupported";
   if (/^rtc: .+ command channel not open, cmd \d+ not sent$/.test(message)) return "command_not_sent";
   if (/^rtc: .+ session closed (before command send|while waiting for cmd \d+ ACK)$/.test(message))
     return "command_session_closed";

@@ -1,3 +1,4 @@
+import { createT9000Settings } from "./t9000-settings.mjs";
 import { guardConfirmationCapability, guardConfirmation, guardRuntimeAdvertisement } from "./guard-confirmation.mjs";
 import { stateEvidenceCapability } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
@@ -11,12 +12,7 @@ import { WebSocketServer } from "ws";
 import { listLightEffects } from "@mega-yfue/eufy-sdk";
 import { SOLIX_CONTROLS, SOLIX_DISABLED } from "./solix.mjs";
 import { WEBRTC_ERRORS } from "./webrtc-relay.mjs";
-import {
-  createBoundedStateWrites,
-  boundedStateWritesCapability,
-  createLightSettingsWritePolicy,
-  scalarLightSettings,
-} from "./bounded-state-writes.mjs";
+import { createBoundedStateWrites, boundedStateWritesCapability } from "./bounded-state-writes.mjs";
 import { createLightConfirmations, lateContraryEffectsCapability } from "./late-contrary-effects.mjs";
 import { createRequestEvidence } from "./request-evidence.mjs";
 import { failure as recordingsFailure } from "./recordings-policy.mjs";
@@ -26,6 +22,9 @@ import { failure as recordingsFailure } from "./recordings-policy.mjs";
 const AUTHED_COMMANDS = new Set([
   "devices.list",
   "device.state",
+  "light.setSchedule",
+  "doorbell.quickResponses",
+  "doorbell.playQuickResponse",
   "device.properties",
   "device.set",
   "device.action",
@@ -42,7 +41,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
   const { cfg, eufy, SCHEMA_VERSION, dbg } = ctx;
   const { flags, clients } = ctx.state;
   const requests = createRequestEvidence(requestClocks);
-  const lightSettings = createLightSettingsWritePolicy({
+  const settings = createT9000Settings({
     getDevice: (sn) => ctx.getDevice?.(sn) ?? eufy.getDevice(sn),
   });
   const bounded = createBoundedStateWrites({
@@ -211,6 +210,8 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     }
     if (
       [
+        "light.setSchedule",
+        "doorbell.playQuickResponse",
         "device.set",
         "device.action",
         "device.reboot",
@@ -408,26 +409,47 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
           const dev = await (ctx.getDevice?.(msg.sn) ?? eufy.getDevice(msg.sn));
           return reply({
             sn: msg.sn,
-            properties: await lightSettings.properties(dev, ctx.propertySpecs(dev)),
+            properties: ctx.propertySpecs(dev),
             decodedProperties: ctx.decodedProperties(dev),
           });
+        }
+        case "light.setSchedule":
+        case "doorbell.quickResponses":
+        case "doorbell.playQuickResponse": {
+          try {
+            if (cmd === "light.setSchedule") await settings.schedule(msg.sn, msg.entries);
+            else if (cmd === "doorbell.playQuickResponse") await settings.play(msg.sn, msg.voiceId);
+            else return reply({ responses: await settings.responses(msg.sn) });
+            return reply({});
+          } catch {
+            return fail("Settings operation failed", "command_rejected");
+          }
         }
         case "device.set": {
           const t0 = Date.now();
           pilotLog("command_started");
           ctx.recordCommand?.("started");
-          dbg(`device.set → setProperty sn=${msg.sn} name=${msg.name} value=${JSON.stringify(msg.value)}`);
+          dbg("device.set started");
           let guardReceipt;
           try {
-            if (scalarLightSettings.has(msg.name)) await lightSettings.assertWritable(msg.sn, msg.name);
             if (msg.name === "armingMode" && typeof eufy.setGuardModeWithReceipt === "function") {
               guardReceipt = guardConfirmation(
                 await eufy.setGuardModeWithReceipt(msg.sn, msg.value, msg.intentGeneration),
               );
+            } else if (
+              [
+                "motionLightEnabled",
+                "motionLightDuration",
+                "motionLightBrightness",
+                "motionLightMode",
+                "lightSchedule",
+              ].includes(msg.name)
+            ) {
+              await settings.serialize(msg.sn, () => eufy.setProperty(msg.sn, msg.name, msg.value));
             } else await eufy.setProperty(msg.sn, msg.name, msg.value);
             pilotLog("command_completed");
             ctx.recordCommand?.("completed");
-            dbg(`device.set OK sn=${msg.sn} name=${msg.name} (${Date.now() - t0}ms)`);
+            dbg("device.set completed");
           } catch (e) {
             pilotLog("ws_server_2");
             commandErrorCode =
@@ -460,10 +482,10 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
             return fail("Requested action is unavailable", commandErrorCode);
           }
           const t0 = Date.now();
-          dbg(`device.action → ${action} sn=${msg.sn} args=${JSON.stringify(args)}`);
+          dbg("device.action started");
           try {
             const result = await target[leaf](...args);
-            dbg(`device.action OK ${action} sn=${msg.sn} (${Date.now() - t0}ms)`);
+            dbg("device.action completed");
             return reply({ result: result ?? null });
           } catch (e) {
             pilotLog("ws_server_3");

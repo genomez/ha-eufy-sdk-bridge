@@ -1,3 +1,9 @@
+# S1 experimental.16 local candidate
+
+Use the SDK's installed setters and writable flags for HomeBase S1 settings. Add structured schedule and explicit doorbell quick-response RPCs, remove the obsolete floodlight scalar block, protect location-bearing configs and recognize sanitized SDK errors. See `docs/EXPERIMENTAL16_BUILD.md` and `docs/EXPERIMENTAL16_ARTIFACT.json` for inputs, limitations and build guidance. No image, publication or live acceptance is claimed.
+
+## Historical documentation through experimental.15
+
 # S1 experimental.15
 
 Stable guard and inventory evidence, occurrence deduplication, and late person identification from matching station crops. Late-name identification is enabled by default; diagnostic output requires explicit opt-in.

@@ -1,3 +1,4 @@
+import { publicSchedule } from "./t9000-settings.mjs";
 import { inventoryEvidence, inventoryRow } from "./inventory-evidence.mjs";
 import { deviceEvidence, evidenceRuntime, stateEvidence } from "./state-evidence.mjs";
 /** Modified for genomez S1 experimental source preview, 2026-10-18. */
@@ -247,7 +248,15 @@ export function createDeviceView(ctx) {
   /** Live property values as a flat `{ name: value }` map (reading schedules a background refresh). */
   function propertyState(dev) {
     const out = {};
-    for (const [name, pv] of Object.entries(dev.getProperties())) out[name] = pv.value;
+    for (const [name, pv] of Object.entries(dev.getProperties())) {
+      if (["lightScheduleConfig", "motionActivateLight", "unknown_1421", "unknown_1422"].includes(name)) continue;
+      out[name] =
+        name === "lightSchedule"
+          ? JSON.stringify(publicSchedule(pv.value))
+          : name === "motionLightEnabled" && typeof pv.value !== "boolean"
+            ? null
+            : pv.value;
+    }
     return out;
   }
 
@@ -264,6 +273,10 @@ export function createDeviceView(ctx) {
               let value;
               try {
                 value = surface?.[read.accessor];
+                if (cap.accessor === "light" && read.accessor === "lightSchedule") {
+                  const entries = publicSchedule(value);
+                  value = entries === null ? null : JSON.stringify(entries);
+                }
                 if (
                   value != null &&
                   typeof value !== "string" &&
@@ -299,12 +312,17 @@ export function createDeviceView(ctx) {
 
   /** Keep the SDK's read metadata and capability namespaces, without re-deriving a second schema. */
   function decodedProperties(dev, manifest = dev.describe()) {
+    const quality = (dev.properties ?? []).find((spec) => spec.name === "recordingQuality");
     return {
       bound: manifest.bound,
       details: (manifest.details ?? []).map(({ capability, accessor, reads, actions, undescribedActions }) => ({
         capability,
         accessor,
-        reads,
+        reads: reads.map((read) =>
+          read.property === "recordingQuality" && quality?.enumValues
+            ? { ...read, labels: { ...quality.enumValues } }
+            : read,
+        ),
         actions,
         undescribedActions,
       })),
@@ -337,6 +355,11 @@ export function createDeviceView(ctx) {
     }
     // A flat event cannot identify one of multiple capability reads for the same property.
     // Invalidate ambiguity instead of choosing a capability by iteration order.
+    if (["lightScheduleConfig", "motionActivateLight", "unknown_1421", "unknown_1422"].includes(property)) value = null;
+    if (property === "lightSchedule") {
+      const entries = publicSchedule(value);
+      value = entries === null ? null : JSON.stringify(entries);
+    }
     const evidence = payload.evidence ? stateEvidence(payload.evidence, evidenceRuntime(eufy)) : null;
     return { deviceSn: payload.deviceSn, property, value, ...(evidence ? { evidence } : {}) };
   }
