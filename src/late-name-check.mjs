@@ -246,6 +246,25 @@ export function createLateNameCheck(
         ` person_id_pos=${windowPersons.some((id) => id > 0) ? 1 : windowPersons.length && windowPersons.every((id) => id !== null) ? 0 : null}` +
         ` recog_flag=${windowFlags.length ? Math.max(...windowFlags) : null}`,
     );
+    // Cutout clock alone for every row of this camera, even when a start clock exists (diagnostic only).
+    let cutoutTimed = 0;
+    let cutoutGap = null;
+    const cutoutRows = sameDevice.filter((row) => {
+      const cutout = epoch(row?.image_cutout_timestamp);
+      if (cutout === null) return false;
+      cutoutTimed++;
+      const gap = entry.clocks.map((clock) => cutout - clock).reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b));
+      if (cutoutGap === null || Math.abs(gap) < Math.abs(cutoutGap)) cutoutGap = gap;
+      return Math.abs(gap) <= 5000;
+    });
+    const cutoutPersons = cutoutRows.map((row) => integer(row.person_id));
+    const cutoutFlags = cutoutRows.map((row) => integer(row.person_recog_flag)).filter((flag) => flag !== null);
+    log(
+      `case=${entry.id} cutout slot=${WINDOWS[slot][2]} timed=${cutoutTimed} candidates=${cutoutRows.length}` +
+        ` records=${new Set(cutoutRows.map((row) => row.record_id)).size} nearest_gap_ms=${cutoutGap}` +
+        ` person_id_pos=${cutoutPersons.some((id) => id > 0) ? 1 : cutoutPersons.length && cutoutPersons.every((id) => id !== null) ? 0 : null}` +
+        ` recog_flag=${cutoutFlags.length ? Math.max(...cutoutFlags) : null}`,
+    );
     return candidates.length;
   }
 

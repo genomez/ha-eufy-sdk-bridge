@@ -403,6 +403,41 @@ test("window ignores implausible relative clocks and takes an end from another f
   assert.doesNotMatch(windows.join(" "), new RegExp(String(EPOCH)));
 });
 
+test("cutout line scores every row on its cutout clock even when a start clock exists", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ start_utc: EPOCH / 1000 + 90, image_cutout_timestamp: EPOCH + 1200, person_id: 5, person_recog_flag: 0 }),
+      crop({ record_id: 72, start_utc: 0, image_cutout_timestamp: EPOCH - 40_000 }),
+      crop({ record_id: 73, image_cutout_timestamp: 12 }),
+      crop({ device_sn: "different-camera", image_cutout_timestamp: EPOCH }),
+    ],
+  }));
+  f.enroll();
+  await f.advance();
+  const cutout = f.lines.filter((line) => line.includes(" cutout slot="));
+  assert.match(
+    cutout[0],
+    /case=1 cutout slot=0 timed=2 candidates=1 records=1 nearest_gap_ms=1200 person_id_pos=1 recog_flag=0$/,
+  );
+  assert.match(
+    f.lines.find((line) => line.includes(" window slot=")),
+    /nearest_source=utc /,
+  );
+  assert.doesNotMatch(cutout.join(" "), new RegExp(String(EPOCH)));
+});
+
+test("cutout line is null-safe when no row has a plausible cutout clock", async (t) => {
+  const f = fixture(t);
+  f.enroll();
+  await f.advance();
+  assert.match(
+    f.lines.find((line) => line.includes(" cutout slot=")),
+    /cutout slot=0 timed=0 candidates=0 records=0 nearest_gap_ms=null person_id_pos=null recog_flag=null$/,
+  );
+});
+
 test("null-to-value transitions alone cannot establish a change", async (t) => {
   const f = fixture(t);
   f.read(async () => ({
