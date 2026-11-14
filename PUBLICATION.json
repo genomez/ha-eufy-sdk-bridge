@@ -1,16 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "0.3.1-s1.experimental.12",
-  "status": "local-build-unpublished",
+  "version": "0.3.1-s1.experimental.15",
+  "status": "local-release-candidate",
   "published": false,
-  "exactInputCommit": "1b140b62bbacbacfb46c0d2aaf7ed241491dd9c1",
-  "relayDefault": false,
-  "keepaliveMs": 29000,
-  "lightCorrectionDefault": false,
+  "exactInputCommit": "f774f9e60ae348ff57e895a6c21444d84e02cdbc",
   "registryManifestDigest": null,
-  "runtimeSourceRelease": null,
-  "installationAcceptance": false,
-  "sdkSourceCommit": "b57f5b87dfef981bc4c346f84e41960235bfb113",
-  "sdkArtifactSha256": "d717f4fb7514d732db76c711ff430ed592d0be7f0b0e6323dce288cda3c56b0e",
-  "sdkArtifactIntegrity": "sha512-L0KkdZZIVJzg/XO5rp01fEaG1gXSKfDCMEWOAfCnLH3IT7+HgE5aTUggq/JFM00hBXHJlWGfzmyP8GFdpS3m5g=="
+  "installationAcceptance": false
 }

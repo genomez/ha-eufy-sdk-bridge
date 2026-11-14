@@ -1,3 +1,15 @@
+# Experimental.15 local release candidate
+
+Stable guard and inventory evidence, occurrence deduplication, and late person identification from matching station crops. Late-name identification is enabled by default; diagnostic output requires explicit opt-in.
+
+Prepared for owner review on 2026-11-14. No live-device acceptance or publication is claimed.
+
+Pair SDK 0.2.1-s1.experimental.15, bridge/integration 0.3.1-s1.experimental.15 and add-on 0.4.1-s1.experimental.15.
+
+Diagnostic switches remain opt-in; no new add-on option is introduced. Playback remains silent and bounded; multi-lens playback guarantees only one view.
+
+## Prior notices
+
 Current local candidate: experimental.12 (2026-11-02). Unpublished; no installation or device acceptance. Earlier release references below are historical.
 
 # S1 experimental.12 — Experimental support and limitations
