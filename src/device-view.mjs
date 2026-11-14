@@ -312,17 +312,12 @@ export function createDeviceView(ctx) {
 
   /** Keep the SDK's read metadata and capability namespaces, without re-deriving a second schema. */
   function decodedProperties(dev, manifest = dev.describe()) {
-    const quality = (dev.properties ?? []).find((spec) => spec.name === "recordingQuality");
     return {
       bound: manifest.bound,
       details: (manifest.details ?? []).map(({ capability, accessor, reads, actions, undescribedActions }) => ({
         capability,
         accessor,
-        reads: reads.map((read) =>
-          read.property === "recordingQuality" && quality?.enumValues
-            ? { ...read, labels: { ...quality.enumValues } }
-            : read,
-        ),
+        reads,
         actions,
         undescribedActions,
       })),

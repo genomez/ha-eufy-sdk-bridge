@@ -77,8 +77,6 @@ export async function sdkFixture(model, deviceType, parent = "T9000") {
   eufy.getDevices = async () => eufy.registry.devices;
   const view = createDeviceView({ eufy, state: createState() });
   const dev = await view.getDevice("fixture-camera");
-  // Keep one live model for projection tests; the facade cold-reindex issue is recorded separately.
-  eufy.getDevice = async () => dev;
   return { eufy, dev, view };
 }
 for (const [model, type] of [
@@ -109,8 +107,6 @@ for (const [model, type] of [
         assert.equal(reads.find((r) => r.property === name)?.writable, true, name);
       const cold = await view.describeDevice("fixture-camera");
       assert.equal(JSON.stringify(cold.state).includes("private-value"), false);
-      // Model construction precedes station context; a later report indexes the newly enabled members.
-      dev.applyParams({ 1421: params[1421], 1422: params[1422] });
       const summary = await view.describeDevice("fixture-camera");
       assert.equal(JSON.stringify(summary.state).includes("private-value"), false);
       assert.equal(JSON.stringify(summary.decodedState).includes("private-value"), false);

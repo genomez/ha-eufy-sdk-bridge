@@ -1,6 +1,6 @@
 # Experimental.16 local build inputs
 
-Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `85c3cc25ee97af84312922f9065936b9df8475be`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
+Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `6fea9a759379bd7ae8406c7e2e01adc2b7f024c9`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
 
 ## Reproduce the SDK dependency
 
@@ -10,7 +10,7 @@ From the SDK checkout at the pinned commit with its completed build, run `npm pa
 npm install --offline --ignore-scripts --no-audit --no-fund @mega-yfue/eufy-sdk@file:eufy-sdk-local.tgz
 ```
 
-Do not repack with lifecycle scripts or bring in the probe branch. Check the runtime and tarball SHA-256 against `EXPERIMENTAL16_ARTIFACT.json`. Regenerate the receipt and lockfile whenever the SDK input changes. The cold-config indexing issue below requires a new SDK commit/artifact before release acceptance.
+Do not repack with lifecycle scripts or bring in the probe branch. Check the runtime and tarball SHA-256 against `EXPERIMENTAL16_ARTIFACT.json`. Regenerate the receipt and lockfile whenever the SDK input changes. The refreshed SDK artifact includes the station-context indexing and read-label fixes described below.
 
 ## Existing Ubuntu image pipeline
 
@@ -20,7 +20,7 @@ Runtime differences from .15:
 
 - `/app/package.json`, `/app/package-lock.json`: bridge version .16 and local SDK artifact pin.
 - `/app/src/bounded-state-writes.mjs`: obsolete scalar-light block removed.
-- `/app/src/device-view.mjs`: safe schedule/config projections and SDK quality-label adaptation.
+- `/app/src/device-view.mjs`: safe schedule/config projections and SDK-provided quality labels.
 - `/app/src/ws-server.mjs`, new `/app/src/t9000-settings.mjs`: explicit structured schedule/query/playback commands; motion/schedule writes serialized per device; no playback retry.
 - `/app/src/pilot-log.mjs`, `/app/src/request-evidence.mjs`: sanitized SDK error mapping and finite RPC names.
 - Complete `/app/node_modules/@mega-yfue/eufy-sdk/`: new SDK package, including its entire `dist/`. Do not overlay only selected emitted files.
@@ -31,8 +31,8 @@ The HA custom component is delivered separately: replace the complete `custom_co
 
 ## SDK findings and limitations
 
-`Device.describe()` omits station context when choosing labels. Its resolved property schema has the correct recording-quality enum, which the bridge forwards. Other station labels remain unchanged.
+`Device.describe()` now includes station context when choosing labels. The bridge forwards its recording-quality labels directly; the property-enum workaround was removed. Other station labels remain unchanged.
 
-SDK facade construction applies 1421/1422 before station context; new light configs remain indexed under `unknown_1421/1422`, and the new getters return empty until a later report. Composite writes can refuse; a fresh `getDevice()` recreates the problem. This is an unresolved SDK blocker. SDK source was not edited. Raw config aliases are excluded from bridge state/events. Projection tests use a live model after a synthetic later report, and do not claim the facade defect is fixed.
+SDK commit `6fea9a759379bd7ae8406c7e2e01adc2b7f024c9` fixes cold indexing by promoting retained unknown parameters when station context resolves, preserving their observation timestamps. Binding also resolves supplied station context. Reported 1421/1422 getters and composite writes work on cold construction and every fresh `getDevice()` without another report. Raw config aliases remain excluded from bridge state/events. Projection tests now use cold and fresh facade models without a synthetic later report.
 
 The schedule service uses the latest retained SDK config and has no compare-and-swap guarantee against concurrent app changes. Recording-quality reads describe the active mode, while writes edit mode 0. 720P and all new controls still require separately authorized hardware acceptance. No hosts, Docker, HA or devices were touched.

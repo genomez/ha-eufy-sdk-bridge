@@ -3,20 +3,20 @@
   "status": "local-source-candidate",
   "branch": "s1-experimental16-dev",
   "baseCommit": "d3b0d3f4d04ca5f63b03946622be1266eafe5069",
-  "sdkCommit": "85c3cc25ee97af84312922f9065936b9df8475be",
+  "sdkCommit": "6fea9a759379bd7ae8406c7e2e01adc2b7f024c9",
   "sdkVersion": "0.2.1-s1.experimental.16",
   "tarball": "eufy-sdk-local.tgz",
-  "sha256": "f98fa9c255517061ef33144490a6be88a6180c7d8a1281a627396de6395dd796",
-  "runtimeSha256": "744561632d7507dd1329e782d0921fbe5d3d3d62f1fd228a4d5563ffec540c89",
+  "sha256": "ed96087ce7556c913aaa63c3a047038341ccaaa3139672ca596d25e2f090253c",
+  "runtimeSha256": "2ae962b709679402b96b05ef173eb22eb79b41a257c7f2a11de9e8dc984ab72b",
   "localOnly": true,
   "imageBuilt": false,
   "liveAcceptance": false,
   "sourceHashConvention": "UTF-8 text normalized to LF",
   "bridgeInputs": {
     "package.json": "08bfae43266504f149cc1f1d7e9087bdbbce5702bdd991a52cec484be8067fd4",
-    "package-lock.json": "05ea95d0e5cb569ddb51fd54ba010d2f0552c59f734b59cf91763074ac5d64e6",
+    "package-lock.json": "af44083f4cdeb295e15754e036ac1efb590566f9b987dee30e02e8908ca230f0",
     "src/bounded-state-writes.mjs": "ab6c2b71d25d4934281abf67da6a71b0ce52cad436f63f68215c0599de9e2fd3",
-    "src/device-view.mjs": "40f4e1e743cb49096e42af7ee3a31dc39f114a66533122aa6432c843b1afc818",
+    "src/device-view.mjs": "fbfc704ba87b27b6366c5ea368a6d67ca9d26152f404fe8c6e47fea045adc626",
     "src/pilot-log.mjs": "3611bb525783257246206409b168b3f2cd6db2860a204002485e5bb19baa900e",
     "src/request-evidence.mjs": "eb8a6e2c8740241217e9d6121353246045c0baf5c670168ecf8cc3d03c7cf89d",
     "src/t9000-settings.mjs": "dafb4ac916f9df68cf55df31c489475aab36c9f04404ad9ad35aff2ffc9f508a",
@@ -33,8 +33,8 @@
     "scope": "Existing suite no-socket/process guards and gated cases retained; no live-device acceptance."
   },
   "sdkFindings": [
-    "Device.describe() omits station context for recording-quality labels; bridge forwards the resolved public property enum.",
-    "Facade constructs parameter state before T9000 context: 1421/1422 remain under unknown aliases until a later report. Cold composite reads/writes remain blocked; SDK source unchanged."
+    "SDK commit 6fea9a759379bd7ae8406c7e2e01adc2b7f024c9 promotes retained unknown configs when station context resolves, preserving observation timestamps; cold and fresh facade reads/writes no longer need a later report.",
+    "Device.describe() resolves recording-quality labels with station context; the bridge now forwards these labels directly without the property-enum workaround."
   ],
   "publicationReceipts": "Existing .15 source/publication manifests remain historical. This receipt identifies the unbuilt .16 local candidate."
 }
