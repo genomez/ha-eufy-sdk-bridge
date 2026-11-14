@@ -1,8 +1,8 @@
 import "./fixtures/no-socket-guard.mjs";
-import { test } from "node:test";
+import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLateNameCheck, appendLateNameLine } from "../src/late-name-check.mjs";
@@ -25,6 +25,21 @@ const crop = (extra = {}) => ({
   ...extra,
 });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+function useEnv(values) {
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
+beforeEach((t) => {
+  const previous = Object.fromEntries(
+    ["EUFY_LATE_NAME_DIAG", "EUFY_LATE_NAME_CHECK", "EUFY_LATE_NAME"].map((key) => [key, process.env[key]]),
+  );
+  t.after(() => useEnv(previous));
+  useEnv({ EUFY_LATE_NAME_DIAG: "1" });
+});
 
 function fixture(t, options = {}) {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: EPOCH });
@@ -64,6 +79,104 @@ function fixture(t, options = {}) {
     samples: () => lines.filter((line) => line.includes(" sample=")),
   };
 }
+
+for (const setting of [undefined, "0", "true", ""])
+  test(`diagnostics require explicit opt-in while default identification remains enabled (setting=${setting})`, async (t) => {
+    useEnv({ EUFY_LATE_NAME_DIAG: setting, EUFY_LATE_NAME_CHECK: undefined, EUFY_LATE_NAME: undefined });
+    const f = fixture(t);
+    f.ctx.eufy.readStationPersonRoster = async () => ({
+      outcome: "success",
+      rows: [{ person_id: 42, name: "Synthetic Person", ignore_flag: 0 }],
+    });
+    const row = crop({ person_id: 42 });
+    for (const key of [
+      "clock_shapes",
+      "person_recog_flag",
+      "update_time",
+      "crop_id",
+      "picture_id",
+      "end_utc",
+      "end_time",
+    ])
+      Object.defineProperty(row, key, { get: () => assert.fail("diagnostic-only field was read") });
+    f.read(async () => ({ outcome: "success", rows: [row] }));
+    f.enroll();
+    await f.advance();
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.events.length, 1);
+    assert.equal(f.events[0].person_name, "Synthetic Person");
+    assert.equal(f.check.diagnostics().enrolled, 1);
+    assert.equal(f.check.diagnostics().samples, 1);
+    assert.equal(f.check.diagnostics().reads, 1);
+    assert.equal(f.check.diagnostics().rosterReads, 1);
+    assert.equal(f.check.diagnostics().identified, 1);
+    assert.deepEqual(f.lines, []);
+
+    const dir = mkdtempSync(join(tmpdir(), "eufy-late-name-switch-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const file = join(dir, "diagnostics.log");
+    appendLateNameLine("opt-in required", file);
+    assert.equal(existsSync(file), false);
+    writeFileSync(file, "unchanged\n");
+    appendLateNameLine("opt-in required", file);
+    assert.equal(readFileSync(file, "utf8"), "unchanged\n");
+  });
+
+test("silent default identification retains empty-result retries and delayed roster resolution", async (t) => {
+  useEnv({ EUFY_LATE_NAME_DIAG: undefined, EUFY_LATE_NAME_CHECK: undefined, EUFY_LATE_NAME: undefined });
+  const f = fixture(t);
+  f.ctx.eufy.readStationPersonRoster = async () => ({
+    outcome: "success",
+    rows: [{ person_id: 42, name: "Synthetic Person", ignore_flag: 0 }],
+  });
+  f.read(async () => ({ outcome: "success", rows: f.calls.length === 1 ? [] : [crop({ person_id: 42 })] }));
+  f.enroll();
+  await f.advance();
+  assert.equal(f.events.length, 0);
+  await f.advance(10_000);
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.events.length, 1);
+  assert.equal(f.check.diagnostics().samples, 2);
+  assert.equal(f.check.diagnostics().identified, 1);
+  assert.deepEqual(f.lines, []);
+});
+
+test("disabling identification and leaving diagnostics off skips diagnostic-only crop reads", async (t) => {
+  useEnv({ EUFY_LATE_NAME_DIAG: undefined, EUFY_LATE_NAME: "0" });
+  const f = fixture(t);
+  f.enroll();
+  await f.advance(900_000);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.check.diagnostics().enrolled, 0);
+  assert.deepEqual(f.lines, []);
+});
+
+test("EUFY_LATE_NAME_DIAG=1 opts into enrollment, all sample lines, identification and file output", async (t) => {
+  const f = fixture(t);
+  f.ctx.state.faceNames.set(42, { name: "Synthetic Person", familiar: true });
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  f.enroll();
+  await f.advance();
+  for (const label of [
+    "enrolled ",
+    "sample=",
+    "table slot=",
+    "fields slot=",
+    "window slot=",
+    "cutout slot=",
+    "nearby slot=",
+    "identified ",
+  ])
+    assert.ok(
+      f.lines.some((line) => line.includes(label)),
+      label,
+    );
+  const dir = mkdtempSync(join(tmpdir(), "eufy-late-name-switch-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "diagnostics.log");
+  appendLateNameLine("opt-in enabled", file);
+  assert.equal(readFileSync(file, "utf8"), "opt-in enabled\n");
+});
 
 test("enrolls only unnamed unrecognized person occurrences with valid creation clocks and cached stations", async (t) => {
   const f = fixture(t);

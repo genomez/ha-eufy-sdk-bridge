@@ -107,8 +107,9 @@ function interval(row) {
   return null;
 }
 
-/** The diagnostic file contains only allowlisted fields; existing files are restricted before append. */
+/** EUFY_LATE_NAME_DIAG=1 opts into file output; existing files are restricted before append. */
 export function appendLateNameLine(line, file = "/tmp/eufy-late-name-check.log") {
+  if (process.env.EUFY_LATE_NAME_DIAG !== "1") return;
   let fd;
   try {
     fd = openSync(file, "a", 0o600);
@@ -134,6 +135,7 @@ export function createLateNameCheck(
     lateNameEnabled = process.env.EUFY_LATE_NAME !== "0",
   } = {},
 ) {
+  const diagnosticsEnabled = process.env.EUFY_LATE_NAME_DIAG === "1";
   const counts = {
     enrolled: 0,
     rejectedCapacity: 0,
@@ -156,6 +158,7 @@ export function createLateNameCheck(
   let running = false;
   let controller;
   const log = (text) => {
+    if (!diagnosticsEnabled) return;
     try {
       writeLine(`${new Date(now()).toISOString()} late_name ${text}`);
     } catch {}
@@ -288,6 +291,17 @@ export function createLateNameCheck(
   function sample(entry, result, slot) {
     let nearestDelta = null;
     const rows = (Array.isArray(result.rows) ? result.rows : []).slice(0, 100);
+    const candidates = rows.flatMap((row) => {
+      if (row?.device_sn !== entry.deviceSn) return [];
+      const start = milliseconds(row.start_utc);
+      if (start === null) return [];
+      const delta = entry.clocks.map((clock) => start - clock).reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b));
+      if (diagnosticsEnabled && (nearestDelta === null || Math.abs(delta) < Math.abs(nearestDelta)))
+        nearestDelta = delta;
+      return Math.abs(delta) <= 5000 ? [{ row, delta }] : [];
+    });
+    counts.samples++;
+    if (!diagnosticsEnabled) return candidates.length;
     // Value-free table summary: row ages are relative to this detection, device identities are only counted.
     const starts = rows.map((row) => milliseconds(row?.start_utc)).filter((start) => start !== null);
     const age = (start) => (start === undefined ? null : Math.round((entry.clocks[0] - start) / 1000));
@@ -296,14 +310,6 @@ export function createLateNameCheck(
       ` devices=${new Set(rows.map((row) => row?.device_sn)).size}` +
       ` newest_age_s=${age(starts.length ? Math.max(...starts) : undefined)}` +
       ` oldest_age_s=${age(starts.length ? Math.min(...starts) : undefined)}`;
-    const candidates = rows.flatMap((row) => {
-      if (row?.device_sn !== entry.deviceSn) return [];
-      const start = milliseconds(row.start_utc);
-      if (start === null) return [];
-      const delta = entry.clocks.map((clock) => start - clock).reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b));
-      if (nearestDelta === null || Math.abs(delta) < Math.abs(nearestDelta)) nearestDelta = delta;
-      return Math.abs(delta) <= 5000 ? [{ row, delta }] : [];
-    });
     const records = new Set(candidates.map(({ row }) => row.record_id));
     const matches =
       records.size === 1 &&
@@ -340,7 +346,6 @@ export function createLateNameCheck(
       : persons.length && persons.every((id) => id !== null)
         ? 0
         : null;
-    counts.samples++;
     log(
       `case=${entry.id} sample=${WINDOWS[slot][2]} outcome=${result.outcome} candidates=${candidates.length}` +
         ` records=${records.size} pinned=${entry.pin ? 1 : 0} record_id=${match?.row.record_id ?? null}` +
@@ -543,6 +548,7 @@ export function createLateNameCheck(
     enroll(event, payload) {
       if (
         !enabled ||
+        (!lateNameEnabled && !diagnosticsEnabled) ||
         stopped ||
         unavailable() ||
         typeof ctx.eufy.readRecentPersonCrops !== "function" ||
