@@ -1,7 +1,8 @@
 {
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.15",
-  "inputCommit": "f774f9e60ae348ff57e895a6c21444d84e02cdbc",
+  "inputCommit": "816b1e83d3b94b439be9cdfc1716b66c0881c7be",
+  "publicationParent": "bc3c1dca2aba4db3162f7b6537ae39b505f9757c",
   "files": {
     ".env.example": {
       "bytes": 4167,
@@ -28,16 +29,16 @@
       "sha256": "000a5f67f803460da3e1defa805ffd27035670109c2a4d40f9c6bb6aa6b2a322"
     },
     "EXPERIMENTAL.md": {
-      "bytes": 35066,
-      "sha256": "83290c10907f5750bbb6b7f709c73631f92a0f7c5f19dd592906f4934d2db38c"
+      "bytes": 38948,
+      "sha256": "30cb1d0aa7a767434e98aef49e0d91ebaf79d23ea8053ce839784f1aae2edff3"
     },
     "LICENSE": {
       "bytes": 11339,
       "sha256": "b208eae7041fb7818ebd636d0778b49e242543be9a980ac9dcbaf98449660a2b"
     },
     "MODIFICATIONS.md": {
-      "bytes": 49153,
-      "sha256": "fa67a6a61bfa966735252a5e5f4041f2f3168c6596465a4bd1a3405fda68c402"
+      "bytes": 57009,
+      "sha256": "fa5dd75e02e4b9ec482e66b2cbba9e372a6d4325f4ae7fd129808afb86e22c19"
     },
     "POST_REPACK_BUILD.json": {
       "bytes": 2727,
@@ -48,8 +49,8 @@
       "sha256": "b7640b7cbcadcea79d50116391e2c4930d4bef95f9e95a2556192236e43a8126"
     },
     "README.md": {
-      "bytes": 23451,
-      "sha256": "ec07e6c13d9563c281307108d100f8bafd8cac97738cab699245fbb940ef2270"
+      "bytes": 29045,
+      "sha256": "ee141bc9018022aa60347e37f8b80483fc8a4e0349f4caa312751ab32dbfcd65"
     },
     "bin/event-playback-probe-control.mjs": {
       "bytes": 9853,
@@ -96,8 +97,8 @@
       "sha256": "210a51fe1d6e2c4135266db112cab241291c4746918a378ae6016defcec709e4"
     },
     "docs/recordings-pairing-validation.md": {
-      "bytes": 14229,
-      "sha256": "0cbf2cc8892bf26aa54d8ccd50f4a05d9ffe52737a558e0fc726cd93cdbbfa49"
+      "bytes": 14398,
+      "sha256": "9b3c342e75ae98cdba8a1a3ba383904bef0f2c4c617c6f8b613f837dcf238520"
     },
     "docs/recordings-playback-experiments.md": {
       "bytes": 10225,
@@ -116,8 +117,8 @@
       "sha256": "aeb3c1ce207bad995028f2a3364054072e4252357927296a04bbd372cb000e4a"
     },
     "docs/ws-protocol.md": {
-      "bytes": 65367,
-      "sha256": "6abe980aa1044adb157e8225c881b3f1f1d8adbde343b1475e996d51b7970771"
+      "bytes": 65586,
+      "sha256": "0c842aaba48bfeba1e10953e9b278448fec53f8be8a8c139ff42a07973564f4f"
     },
     "go2rtc-config.mjs": {
       "bytes": 3437,

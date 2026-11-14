@@ -1,14 +1,193 @@
-# Experimental.15 local release candidate
+# S1 experimental.15
 
 Stable guard and inventory evidence, occurrence deduplication, and late person identification from matching station crops. Late-name identification is enabled by default; diagnostic output requires explicit opt-in.
 
-Prepared for owner review on 2026-11-14. No live-device acceptance or publication is claimed.
+Prepared for experimental.15 publication on 2026-11-14. No live-device acceptance is claimed.
 
 Pair SDK 0.2.1-s1.experimental.15, bridge/integration 0.3.1-s1.experimental.15 and add-on 0.4.1-s1.experimental.15.
 
 Diagnostic switches remain opt-in; no new add-on option is introduced. Playback remains silent and bounded; multi-lens playback guarantees only one view.
 
-## Prior notices
+## Historical public documentation through experimental.14
+
+Modified for genomez experimental.14, 2026-11-09
+
+## .14 changes
+
+- Fixed: S350 (T8416) cameras no longer show a spotlight switch they don't have. A push connection that silently stops delivering events is now detected and reconnected. Camera settings are no longer overwritten by older values when a startup or refresh overlaps a change. Snapshot refreshes are no longer lost when they overlap; queued refreshes stop after a sign-in failure.
+- Changed: Floodlight brightness/spotlight controls that HomeBase S1 can't drive are hidden. Number settings use per-model ranges. Media → Eufy shows "Playback not yet supported for this camera", "No playable recordings yet" or "No recordings yet" instead of an empty camera folder. More playback diagnostics.
+- Upgrade: Update the add-on and integration together, then restart Home Assistant after the add-on is running, so removed controls are cleaned up.
+- Known limits: Playback is silent; multi-lens cameras show one view; a late update from a camera can still briefly show an old state.
+
+## Previous notices
+
+Modified for genomez experimental.13, 2026-11-07
+
+Release packaging, current recordings/playback runtime and extra-model support.
+Modified paths since published experimental.12:
+
+- `.env.example`
+- `.gitignore`
+- `BUILD_PROVENANCE.json`
+- `EXPERIMENTAL.md`
+- `MODIFICATIONS.md`
+- `PUBLICATION.json`
+- `README.md`
+- `SOURCE_MANIFEST.json`
+- `bin/event-playback-probe-control.mjs`
+- `bin/event-table-probe-control.mjs`
+- `bin/event-thumb-probe-control.mjs`
+- `bin/pilot-process.mjs`
+- `docs/bounded-state-writes.md`
+- `docs/event-playback-multi-attempt.md`
+- `docs/progressive-pipe-20261107.md`
+- `docs/recordings-native-timing-validation.md`
+- `docs/recordings-pacing-validation.md`
+- `docs/recordings-pairing-validation.md`
+- `docs/recordings-playback-experiments.md`
+- `docs/recordings-progressive.md`
+- `docs/runtime-logging.md`
+- `docs/ws-protocol.md`
+- `package-lock.json`
+- `package.json`
+- `server.mjs`
+- `src/bounded-state-writes.mjs`
+- `src/client.mjs`
+- `src/config.mjs`
+- `src/device-events.mjs`
+- `src/device-view.mjs`
+- `src/diagnostics.mjs`
+- `src/event-playback-health.mjs`
+- `src/event-playback-probe-pins.mjs`
+- `src/event-playback-probe.mjs`
+- `src/event-table-probe-pins.mjs`
+- `src/event-table-probe.mjs`
+- `src/event-thumb-probe-pins.mjs`
+- `src/event-thumb-probe.mjs`
+- `src/http-routes.mjs`
+- `src/logging-control.mjs`
+- `src/pilot-log.mjs`
+- `src/recordings-adapter.mjs`
+- `src/recordings-background-paging.mjs`
+- `src/recordings-clips.mjs`
+- `src/recordings-download.mjs`
+- `src/recordings-experiments.mjs`
+- `src/recordings-job-evidence.mjs`
+- `src/recordings-pacing.mjs`
+- `src/recordings-playback-models.mjs`
+- `src/recordings-playback-sessions.mjs`
+- `src/recordings-policy.mjs`
+- `src/recordings-progressive-settings.mjs`
+- `src/recordings-progressive.mjs`
+- `src/recordings-store.mjs`
+- `src/recordings-timing.mjs`
+- `src/recordings-wire.mjs`
+- `src/recordings.mjs`
+- `src/rtc-connection-evidence.mjs`
+- `src/service.mjs`
+- `src/storage-probe.mjs`
+- `src/ws-server.mjs`
+- `test/bounded-state-writes.test.mjs`
+- `test/clock-margin.test.mjs`
+- `test/config.test.mjs`
+- `test/device-liveness.test.mjs`
+- `test/event-playback-capture.test.mjs`
+- `test/event-playback-multi-attempt.test.mjs`
+- `test/event-playback-probe.test.mjs`
+- `test/event-playback-safety.test.mjs`
+- `test/event-table-probe-control.test.mjs`
+- `test/event-table-probe.test.mjs`
+- `test/event-thumb-probe-control.test.mjs`
+- `test/event-thumb-probe.test.mjs`
+- `test/fixtures/sdk-tripwire.mjs`
+- `test/helpers/recordings-fixtures.mjs`
+- `test/helpers/recordings-variable-cadence.mjs`
+- `test/helpers/recordings-wire.mjs`
+- `test/helpers/sdk-resolve.mjs`
+- `test/ice-establishment-evidence.test.mjs`
+- `test/late-contrary-effects.test.mjs`
+- `test/media-topology.test.mjs`
+- `test/pilot-log-timestamps.test.mjs`
+- `test/pilot-process-timestamps.test.mjs`
+- `test/progressive-settings.test.mjs`
+- `test/recordings-api.test.mjs`
+- `test/recordings-availability.test.mjs`
+- `test/recordings-background-paging.test.mjs`
+- `test/recordings-background.test.mjs`
+- `test/recordings-catalog-attempt.test.mjs`
+- `test/recordings-clips.test.mjs`
+- `test/recordings-download.test.mjs`
+- `test/recordings-experiments.test.mjs`
+- `test/recordings-live-catalog.test.mjs`
+- `test/recordings-native-media.test.mjs`
+- `test/recordings-pacing.test.mjs`
+- `test/recordings-paging.test.mjs`
+- `test/recordings-pairing.test.mjs`
+- `test/recordings-playback-models.test.mjs`
+- `test/recordings-playback-sessions.test.mjs`
+- `test/recordings-policy.test.mjs`
+- `test/recordings-privacy.test.mjs`
+- `test/recordings-progressive-media.test.mjs`
+- `test/recordings-progressive-pipe-media.test.mjs`
+- `test/recordings-progressive.test.mjs`
+- `test/recordings-store.test.mjs`
+- `test/recordings-timing.test.mjs`
+- `test/recordings-wire.test.mjs`
+- `test/rtc-connection-evidence.test.mjs`
+- `test/rtc-keepalive.test.mjs`
+- `test/runtime-logging.test.mjs`
+- `test/stream-mime.test.mjs`
+- `test/wiring.test.mjs`
+- `tools/check-native-recording-media.mjs`
+- `tools/check-progressive-media.mjs`
+- `tools/check-progressive-pipe-media.mjs`
+
+## Previous notices
+
+# S1 experimental.12
+
+Update the add-on and integration together: add-on `0.4.1-s1.experimental.12`, integration and bridge `0.3.1-s1.experimental.12`, SDK `0.2.1-s1.experimental.12`.
+
+- Push-store save failures are caught and reported through push-connection diagnostics (#539).
+- Session and FCM files use an owner-only temporary file and atomic rename where the filesystem permits (#540). On restricted directories or single-file mounts, the existing in-place fallback is non-atomic and retains existing file permissions.
+- Stored snapshots recover after a successful re-login, including when an older in-flight download fails afterwards (#545).
+- Optional HomeBase S1 storage telemetry also supports firmware 4.4.1.4; it remains off by default.
+- After an acknowledged light command, Home Assistant holds the requested display value for up to 45 seconds. A matching boolean report releases it early. The acknowledgement does not confirm the physical light state.
+- A registry identity conflict invalidates the affected child-camera status to unknown.
+- HomeBase firmware metadata updates from newly received inventory without a Home Assistant restart. A new Firmware version sensor exposes the received version.
+- Dated experimental.11 and experimental.12 modification notices are retained, including the restored integration notice.
+
+Defaults are unchanged. Live view and optional floodlight safety remain off by default. Keep battery-camera preload off. Verify the integration ZIP checksum and restart Home Assistant after replacing the integration. Changing live-view opt-in requires an add-on restart. Command keepalive remains 29000 ms.
+
+Known live-view stalls, unexplained floodlight ON events and brightness/spotlight formatting issues remain unresolved. This is an experimental fork.
+
+Runtime and corresponding source: https://github.com/genomez/ha-eufy-sdk-addon/releases/tag/s1-runtime-0.4.1.experimental.12
+
+Integration ZIP and checksum: https://github.com/genomez/ha-eufy-sdk/releases/tag/0.3.1-s1.experimental.12
+
+Publication availability is pending. The accepted image is delivered without rebuilding. Earlier release records below are historical.
+
+Modified for genomez experimental.11, 2026-10-31
+
+Modified for genomez experimental.12, 2026-11-02
+
+## Files modified in experimental.12
+
+- `BUILD_PROVENANCE.json`
+- `EXPERIMENTAL.md`
+- `MODIFICATIONS.md`
+- `PUBLICATION.json`
+- `README.md`
+- `SOURCE_MANIFEST.json`
+- `package-lock.json`
+- `package.json`
+- `src/device-events.mjs`
+- `src/storage-telemetry.mjs`
+- `test/camera-health.test.mjs`
+- `test/helpers/sdk-resolve.mjs`
+- `test/storage-telemetry.test.mjs`
+
+## Historical modification notices
 
 Modified for genomez experimental.12, 2026-11-02
 
@@ -142,7 +321,7 @@ Modified for genomez experimental.9, 2026-10-27.
 
 # Experimental.8 local preparation
 
-Version `0.3.1-s1.experimental.8` is prepared locally and unpublished. Pair add-on `0.4.1-s1.experimental.8`, integration/bridge `0.3.1-s1.experimental.8` and SDK `0.2.1-s1.experimental.8`.
+Version `0.3.1-s1.experimental.8` is described in this historical notice. Pair add-on `0.4.1-s1.experimental.8`, integration/bridge `0.3.1-s1.experimental.8` and SDK `0.2.1-s1.experimental.8`.
 
 RTC late-viewer keyframe gating; bounded refresh backoff and recovery; isolated slow replies; camera connectivity and hub reply evidence; T8171 detection; opt-in floodlight safety with bounded confirmation and problem notices; observation-only media stall evidence.
 
@@ -247,7 +426,7 @@ Version `0.3.1-s1.experimental.5`: Storage collection attempt/failure status and
 
 ## Experimental.6 preparation, 2026-10-16
 
-Version `0.3.1-s1.experimental.6` is prepared locally and has not been published. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
+Version `0.3.1-s1.experimental.6` is described in this historical notice. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
 
 The relay remains off by default in source. The proposed add-on option is `webrtc_relay: false`; enabling it sets `BRIDGE_WEBRTC_RELAY=1`. The planned image retains command keepalive at 29000 ms. Companion integration 0.3.1.dev3 uses native live view only when the bridge advertises the relay. Earlier source-preview streaming restrictions above describe historical inputs. Owner-reported review.3/review.4 tests passed on several wired cameras and one battery camera, including switching and busy behavior; this is prior test-build evidence, not acceptance of the final .6 image.
 
@@ -428,7 +607,7 @@ Version `0.3.1-s1.experimental.5`: Storage collection attempt/failure status and
 
 ## Experimental.6 preparation, 2026-10-16
 
-Version `0.3.1-s1.experimental.6` is prepared locally and has not been published. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
+Version `0.3.1-s1.experimental.6` is described in this historical notice. Opt-in native WebRTC relay for stock Home Assistant Core; relay capability advertised in WebSocket hello; preserve busy/releasing refusal codes and wait up to 12 seconds for station release; retain all experimental.5 changes and pair the exact experimental.6 SDK package.
 
 The relay remains off by default in source. The proposed add-on option is `webrtc_relay: false`; enabling it sets `BRIDGE_WEBRTC_RELAY=1`. The planned image retains command keepalive at 29000 ms. Companion integration 0.3.1.dev3 uses native live view only when the bridge advertises the relay. Earlier source-preview streaming restrictions above describe historical inputs. Owner-reported review.3/review.4 tests passed on several wired cameras and one battery camera, including switching and busy behavior; this is prior test-build evidence, not acceptance of the final .6 image.
 
