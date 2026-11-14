@@ -1479,3 +1479,121 @@ test("stop aborts an outstanding roster read and prevents identification and fur
   assert.deepEqual(f.events, []);
   assert.equal(f.check.diagnostics().identified, 0);
 });
+
+function silentFixture(t) {
+  useEnv({ EUFY_LATE_NAME_DIAG: undefined, EUFY_LATE_NAME_CHECK: undefined, EUFY_LATE_NAME: undefined });
+  const dir = mkdtempSync(join(tmpdir(), "eufy-silent-schedule-"));
+  const file = join(dir, "diagnostics.log");
+  const writes = [];
+  t.after(() => {
+    assert.deepEqual(writes, []);
+    assert.equal(existsSync(file), false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return fixture(t, { writeLine: (line) => { writes.push(line); appendLateNameLine(line, file); } });
+}
+
+for (const outcome of ["busy/not_admitted", "send_refused"]) {
+  test(`silent default ${outcome} preserves retry limits and later-slot progression`, async (t) => {
+    const f = silentFixture(t);
+    f.ctx.state.faceNames.set(42, { name: "Synthetic Person", familiar: true });
+    f.read(async () => Date.now() < EPOCH + 300_000 ? { outcome } : { outcome: "success", rows: [crop({ person_id: 42 })] });
+    f.enroll();
+    await f.advance();
+    await f.advance(9999);
+    assert.equal(f.calls.length, 1);
+    await f.advance(1);
+    await f.advance(10_000);
+    await f.advance(39_999);
+    assert.deepEqual(f.calls.map(({ at }) => at), outcome === "busy/not_admitted" ? [0, 10_000, 20_000] : [0]);
+    await f.advance(1);
+    await f.advance(10_000);
+    await f.advance(10_000);
+    await f.advance(219_999);
+    assert.deepEqual(f.calls.map(({ at }) => at), outcome === "busy/not_admitted" ? [0, 10_000, 20_000, 60_000, 70_000, 80_000] : [0, 60_000]);
+    assert.equal(f.events.length, 0);
+    await f.advance(1);
+    assert.equal(f.calls.at(-1).at, 300_000);
+    assert.equal(f.events[0].person_name, "Synthetic Person");
+    assert.equal(f.events[0].identified_at_ms, EPOCH + 300_000);
+    assert.equal(f.check.diagnostics().refusals, outcome === "busy/not_admitted" ? 6 : 2);
+    await f.advance(600_000);
+    assert.equal(f.calls.length, outcome === "busy/not_admitted" ? 7 : 3);
+    assert.equal(f.events.length, 1);
+  });
+}
+
+test("silent default coalesces station reads and roster retries for multiple cases", async (t) => {
+  const f = silentFixture(t);
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  let reads = 0;
+  f.ctx.eufy.readStationPersonRoster = async () => ++reads === 1 ? { outcome: "send_refused" } : { outcome: "success", rows: [{ person_id: 42, name: "Synthetic Person" }] };
+  f.enroll();
+  f.enroll({ ...occurrence, trigger_time: occurrence.create_time + 1 });
+  await f.advance();
+  assert.equal(f.calls.length, 1);
+  assert.equal(reads, 1);
+  assert.deepEqual(f.events, []);
+  await f.advance(60_000);
+  assert.equal(f.calls.length, 2);
+  assert.equal(reads, 2);
+  assert.deepEqual(f.events.map(({ person_name, identified_at_ms }) => [person_name, identified_at_ms]), [["Synthetic Person", EPOCH + 60_000], ["Synthetic Person", EPOCH + 60_000]]);
+  await f.advance(900_000);
+  assert.equal(f.calls.length, 2);
+});
+
+test("silent default push cancellation suppresses an outstanding read and later timers", async (t) => {
+  const f = silentFixture(t);
+  let finish;
+  f.ctx.state.faceNames.set(42, { name: "Synthetic Person", familiar: true });
+  f.read(() => new Promise((resolve) => { finish = resolve; }));
+  f.enroll();
+  await f.advance();
+  f.check.resolvedByPush({ ...occurrence, person_name: "Synthetic Person" });
+  finish({ outcome: "success", rows: [crop({ person_id: 42 })] });
+  await flush();
+  f.enroll();
+  await f.advance(900_000);
+  assert.deepEqual(f.events, []);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.check.diagnostics().cancelledByPush, 1);
+  assert.equal(f.check.diagnostics().enrolled, 1);
+});
+
+test("silent default keeps the sixteen-case limit without eviction", async (t) => {
+  const f = silentFixture(t);
+  f.ctx.state.faceNames.set(42, { name: "Synthetic Person", familiar: true });
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  for (let i = 0; i < 20; i++) f.enroll({ ...occurrence, trigger_time: i });
+  assert.equal(f.check.diagnostics().enrolled, 16);
+  assert.equal(f.check.diagnostics().rejectedCapacity, 4);
+  await f.advance();
+  assert.equal(f.calls.length, 1);
+  assert.deepEqual(f.events.map(({ trigger_time }) => trigger_time), Array.from({ length: 16 }, (_, i) => i));
+  assert.ok(f.events.every(({ person_name, identified_at_ms }) => person_name === "Synthetic Person" && identified_at_ms === EPOCH));
+});
+
+test("silent default keeps all 512 resolved entries until thirty-minute expiry", async (t) => {
+  const f = silentFixture(t);
+  for (let i = 0; i < 512; i++) {
+    const payload = { ...occurrence, trigger_time: i };
+    f.enroll(payload);
+    f.check.resolvedByPush({ ...payload, person_name: "Synthetic Person" });
+  }
+  f.enroll({ ...occurrence, trigger_time: 512 });
+  f.enroll({ ...occurrence, trigger_time: 0 });
+  assert.equal(f.check.diagnostics().enrolled, 512);
+  assert.equal(f.check.diagnostics().rejectedCapacity, 1);
+  await f.advance(1_799_999);
+  f.enroll({ ...occurrence, trigger_time: 512 });
+  assert.equal(f.check.diagnostics().rejectedCapacity, 2);
+  assert.equal(f.calls.length, 0);
+  await f.advance(1);
+  f.ctx.state.faceNames.set(42, { name: "Synthetic Person", familiar: true });
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  f.enroll({ ...occurrence, trigger_time: 0 });
+  await f.advance();
+  assert.equal(f.events[0].person_name, "Synthetic Person");
+  assert.equal(f.events[0].identified_at_ms, EPOCH + 1_800_000);
+  assert.equal(f.calls.length, 1);
+});
