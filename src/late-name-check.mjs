@@ -26,6 +26,11 @@ const usableName = (value) =>
   typeof value === "string" &&
   value.trim() &&
   !/^(?:unknown(?: person)?|human|unavailable|no person|stranger\d*)$/i.test(value.trim());
+const occurrenceKey = (payload) =>
+  JSON.stringify([payload.deviceSn, payload.create_time, payload.trigger_time ?? null]);
+const RESOLVED_TTL_MS = 30 * 60_000;
+const RESOLVED_LIMIT = 512;
+const ROSTER_TTL_MS = 15 * 60_000;
 
 /** Normalize epoch seconds or milliseconds without parsing local wall-clock strings. */
 function milliseconds(value) {
@@ -122,10 +127,28 @@ export function appendLateNameLine(line, file = "/tmp/eufy-late-name-check.log")
 /** Four bounded, station-coalesced sample windows; all correlation and identity values stay in memory. */
 export function createLateNameCheck(
   ctx,
-  { now = Date.now, writeLine = appendLateNameLine, enabled = process.env.EUFY_LATE_NAME_CHECK !== "0" } = {},
+  {
+    now = Date.now,
+    writeLine = appendLateNameLine,
+    enabled = process.env.EUFY_LATE_NAME_CHECK !== "0",
+    lateNameEnabled = process.env.EUFY_LATE_NAME !== "0",
+  } = {},
 ) {
-  const counts = { enrolled: 0, rejectedCapacity: 0, skippedNoClock: 0, samples: 0, reads: 0, refusals: 0 };
+  const counts = {
+    enrolled: 0,
+    rejectedCapacity: 0,
+    skippedNoClock: 0,
+    samples: 0,
+    reads: 0,
+    refusals: 0,
+    identified: 0,
+    rosterReads: 0,
+    rosterRefusals: 0,
+    cancelledByPush: 0,
+  };
   const pending = new Map();
+  const resolved = new Map();
+  const rosters = new Map();
   const cameras = new Map();
   let caseNumber = 0;
   let timer;
@@ -138,6 +161,104 @@ export function createLateNameCheck(
     } catch {}
   };
   const unavailable = () => ctx.state?.flags?.stopping || ctx.state?.flags?.sessionLost || ctx.state?.flags?.recovering;
+
+  function pruneResolved() {
+    for (const [key, at] of resolved) if (now() - at >= RESOLVED_TTL_MS) resolved.delete(key);
+  }
+
+  function active(entry) {
+    return (
+      !stopped &&
+      !unavailable() &&
+      pending.get(entry.key) === entry &&
+      ctx.getCachedStationSn?.(entry.deviceSn) === entry.stationSn &&
+      (ctx.eufy.getInventoryScope?.() ?? null) === entry.scope &&
+      now() < entry.arrived + 1_020_000
+    );
+  }
+
+  async function readRoster(entry) {
+    counts.rosterReads++;
+    try {
+      const result = await ctx.eufy.readStationPersonRoster(entry.stationSn, {
+        count: 100,
+        timeoutMs: 2000,
+        signal: controller.signal,
+      });
+      if (stopped || controller.signal.aborted) return new Map();
+      if (result?.outcome !== "success" && result?.outcome !== "empty") {
+        counts.rosterRefusals++;
+        return new Map();
+      }
+      const names = new Map();
+      for (const row of (Array.isArray(result.rows) ? result.rows : []).slice(0, 100)) {
+        if (integer(row?.person_id) > 0 && !row.ignore_flag && usableName(row.name) && !names.has(row.person_id))
+          names.set(row.person_id, row.name.trim());
+      }
+      if ((ctx.eufy.getInventoryScope?.() ?? null) === entry.scope)
+        rosters.set(entry.stationSn, { names, at: now(), scope: entry.scope });
+      return names;
+    } catch {
+      if (!stopped) counts.rosterRefusals++;
+      return new Map();
+    }
+  }
+
+  async function identify(entry, rows, refreshes) {
+    if (!lateNameEnabled || !active(entry)) return false;
+    const candidates = rows
+      .flatMap((row) => {
+        if (row?.device_sn !== entry.deviceSn || !(integer(row.person_id) > 0)) return [];
+        const start = epoch(row.start_utc) ?? epoch(row.start_time);
+        const at = start ?? epoch(row.image_cutout_timestamp);
+        if (at === null) return [];
+        const gap = entry.clocks.map((clock) => at - clock).reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b));
+        return gap >= -5000 && gap <= (start === null ? 45_000 : 15_000) ? [{ id: row.person_id, gap }] : [];
+      })
+      .sort((a, b) => Math.abs(a.gap) - Math.abs(b.gap));
+    const ids = [...new Set(candidates.map(({ id }) => id))];
+    if (!ids.length) return false;
+    const cached = rosters.get(entry.stationSn);
+    const fresh = cached && cached.scope === entry.scope && now() - cached.at < ROSTER_TTL_MS;
+    let roster = fresh ? cached.names : new Map();
+    if (
+      ids.some((id) => !ctx.state.faceNames?.has(id) && !roster.has(id)) &&
+      !entry.rosterRefreshed &&
+      typeof ctx.eufy.readStationPersonRoster === "function" &&
+      !fresh
+    ) {
+      entry.rosterRefreshed = true;
+      if (!refreshes.has(entry.stationSn)) refreshes.set(entry.stationSn, readRoster(entry));
+      roster = await refreshes.get(entry.stationSn);
+    }
+    if (!active(entry)) return false;
+    const names = [
+      ...new Set(
+        ids.flatMap((id) => {
+          const face = ctx.state.faceNames?.get(id);
+          const name = ctx.state.faceNames?.has(id) ? (!face?.ignore_flag ? face?.name : null) : roster.get(id);
+          return usableName(name) ? [name.trim()] : [];
+        }),
+      ),
+    ];
+    if (!names.length) return false;
+    resolved.set(entry.key, now());
+    pending.delete(entry.key);
+    ctx.broadcast({
+      event: "personIdentified",
+      deviceSn: entry.deviceSn,
+      create_time: entry.createTime,
+      ...(entry.hasTriggerTime ? { trigger_time: entry.triggerTime } : {}),
+      person_name: names.join(", "),
+      person_names: names,
+      recognized: true,
+      detected_at_ms: entry.clocks[0],
+      identified_at_ms: now(),
+    });
+    counts.identified++;
+    log(`case=${entry.id} identified slot=${WINDOWS[entry.slot][2]} names=${names.length}`);
+    return true;
+  }
 
   function schedule() {
     clearTimeout(timer);
@@ -349,12 +470,9 @@ export function createLateNameCheck(
         const outcome = OUTCOMES.has(result?.outcome) ? result.outcome : "invalid_reply";
         const refused = outcome === "busy/not_admitted";
         if (refused || outcome === "send_refused") counts.refusals++;
+        const refreshes = new Map();
         for (const entry of entries) {
-          if (
-            unavailable() ||
-            now() >= entry.arrived + 1_020_000 ||
-            (ctx.eufy.getInventoryScope?.() ?? null) !== entry.scope
-          ) {
+          if (!active(entry)) {
             pending.delete(entry.key);
             continue;
           }
@@ -368,6 +486,18 @@ export function createLateNameCheck(
             { outcome, rows: outcome === "success" || outcome === "empty" ? result.rows : undefined },
             entry.slot,
           );
+          if (
+            await identify(
+              entry,
+              (outcome === "success" && Array.isArray(result.rows) ? result.rows : []).slice(0, 100),
+              refreshes,
+            )
+          )
+            continue;
+          if (!active(entry)) {
+            pending.delete(entry.key);
+            continue;
+          }
           if (
             entry.slot === 0 &&
             candidates === 0 &&
@@ -414,9 +544,11 @@ export function createLateNameCheck(
       const stationSn = ctx.getCachedStationSn?.(payload.deviceSn);
       if (typeof stationSn !== "string" || !stationSn) return;
       const triggerTime = milliseconds(payload.trigger_time);
-      const key = JSON.stringify([payload.deviceSn, payload.create_time, payload.trigger_time ?? null]);
-      if (pending.has(key)) return;
-      if (pending.size >= 16) {
+      const key = occurrenceKey(payload);
+      pruneResolved();
+      if (pending.has(key) || resolved.has(key)) return;
+      // Reserve a ledger slot for every pending case so completion never evicts a resolved occurrence.
+      if (pending.size >= 16 || (lateNameEnabled && pending.size + resolved.size >= RESOLVED_LIMIT)) {
         counts.rejectedCapacity++;
         return;
       }
@@ -428,6 +560,9 @@ export function createLateNameCheck(
         id,
         stationSn,
         deviceSn: payload.deviceSn,
+        createTime: payload.create_time,
+        hasTriggerTime: Object.hasOwn(payload, "trigger_time"),
+        triggerTime: payload.trigger_time,
         arrived,
         next: arrived,
         clocks: triggerTime === null ? [createTime] : [createTime, triggerTime],
@@ -439,6 +574,22 @@ export function createLateNameCheck(
       log(`case=${id} enrolled camera_index=${cameras.get(payload.deviceSn)}`);
       schedule();
     },
+    resolvedByPush(payload) {
+      if (
+        !enabled ||
+        !lateNameEnabled ||
+        stopped ||
+        ![payload?.person_name, payload?.nick_name].some(usableName) ||
+        typeof payload?.deviceSn !== "string" ||
+        milliseconds(payload?.create_time) === null
+      )
+        return;
+      pruneResolved();
+      const key = occurrenceKey(payload);
+      if (pending.delete(key)) counts.cancelledByPush++;
+      if (!resolved.has(key) && resolved.size + pending.size < RESOLVED_LIMIT) resolved.set(key, now());
+      schedule();
+    },
     diagnostics: () => ({ ...counts }),
     stop() {
       stopped = true;
@@ -446,6 +597,8 @@ export function createLateNameCheck(
       controller?.abort();
       pending.clear();
       cameras.clear();
+      resolved.clear();
+      rosters.clear();
     },
   };
 }

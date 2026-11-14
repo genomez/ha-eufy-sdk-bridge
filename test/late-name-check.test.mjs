@@ -30,9 +30,11 @@ function fixture(t, options = {}) {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: EPOCH });
   const lines = [];
   const calls = [];
+  const events = [];
   const scope = {};
   let read = async () => ({ outcome: "success", rows: [crop()] });
   const ctx = {
+    broadcast: (event) => events.push(event),
     state: createState(),
     getCachedStationSn: () => "private-station-sentinel",
     eufy: {
@@ -49,6 +51,7 @@ function fixture(t, options = {}) {
     ctx,
     lines,
     calls,
+    events,
     check,
     enroll: (payload = occurrence, event = "personDetected") => check.enroll(event, payload),
     read: (fn) => {
@@ -124,6 +127,10 @@ test("uses four windows, pins the record, and observes a positive person id at f
     samples: 4,
     reads: 4,
     refusals: 0,
+    identified: 0,
+    rosterReads: 0,
+    rosterRefusals: 0,
+    cancelledByPush: 0,
   });
   for (const [i, label] of [0, 1, 5, 15].entries()) {
     assert.match(
@@ -599,6 +606,10 @@ test("EUFY_LATE_NAME_CHECK=0 creates no enrollment, reads or logs", async (t) =>
     samples: 0,
     reads: 0,
     refusals: 0,
+    identified: 0,
+    rosterReads: 0,
+    rosterRefusals: 0,
+    cancelledByPush: 0,
   });
   assert.equal(f.lines.length, 0);
   assert.equal(f.calls.length, 0);
@@ -638,6 +649,10 @@ test("inventory changes and lost sessions discard pending cases", async (t) => {
 
 test("file output is numeric-only and excludes sensitive values and arbitrary errors", async (t) => {
   const f = fixture(t);
+  f.ctx.eufy.readStationPersonRoster = async () => ({
+    outcome: "success",
+    rows: [{ person_id: 987654321, name: "private-roster-name-sentinel", ignore_flag: 0 }],
+  });
   f.read(async () => ({
     outcome: "success",
     rows: [
@@ -651,7 +666,13 @@ test("file output is numeric-only and excludes sensitive values and arbitrary er
   }));
   f.enroll();
   await f.advance();
+  assert.equal(f.events.length, 1);
+  assert.match(
+    f.lines.find((line) => line.includes(" identified ")),
+    /^\S+ late_name case=1 identified slot=0 names=1$/,
+  );
   f.read(async () => ({ outcome: "private-outcome-sentinel", rows: [crop()] }));
+  f.enroll({ ...occurrence, create_time: occurrence.create_time + 1 });
   await f.advance(60_000);
   f.read(async () => {
     throw new Error("private-error-sentinel");
@@ -670,6 +691,7 @@ test("file output is numeric-only and excludes sensitive values and arbitrary er
     "private-station-sentinel",
     "/private/path-sentinel",
     "private-name-sentinel",
+    "private-roster-name-sentinel",
     "private-feature-sentinel",
     "private-outcome-sentinel",
     "private-error-sentinel",
@@ -724,6 +746,37 @@ test("forwarding, dedupe and name enrichment remain unchanged while diagnostics 
   assert.equal(events.at(-1).person_name, "Private Name");
 });
 
+test("a named copy passing the event dedupe hook cancels the same unnamed occurrence", async (t) => {
+  const f = fixture(t);
+  f.ctx.eufy = Object.assign(new EventEmitter(), f.ctx.eufy);
+  Object.assign(f.ctx, {
+    FORWARDED_EVENTS: new Set(["personDetected"]),
+    DETECTION_EVENTS: new Set(["personDetected"]),
+    bumpActivity() {},
+    noteDetection() {},
+    eventLog() {},
+    enrichPersonName: (_event, payload) => payload,
+  });
+  const stop = wireDeviceEvents(f.ctx);
+  t.after(stop);
+  f.ctx.eufy.emit("personDetected", { ...occurrence });
+  await f.advance();
+  f.ctx.state.faceNames.set(42, { name: "Alice" });
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  const named = { ...occurrence, person_name: "Alice" };
+  f.ctx.eufy.emit("personDetected", named);
+  f.ctx.eufy.emit("personDetected", named);
+  f.ctx.eufy.emit("personDetected", { ...occurrence });
+  await f.advance(900_000);
+  assert.deepEqual(f.events, [
+    { event: "personDetected", ...occurrence },
+    { event: "personDetected", ...named },
+  ]);
+  assert.equal(f.ctx.lateNameCheck.diagnostics().cancelledByPush, 1);
+  assert.equal(f.ctx.lateNameCheck.diagnostics().identified, 0);
+  assert.equal(f.calls.length, 1);
+});
+
 test("HA broadcast precedes the enrollment write even when enrollment throws", () => {
   const eufy = new EventEmitter();
   const order = [];
@@ -768,4 +821,331 @@ test("station resolution uses only retained models and never fetches", async () 
   await view.getDevice("synthetic-camera");
   assert.equal(view.getCachedStationSn("synthetic-camera"), "synthetic-station");
   assert.equal(fetched, 1);
+});
+
+for (const [label, fields, trigger_time] of [
+  ["start UTC seconds", { start_utc: EPOCH / 1000 + 9 }],
+  ["start UTC milliseconds", { start_utc: EPOCH + 15_000 }],
+  ["start-time fallback", { start_utc: 0, start_time: String(EPOCH + 3000) }],
+  ["cutout fallback", { start_utc: 0, start_time: 25, image_cutout_timestamp: EPOCH + 30_000 }],
+  ["negative start boundary", { start_utc: EPOCH - 5000 }],
+  ["positive cutout boundary", { start_utc: 0, image_cutout_timestamp: EPOCH + 45_000 }],
+  ["negative cutout boundary", { start_utc: 0, image_cutout_timestamp: EPOCH - 5000 }],
+  ["nearest trigger clock", { start_utc: EPOCH + 79_000 }, String(EPOCH + 70_000)],
+])
+  test(`identifies via ${label} using the faceNames map and preserves original clocks`, async (t) => {
+    const f = fixture(t);
+    f.ctx.state.faceNames.set(42, { name: " Alice ", familiar: true });
+    f.ctx.eufy.readStationPersonRoster = () => assert.fail("faceNames must avoid RTC roster reads");
+    f.read(async () => ({ outcome: "success", rows: [crop({ ...fields, person_id: 42 })] }));
+    const payload = {
+      ...occurrence,
+      create_time: String(occurrence.create_time),
+      ...(trigger_time === undefined ? {} : { trigger_time }),
+    };
+    f.enroll(payload);
+    await f.advance();
+    assert.deepEqual(f.events, [
+      {
+        event: "personIdentified",
+        deviceSn: occurrence.deviceSn,
+        create_time: payload.create_time,
+        ...(trigger_time === undefined ? {} : { trigger_time }),
+        person_name: "Alice",
+        person_names: ["Alice"],
+        recognized: true,
+        detected_at_ms: EPOCH,
+        identified_at_ms: EPOCH,
+      },
+    ]);
+    assert.equal(f.check.diagnostics().identified, 1);
+    assert.equal(f.check.diagnostics().rosterReads, 0);
+    f.enroll(payload);
+    await f.advance(900_000);
+    assert.equal(f.events.length, 1);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.check.diagnostics().enrolled, 1);
+  });
+
+test("ignores out-of-window, other-camera, nonpositive-id and implausible-clock rows", async (t) => {
+  const f = fixture(t);
+  f.ctx.state.faceNames.set(42, { name: "Alice" });
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ start_utc: EPOCH - 5001, person_id: 42 }),
+      crop({ start_utc: EPOCH + 15_001, person_id: 42 }),
+      crop({ start_utc: 0, image_cutout_timestamp: EPOCH + 45_001, person_id: 42 }),
+      crop({ start_utc: 0, image_cutout_timestamp: EPOCH - 5001, person_id: 42 }),
+      crop({ start_utc: EPOCH + 20_000, image_cutout_timestamp: EPOCH + 1000, person_id: 42 }),
+      crop({ start_utc: 0, start_time: EPOCH + 20_000, image_cutout_timestamp: EPOCH, person_id: 42 }),
+      crop({ start_utc: 3500, image_cutout_timestamp: 12, person_id: 42 }),
+      crop({ device_sn: "another-camera", person_id: 42 }),
+      crop({ person_id: -1 }),
+      crop({ person_id: 0 }),
+      crop({ person_id: null }),
+    ],
+  }));
+  f.enroll();
+  await f.advance();
+  assert.deepEqual(f.events, []);
+  assert.equal(f.check.diagnostics().rosterReads, 0);
+});
+
+test("a crop row first appearing at five minutes identifies and stops the remaining samples", async (t) => {
+  const f = fixture(t);
+  f.ctx.state.faceNames.set(42, { name: "Alice" });
+  f.read(async () => ({
+    outcome: "success",
+    rows: Date.now() - EPOCH >= 300_000 ? [crop({ start_utc: EPOCH + 9000, person_id: 42 })] : [],
+  }));
+  f.enroll();
+  await f.advance();
+  await f.advance(10_000);
+  await f.advance(10_000);
+  await f.advance(40_000);
+  assert.equal(f.events.length, 0);
+  await f.advance(240_000);
+  assert.equal(f.events[0].identified_at_ms, EPOCH + 300_000);
+  assert.match(f.lines.at(-1), /case=1 identified slot=5 names=1$/);
+  await f.advance(600_000);
+  assert.equal(f.calls.length, 5);
+  assert.equal(f.events.length, 1);
+});
+
+test("RTC roster resolves two people in gap order, trims and deduplicates names and skips ignored/generic rows", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ person_id: 2, start_utc: EPOCH + 9000 }),
+      crop({ person_id: 1, start_utc: EPOCH + 1000 }),
+      crop({ person_id: 3, start_utc: EPOCH + 2000 }),
+      ...[4, 5, 6, 7, 8, 9, 10, 11].map((person_id) => crop({ person_id })),
+    ],
+  }));
+  let args;
+  f.ctx.eufy.readStationPersonRoster = async (...input) => {
+    args = input;
+    return {
+      outcome: "success",
+      rows: [
+        { person_id: 1, name: " Alice ", ignore_flag: 0 },
+        { person_id: 2, name: "Bob", ignore_flag: null },
+        { person_id: 3, name: "Alice", ignore_flag: 0 },
+        { person_id: 4, name: "Ignored", ignore_flag: 1 },
+        ...["", "  ", "unknown person", "Human", "Stranger12", "Unavailable", "no person"].map((name, i) => ({
+          person_id: i + 5,
+          name,
+        })),
+        { person_id: null, name: "Bad identity" },
+      ],
+    };
+  };
+  f.enroll();
+  await f.advance();
+  assert.equal(f.events[0].person_name, "Alice, Bob");
+  assert.deepEqual(f.events[0].person_names, ["Alice", "Bob"]);
+  assert.equal(args[0], "private-station-sentinel");
+  assert.equal(args[1].count, 100);
+  assert.equal(args[1].timeoutMs, 2000);
+  assert.equal(args[1].signal.aborted, false);
+  assert.equal(f.check.diagnostics().rosterReads, 1);
+});
+
+test("station rosters are cached for fifteen minutes and kept separate by station", async (t) => {
+  const f = fixture(t);
+  f.ctx.getCachedStationSn = (sn) => (sn === "camera-b" ? "station-b" : "station-a");
+  f.read(async (station) => ({
+    outcome: "success",
+    rows: [crop({ device_sn: station === "station-b" ? "camera-b" : occurrence.deviceSn, person_id: 42 })],
+  }));
+  const rosterCalls = [];
+  f.ctx.eufy.readStationPersonRoster = async (station) => {
+    rosterCalls.push(station);
+    return { outcome: "success", rows: [{ person_id: 42, name: station === "station-a" ? "Alice" : "Bob" }] };
+  };
+  f.enroll();
+  f.enroll({ ...occurrence, deviceSn: "camera-b" });
+  await f.advance();
+  assert.deepEqual(
+    f.events.map((event) => event.person_name),
+    ["Alice", "Bob"],
+  );
+  await f.advance(899_999);
+  f.enroll({ ...occurrence, trigger_time: occurrence.create_time + 1 });
+  await f.advance();
+  assert.equal(rosterCalls.length, 2);
+  await f.advance(1);
+  f.enroll({ ...occurrence, trigger_time: occurrence.create_time + 2 });
+  await f.advance();
+  assert.deepEqual(rosterCalls, ["station-a", "station-b", "station-a"]);
+});
+
+test("one outstanding station roster read serves two cases even if its initiating case is cancelled", async (t) => {
+  const f = fixture(t);
+  let finish;
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  f.ctx.eufy.readStationPersonRoster = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  f.enroll();
+  f.enroll({ ...occurrence, trigger_time: EPOCH });
+  await f.advance();
+  assert.equal(f.check.diagnostics().rosterReads, 1);
+  f.check.resolvedByPush({ ...occurrence, person_name: "Alice" });
+  finish({ outcome: "success", rows: [{ person_id: 42, name: "Alice" }] });
+  await flush();
+  assert.equal(f.check.diagnostics().rosterReads, 1);
+  assert.equal(f.events.length, 1);
+  assert.equal(f.events[0].trigger_time, EPOCH);
+  assert.equal(f.events[0].person_name, "Alice");
+});
+
+for (const outcome of ["busy/not_admitted", "send_refused", "timeout", "ack_only/timeout", "invalid_reply", "throws"]) {
+  test(`roster ${outcome} produces no broadcast, coalesces due cases and refreshes at most once per case`, async (t) => {
+    const f = fixture(t);
+    f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+    let reads = 0;
+    f.ctx.eufy.readStationPersonRoster = async () => {
+      reads++;
+      if (outcome === "throws") throw new Error("private-roster-error-sentinel");
+      return { outcome, rows: [{ person_id: 42, name: "must not resolve" }] };
+    };
+    f.enroll();
+    f.enroll({ ...occurrence, trigger_time: occurrence.create_time + 1 });
+    await f.advance();
+    await f.advance(60_000);
+    await f.advance(240_000);
+    await f.advance(600_000);
+    assert.equal(reads, 1);
+    assert.equal(f.check.diagnostics().rosterReads, 1);
+    assert.equal(f.check.diagnostics().rosterRefusals, 1);
+    assert.deepEqual(f.events, []);
+    assert.equal(f.samples().length, 8);
+    assert.ok(f.lines.every((line) => !line.includes("private-roster-error-sentinel")));
+  });
+}
+
+test("absent RTC roster support is unavailable while diagnostics continue", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  f.enroll();
+  await f.advance();
+  await f.advance(60_000);
+  assert.equal(f.samples().length, 2);
+  assert.equal(f.check.diagnostics().rosterReads, 0);
+  assert.deepEqual(f.events, []);
+});
+
+test("normal named push copies cancel pending cases even while a roster read is outstanding", async (t) => {
+  const f = fixture(t);
+  let finish;
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  f.ctx.eufy.readStationPersonRoster = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  f.enroll();
+  await f.advance();
+  f.check.resolvedByPush({ ...occurrence, person_name: "Alice" });
+  f.check.resolvedByPush({ ...occurrence, person_name: "Alice" });
+  finish({ outcome: "success", rows: [{ person_id: 42, name: "Alice" }] });
+  await flush();
+  f.enroll();
+  await f.advance(900_000);
+  assert.deepEqual(f.events, []);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.check.diagnostics().cancelledByPush, 1);
+  assert.equal(f.check.diagnostics().enrolled, 1);
+});
+
+test("named pushes cancel before the crop read completes; generic names do not cancel", async (t) => {
+  const f = fixture(t);
+  let finish;
+  f.ctx.state.faceNames.set(42, { name: "Alice" });
+  f.read(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  f.enroll();
+  f.check.resolvedByPush({ ...occurrence, person_name: "Human", recognized: true });
+  assert.equal(f.check.diagnostics().cancelledByPush, 0);
+  await f.advance();
+  f.check.resolvedByPush({ ...occurrence, nick_name: "Alice" });
+  finish({ outcome: "success", rows: [crop({ person_id: 42 })] });
+  await flush();
+  assert.deepEqual(f.events, []);
+  assert.equal(f.samples().length, 0);
+  assert.equal(f.check.diagnostics().cancelledByPush, 1);
+});
+
+test("resolved ledger refuses new cases at 512, preserves old entries, and expires after thirty minutes", async (t) => {
+  const f = fixture(t);
+  for (let i = 0; i < 511; i++) f.check.resolvedByPush({ ...occurrence, trigger_time: i, person_name: "Alice" });
+  f.ctx.state.faceNames.set(42, { name: "Alice" });
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  f.enroll();
+  await f.advance();
+  assert.equal(f.events.length, 1);
+  f.enroll({ ...occurrence, trigger_time: 9999 });
+  assert.equal(f.check.diagnostics().rejectedCapacity, 1);
+  // The oldest occurrence stays resolved; no eviction makes room for it.
+  f.enroll({ ...occurrence, trigger_time: 0 });
+  assert.equal(f.check.diagnostics().enrolled, 1);
+  assert.equal(f.check.diagnostics().rejectedCapacity, 1);
+  await f.advance(1_799_999);
+  f.enroll({ ...occurrence, trigger_time: 9999 });
+  assert.equal(f.check.diagnostics().rejectedCapacity, 2);
+  await f.advance(1);
+  f.enroll();
+  await f.advance();
+  assert.equal(f.events.length, 2);
+});
+
+test("EUFY_LATE_NAME=0 disables identification and roster reads while diagnostics continue", async (t) => {
+  const previous = process.env.EUFY_LATE_NAME;
+  process.env.EUFY_LATE_NAME = "0";
+  t.after(() => {
+    if (previous === undefined) delete process.env.EUFY_LATE_NAME;
+    else process.env.EUFY_LATE_NAME = previous;
+  });
+  const f = fixture(t);
+  f.ctx.state.faceNames.set(42, { name: "Alice" });
+  f.ctx.eufy.readStationPersonRoster = () => assert.fail("feature disabled");
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  f.enroll();
+  f.check.resolvedByPush({ ...occurrence, person_name: "Alice" });
+  await f.advance();
+  await f.advance(60_000);
+  assert.equal(f.samples().length, 2);
+  assert.equal(f.check.diagnostics().identified, 0);
+  assert.equal(f.check.diagnostics().cancelledByPush, 0);
+  assert.equal(f.check.diagnostics().rosterReads, 0);
+  assert.deepEqual(f.events, []);
+});
+
+test("stop aborts an outstanding roster read and prevents identification and further timers", async (t) => {
+  const f = fixture(t);
+  let finish, signal;
+  f.read(async () => ({ outcome: "success", rows: [crop({ person_id: 42 })] }));
+  f.ctx.eufy.readStationPersonRoster = (_station, options) => {
+    signal = options.signal;
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  };
+  f.enroll();
+  await f.advance();
+  f.check.stop();
+  assert.equal(signal.aborted, true);
+  finish({ outcome: "success", rows: [{ person_id: 42, name: "Alice" }] });
+  await flush();
+  await f.advance(900_000);
+  assert.equal(f.calls.length, 1);
+  assert.deepEqual(f.events, []);
+  assert.equal(f.check.diagnostics().identified, 0);
 });

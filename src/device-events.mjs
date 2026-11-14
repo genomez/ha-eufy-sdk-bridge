@@ -174,6 +174,7 @@ export function wireDeviceEvents(ctx, now = Date.now) {
       ctx.recordDetection?.(event, payload, enriched);
       ctx.broadcast({ event, ...enriched });
       try {
+        if (event === "personDetected") lateNameCheck.resolvedByPush(enriched);
         lateNameCheck.enroll(event, enriched);
       } catch {}
     });
