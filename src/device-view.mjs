@@ -356,7 +356,14 @@ export function createDeviceView(ctx) {
       value = entries === null ? null : JSON.stringify(entries);
     }
     const evidence = payload.evidence ? stateEvidence(payload.evidence, evidenceRuntime(eufy)) : null;
-    return { deviceSn: payload.deviceSn, property, value, ...(evidence ? { evidence } : {}) };
+    // An unprojectable event invalidates the snapshot. Omitting value makes HA
+    // refresh all decoded reads, including the sibling motion-light numbers.
+    return {
+      deviceSn: payload.deviceSn,
+      property,
+      ...(value !== null ? { value } : {}),
+      ...(evidence ? { evidence } : {}),
+    };
   }
 
   /** Anonymous cache-only snapshot of already retained camera models; never warm or await a cache. */

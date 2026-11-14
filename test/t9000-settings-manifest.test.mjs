@@ -5,6 +5,7 @@ import { EufyMega } from "@mega-yfue/eufy-sdk";
 import { createDeviceView } from "../src/device-view.mjs";
 import { createState } from "../src/state.mjs";
 import { commandFailureEvent } from "../src/pilot-log.mjs";
+import { wireDeviceEvents } from "../src/device-events.mjs";
 
 const params = {
   1010: "1",
@@ -125,6 +126,44 @@ test("non-T9000 recording options remain the SDK's legacy labels", async () => {
       .find((r) => r.property === "recordingQuality").labels,
     { 1: "HD (720P)", 2: "Full HD (1080P)", 3: "Max" },
   );
+});
+
+test("structured light changes invalidate every decoded setting without publishing null or config", async () => {
+  const { eufy, view } = await sdkFixture("T8425", 47);
+  const output = [];
+  const stop = wireDeviceEvents({
+    eufy,
+    state: createState(),
+    cfg: {},
+    dbg() {},
+    bumpActivity() {},
+    FORWARDED_EVENTS: ["propertyChanged"],
+    DETECTION_EVENTS: new Set(),
+    broadcast: (event) => output.push(event),
+    eventLog() {},
+    propertyEvent: view.propertyEvent,
+  });
+  try {
+    for (const property of ["motionLightEnabled", "lightSchedule"])
+      eufy.emit("propertyChanged", {
+        deviceSn: "fixture-camera",
+        property,
+        value: { enable: 0, time: 45, brightness: 75, mode: 2, latitude: "private-value" },
+      });
+    assert.equal(output.length, 2);
+    for (const event of output) {
+      assert.equal(event.event, "propertyChanged");
+      assert.equal(Object.hasOwn(event, "value"), false);
+      assert.equal(JSON.stringify(event).includes("private-value"), false);
+    }
+    const snapshot = await view.describeDevice("fixture-camera");
+    assert.equal(snapshot.decodedState.light.motionLightDuration, 30);
+    assert.equal(snapshot.decodedState.light.motionLightBrightness, 50);
+    assert.equal(snapshot.decodedState.light.motionLightMode, 1);
+  } finally {
+    stop();
+    await eufy.disconnect();
+  }
 });
 test("sanitized RTC errors retain their finite command outcome", () => {
   for (const [message, outcome] of [

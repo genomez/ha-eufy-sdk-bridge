@@ -111,6 +111,31 @@ test("schedule validates lists and dispatches only to an installed setter", asyn
   assert.equal((await f.rpc({ cmd: "light.setSchedule", entries: [] })).ok, false);
   assert.equal(f.calls.length, 2);
 });
+
+test("playback RPC remains pending through the SDK budget without a shorter bridge deadline", async (t) => {
+  const f = fixture(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let finish, started;
+  const entered = new Promise((resolve) => {
+    started = resolve;
+  });
+  f.doorbell.playQuickResponse = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+      started();
+    });
+  let settled = false;
+  const pending = f.rpc({ cmd: "doorbell.playQuickResponse", voiceId: 2 }).then((reply) => {
+    settled = true;
+    return reply;
+  });
+  await entered;
+  t.mock.timers.tick(70000);
+  await Promise.resolve();
+  assert.equal(settled, false);
+  finish();
+  assert.equal((await pending).ok, true);
+});
 test("new routes refuse other stations and unauthenticated sessions", async (t) => {
   const f = fixture(t, "T8030");
   for (const cmd of ["light.setSchedule", "doorbell.quickResponses", "doorbell.playQuickResponse"])
