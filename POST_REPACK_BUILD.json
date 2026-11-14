@@ -26,8 +26,8 @@
     "node": "v24.15.0",
     "command": "node --import ./test/fixtures/no-socket-guard.mjs --import ./.offline/inventory-fixes/use-local-sdk.mjs --test test/*.test.mjs",
     "environment": {
-      "TEMP": "C:/Dev/eufy-s1-phasec-20261107/ha-eufy-sdk-bridge/.offline/post-repack/temp",
-      "TMP": "C:/Dev/eufy-s1-phasec-20261107/ha-eufy-sdk-bridge/.offline/post-repack/temp",
+      "TEMP": "<local-validation-path-redacted>",
+      "TMP": "<local-validation-path-redacted>",
       "EUFY_TEST_SDK_SHA256": "17c7a5b213355d8a2e162086446034f68c56b045846d6375db76e1d8e26eee87"
     },
     "sdk_fixture": "Existing .offline/inventory-fixes/use-local-sdk.mjs loader resolves the pre-existing ../eufy-sdk/.offline/inventory-fixes/sdk.mjs bundle read-only. Installed node_modules SDK lacks stateEvidenceCapability; no dependency installation or sibling source change performed.",
