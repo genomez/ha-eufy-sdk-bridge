@@ -35,6 +35,73 @@ function milliseconds(value) {
   return Number.isSafeInteger(result) && result <= 8_640_000_000_000_000 ? result : null;
 }
 
+const TIME_FIELDS = ["start_utc", "end_utc", "start_time", "end_time", "image_cutout_timestamp", "update_time"];
+const INTERVALS = [
+  ["start_utc", "end_utc", "utc"],
+  ["start_time", "end_time", "time"],
+  ["image_cutout_timestamp", "image_cutout_timestamp", "cutout"],
+];
+
+/** Value-free shape class of a clock field; never includes any part of the value itself. */
+function shape(value) {
+  if (value === undefined || value === null) return "missing";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "nonfinite";
+    if (!Number.isInteger(value)) return "float";
+    if (value === 0) return "zero";
+    if (value < 0) return "negative";
+    return value < 100_000_000_000 ? "s" : "ms";
+  }
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return "empty";
+    if (/^\d+$/.test(text)) return `digits${Math.min(text.length, 20)}`;
+    if (/^\d+\.\d+$/.test(text)) return "decimal";
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(text)) return "datetime";
+    return "text";
+  }
+  return typeof value === "boolean" ? "boolean" : typeof value === "object" ? "object" : "other";
+}
+
+const SHAPES =
+  /^(?:missing|nonfinite|float|zero|negative|s|ms|empty|digits\d{1,2}|decimal|datetime|text|boolean|object|other)$/;
+
+/** Counts of already-classified shapes; anything outside the shape vocabulary is reported as "other". */
+function shapeCounts(shapes) {
+  const counts = new Map();
+  for (const raw of shapes) {
+    const name = typeof raw === "string" && SHAPES.test(raw) ? raw : "other";
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return counts.size
+    ? [...counts]
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([name, count]) => `${name}:${count}`)
+        .join(",")
+    : "none";
+}
+
+/** First parseable start/end pair; a missing or earlier end collapses to the start. */
+// Clocks before 2001-09-09 are treated as relative offsets, not epochs, so they cannot fake a window match.
+const PLAUSIBLE_EPOCH_MS = 1_000_000_000_000;
+const epoch = (value) => {
+  const result = milliseconds(value);
+  return result !== null && result >= PLAUSIBLE_EPOCH_MS ? result : null;
+};
+
+/** First plausible start; its end may come from any end field, and a missing or earlier end collapses to the start. */
+function interval(row) {
+  for (const [startKey, endKey, source] of INTERVALS) {
+    const start = epoch(row?.[startKey]);
+    if (start === null) continue;
+    const end = [endKey, "end_utc", "end_time"]
+      .map((key) => epoch(row?.[key]))
+      .find((value) => value !== null && value >= start);
+    return { start, end: end ?? start, source };
+  }
+  return null;
+}
+
 /** The diagnostic file contains only allowlisted fields; existing files are restricted before append. */
 export function appendLateNameLine(line, file = "/tmp/eufy-late-name-check.log") {
   let fd;
@@ -145,6 +212,40 @@ export function createLateNameCheck(
         ` recog_flag=${flags.length ? Math.max(...flags) : null} update_changed=${updateChanged} changed_since_baseline=${changed}`,
     );
     log(`case=${entry.id} table slot=${WINDOWS[slot][2]}${summary}`);
+    // Value-free clock shapes and a start-to-end window match for this camera's rows (diagnostic only).
+    const sameDevice = rows.filter((row) => row?.device_sn === entry.deviceSn);
+    log(
+      `case=${entry.id} fields slot=${WINDOWS[slot][2]} same_device=${sameDevice.length} ` +
+        TIME_FIELDS.map(
+          (key) => `${key}=${shapeCounts(sameDevice.map((row) => row?.clock_shapes?.[key] ?? shape(row?.[key])))}`,
+        ).join(" "),
+    );
+    const sources = { utc: 0, time: 0, cutout: 0 };
+    let nearestGap = null;
+    let nearestSource = null;
+    const windowRows = sameDevice.flatMap((row) => {
+      const span = interval(row);
+      if (!span) return [];
+      sources[span.source]++;
+      // Signed gap: positive when the row starts after the clock, negative when it ended before, 0 inside.
+      const gap = entry.clocks
+        .map((clock) => (clock < span.start ? span.start - clock : clock > span.end ? span.end - clock : 0))
+        .reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b));
+      if (nearestGap === null || Math.abs(gap) < Math.abs(nearestGap)) {
+        nearestGap = gap;
+        nearestSource = span.source;
+      }
+      return Math.abs(gap) <= 5000 ? [row] : [];
+    });
+    const windowPersons = windowRows.map((row) => integer(row.person_id));
+    const windowFlags = windowRows.map((row) => integer(row.person_recog_flag)).filter((flag) => flag !== null);
+    log(
+      `case=${entry.id} window slot=${WINDOWS[slot][2]} timed_utc=${sources.utc} timed_time=${sources.time}` +
+        ` timed_cutout=${sources.cutout} candidates=${windowRows.length}` +
+        ` records=${new Set(windowRows.map((row) => row.record_id)).size} nearest_gap_ms=${nearestGap} nearest_source=${nearestSource}` +
+        ` person_id_pos=${windowPersons.some((id) => id > 0) ? 1 : windowPersons.length && windowPersons.every((id) => id !== null) ? 0 : null}` +
+        ` recog_flag=${windowFlags.length ? Math.max(...windowFlags) : null}`,
+    );
     return candidates.length;
   }
 

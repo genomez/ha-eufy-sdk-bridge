@@ -323,6 +323,86 @@ test("each sample adds a value-free table summary with relative row ages", async
   assert.doesNotMatch(table.join("\n"), /different-camera|private-station-sentinel/);
 });
 
+test("fields line counts value-free clock shapes for this camera only", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ end_utc: EPOCH + 9000, clock_shapes: { start_utc: "s", end_utc: "ms", start_time: "datetime" } }),
+      crop({ start_utc: null, clock_shapes: { start_utc: "float", end_utc: "private-shape-sentinel" } }),
+      crop({ start_utc: "private-clock-sentinel" }),
+      crop({ device_sn: "different-camera", clock_shapes: { start_utc: "decimal" } }),
+    ],
+  }));
+  f.enroll();
+  await f.advance();
+  const fields = f.lines.filter((line) => line.includes(" fields slot="));
+  assert.match(
+    fields[0],
+    /case=1 fields slot=0 same_device=3 start_utc=float:1,s:1,text:1 end_utc=missing:1,ms:1,other:1 start_time=datetime:1,missing:2 end_time=missing:3 image_cutout_timestamp=missing:3 update_time=s:3$/,
+  );
+  assert.doesNotMatch(fields.join("\n"), /private|decimal|different-camera/);
+});
+
+test("window line matches a clock inside a row's start-to-end span beyond the start tolerance", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ start_utc: EPOCH - 20_000, end_utc: EPOCH + 10_000, person_id: 3, person_recog_flag: 1 }),
+      crop({ record_id: 72, start_utc: null, start_time: EPOCH + 8000, end_time: EPOCH + 9000 }),
+      crop({ record_id: 73, start_utc: null, image_cutout_timestamp: EPOCH - 60_000 }),
+      crop({ record_id: 74, start_utc: null }),
+    ],
+  }));
+  f.enroll();
+  await f.advance();
+  const windows = f.lines.filter((line) => line.includes(" window slot="));
+  assert.match(
+    windows[0],
+    /case=1 window slot=0 timed_utc=1 timed_time=1 timed_cutout=1 candidates=1 records=1 nearest_gap_ms=0 nearest_source=utc person_id_pos=1 recog_flag=1$/,
+  );
+  assert.match(f.samples()[0], /candidates=0 /);
+});
+
+test("window line reports the signed gap to the nearest span when nothing is inside", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ start_utc: EPOCH - 40_000, end_utc: EPOCH - 12_000 }),
+      crop({ start_utc: EPOCH + 30_000, end_utc: EPOCH + 31_000 }),
+      crop({ start_utc: EPOCH + 9000, end_utc: EPOCH + 3000 }),
+    ],
+  }));
+  f.enroll();
+  await f.advance();
+  const windows = f.lines.filter((line) => line.includes(" window slot="));
+  assert.match(
+    windows[0],
+    /timed_utc=3 timed_time=0 timed_cutout=0 candidates=0 records=0 nearest_gap_ms=9000 nearest_source=utc person_id_pos=null recog_flag=null$/,
+  );
+});
+
+test("window ignores implausible relative clocks and takes an end from another field", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ start_utc: null, start_time: 3500, image_cutout_timestamp: 12 }),
+      crop({ record_id: 72, start_utc: EPOCH - 20_000, end_utc: null, end_time: EPOCH + 2000 }),
+    ],
+  }));
+  f.enroll();
+  await f.advance();
+  const windows = f.lines.filter((line) => line.includes(" window slot="));
+  assert.match(
+    windows[0],
+    /timed_utc=1 timed_time=0 timed_cutout=0 candidates=1 records=1 nearest_gap_ms=0 nearest_source=utc /,
+  );
+  assert.doesNotMatch(windows.join(" "), new RegExp(String(EPOCH)));
+});
+
 test("null-to-value transitions alone cannot establish a change", async (t) => {
   const f = fixture(t);
   f.read(async () => ({
