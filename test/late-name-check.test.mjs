@@ -438,6 +438,37 @@ test("cutout line is null-safe when no row has a plausible cutout clock", async 
   );
 });
 
+test("nearby line lists value-free gaps and person flags for rows from -10 s to +60 s", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({
+    outcome: "success",
+    rows: [
+      crop({ start_utc: 0, image_cutout_timestamp: EPOCH + 23_000, person_id: 9, person_recog_flag: 0 }),
+      crop({ record_id: 72, start_utc: EPOCH / 1000 + 2, image_cutout_timestamp: EPOCH + 3000 }),
+      crop({ record_id: 73, start_utc: EPOCH / 1000 - 30, image_cutout_timestamp: EPOCH - 25_000 }),
+      crop({ record_id: 74, start_utc: EPOCH / 1000 + 90, person_id: null, person_recog_flag: null }),
+      crop({ record_id: 75, start_utc: EPOCH / 1000 + 40, person_id: null, person_recog_flag: null }),
+      crop({ device_sn: "different-camera", image_cutout_timestamp: EPOCH }),
+    ],
+  }));
+  f.enroll();
+  await f.advance();
+  const nearby = f.lines.find((line) => line.includes(" nearby slot="));
+  assert.match(nearby, /case=1 nearby slot=0 count=3 rows=2000\|3000\|0\|0;null\|23000\|1\|0;40000\|null\|n\|n$/);
+  assert.doesNotMatch(nearby, new RegExp(`${EPOCH}|different-camera|private`));
+});
+
+test("nearby line reports none when no row is in range", async (t) => {
+  const f = fixture(t);
+  f.read(async () => ({ outcome: "success", rows: [crop({ start_utc: EPOCH / 1000 - 3600 })] }));
+  f.enroll();
+  await f.advance();
+  assert.match(
+    f.lines.find((line) => line.includes(" nearby slot=")),
+    /nearby slot=0 count=0 rows=none$/,
+  );
+});
+
 test("null-to-value transitions alone cannot establish a change", async (t) => {
   const f = fixture(t);
   f.read(async () => ({

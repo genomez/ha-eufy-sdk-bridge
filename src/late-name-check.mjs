@@ -265,6 +265,41 @@ export function createLateNameCheck(
         ` person_id_pos=${cutoutPersons.some((id) => id > 0) ? 1 : cutoutPersons.length && cutoutPersons.every((id) => id !== null) ? 0 : null}` +
         ` recog_flag=${cutoutFlags.length ? Math.max(...cutoutFlags) : null}`,
     );
+    // Every row of this camera from 10 s before to 60 s after the push on either clock, nearest first, at most 8:
+    // start_gap_ms|cutout_gap_ms|person_id_pos|recog_flag per row (diagnostic only; no ids or clock values).
+    const nearest = (at) =>
+      at === null
+        ? null
+        : entry.clocks.map((clock) => at - clock).reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b));
+    const inRange = (gap) => gap !== null && gap >= -10_000 && gap <= 60_000;
+    const nearby = sameDevice
+      .map((row) => {
+        const span = interval(row);
+        const startGap = span && span.source !== "cutout" ? nearest(span.start) : null;
+        const cutoutGap = nearest(epoch(row?.image_cutout_timestamp));
+        const id = integer(row.person_id);
+        return {
+          startGap,
+          cutoutGap,
+          pos: id === null ? "n" : id > 0 ? 1 : 0,
+          flag: integer(row.person_recog_flag) ?? "n",
+        };
+      })
+      .filter(({ startGap, cutoutGap }) => inRange(startGap) || inRange(cutoutGap))
+      .sort(
+        (a, b) =>
+          Math.min(Math.abs(a.startGap ?? Infinity), Math.abs(a.cutoutGap ?? Infinity)) -
+          Math.min(Math.abs(b.startGap ?? Infinity), Math.abs(b.cutoutGap ?? Infinity)),
+      );
+    log(
+      `case=${entry.id} nearby slot=${WINDOWS[slot][2]} count=${nearby.length} rows=` +
+        (nearby.length
+          ? nearby
+              .slice(0, 8)
+              .map((r) => `${r.startGap}|${r.cutoutGap}|${r.pos}|${r.flag}`)
+              .join(";")
+          : "none"),
+    );
     return candidates.length;
   }
 
