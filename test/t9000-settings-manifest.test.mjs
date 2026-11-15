@@ -167,6 +167,56 @@ test("structured light changes invalidate every decoded setting without publishi
     await eufy.disconnect();
   }
 });
+for (const [model, type] of [
+  ["T8425", 47],
+  ["T8426", 87],
+])
+  test(`${model} app composite reports invalidate the scalar primary and refresh every sibling`, async () => {
+    const { eufy, dev, view } = await sdkFixture(model, type);
+    const output = [];
+    const announced = [];
+    eufy.on("propertyChanged", (event) => announced.push(event));
+    const stop = wireDeviceEvents({
+      eufy,
+      state: createState(),
+      cfg: {},
+      dbg() {},
+      bumpActivity() {},
+      FORWARDED_EVENTS: ["propertyChanged"],
+      DETECTION_EVENTS: new Set(),
+      broadcast: (event) => output.push(event),
+      eventLog() {},
+      propertyEvent: view.propertyEvent,
+    });
+    let config = JSON.parse(params[1422]);
+    try {
+      for (const patch of [{ mode: 0 }, { time: 180 }, { brightness: 75 }, { enable: 0 }]) {
+        config = { ...config, ...patch };
+        output.length = 0;
+        announced.length = 0;
+        eufy.applyRealtimeState("fixture-camera", { 1422: JSON.stringify(config) });
+        assert.equal(announced.length, 1);
+        assert.equal(announced[0].property, "motionLightEnabled");
+        assert.equal(announced[0].value, config.enable === 1);
+        assert.equal(output.length, 1);
+        assert.equal(output[0].property, "motionLightEnabled");
+        assert.equal(Object.hasOwn(output[0], "value"), false);
+        assert.equal(JSON.stringify(output).includes("private-value"), false);
+        const snapshot = (await view.describeDevice("fixture-camera")).decodedState.light;
+        assert.equal(snapshot.motionLightMode, config.mode);
+        assert.equal(snapshot.motionLightDuration, config.time);
+        assert.equal(snapshot.motionLightBrightness, config.brightness);
+        assert.equal(snapshot.motionLightEnabled, config.enable === 1);
+      }
+      output.length = 0;
+      eufy.applyRealtimeState("fixture-camera", { 1422: JSON.stringify(config) });
+      assert.equal(output.length, 0);
+    } finally {
+      stop();
+      await eufy.disconnect();
+    }
+  });
+
 test("sanitized RTC errors retain their finite command outcome", () => {
   for (const [message, outcome] of [
     ["rtc: rejected cmd 1700 (err -17)", "command_rejected"],

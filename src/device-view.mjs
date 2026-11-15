@@ -364,14 +364,19 @@ export function createDeviceView(ctx) {
     }
     // A flat event cannot identify one of multiple capability reads for the same property.
     // Invalidate ambiguity instead of choosing a capability by iteration order.
-    if (["lightScheduleConfig", "motionActivateLight", "unknown_1421", "unknown_1422"].includes(property)) value = null;
+    if (
+      ["motionLightEnabled", "lightScheduleConfig", "motionActivateLight", "unknown_1421", "unknown_1422"].includes(
+        property,
+      )
+    )
+      value = null;
     if (property === "lightSchedule") {
       const entries = publicSchedule(value);
       value = entries === null ? null : JSON.stringify(entries);
     }
     const evidence = payload.evidence ? stateEvidence(payload.evidence, evidenceRuntime(eufy)) : null;
-    // An unprojectable event invalidates the snapshot. Omitting value makes HA
-    // refresh all decoded reads, including the sibling motion-light numbers.
+    // Composite events invalidate the snapshot even when their primary getter is scalar.
+    // Omitting value makes HA refresh every sibling decoded from the same report.
     return {
       deviceSn: payload.deviceSn,
       property,
