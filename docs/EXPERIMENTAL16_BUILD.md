@@ -1,6 +1,6 @@
 # Experimental.16 local build inputs
 
-Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `d96b7c5141db7054ceed0c81aa4a05eb3de948c3`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
+Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `daeb1751839989cb0a14b8ee6d300a99b3cdb28b`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
 
 ## Reproduce the SDK dependency
 
@@ -81,3 +81,20 @@ remained active. The integration classifier now retains read-only AI masks as se
 creates per-bit switches only when the SDK advertises write permission. Integration input:
 `632e4f978df48effcefff0c7ee7ad6cacfc0fa7b`; offline validation: 1,256 passed / 1 skipped.
 The production channel inventory and corrected firmware behavior were not tested here.
+
+## App-verified quality and timer labels
+
+The current SDK pin supplies model-specific recording labels through both manifests:
+T8416 under T9000 uses 720P/1080P/2K; other model and station maps are unchanged.
+The named 2K write retains raw tier 3 and the base64 raw-text config merge.
+Unverified 4K and Auto raw values are not offered. The integration adds the five
+verified motion-light timer choices for T9000-attached T8425/T8426 over the existing
+1422 time setter, retaining the number identity hidden by default.
+
+Current SDK validation: 7,777 passed / 8 skipped; typecheck, build, ESM, examples,
+snippets and all five guards passed. Full bridge validation against the installed
+repack: 1,463 passed / 53 skipped / zero failed. External network entry points were
+blocked before module loading; loopback-only socket tests ran without a global skip
+flag. Integration validation: 1,260 passed / 1 skipped; ruff passed on changed Python
+files. These results supersede earlier validation counts for this local candidate.
+No external service, device or live HA was contacted. No image was built or deployed.

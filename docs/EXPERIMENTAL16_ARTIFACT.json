@@ -3,18 +3,18 @@
   "status": "local-source-candidate",
   "branch": "s1-experimental16-dev",
   "baseCommit": "d3b0d3f4d04ca5f63b03946622be1266eafe5069",
-  "sdkCommit": "d96b7c5141db7054ceed0c81aa4a05eb3de948c3",
+  "sdkCommit": "daeb1751839989cb0a14b8ee6d300a99b3cdb28b",
   "sdkVersion": "0.2.1-s1.experimental.16",
   "tarball": "eufy-sdk-local.tgz",
-  "sha256": "7eef521b8728cd00316e566cee8237361be1330c992d3629c5e5972543b9fde7",
-  "runtimeSha256": "edecd719dba06809c3be0ac143f65a7498e0b2222a9b9c1942555d8ae6218456",
+  "sha256": "220af2f027ace61b20df79ca6fe8090dae02c263b8ca8be6afbd20e02063d819",
+  "runtimeSha256": "edd37d3fd9a8859c652cd5992f3e2cf1ad0a9a007e3b9aebd186494454ef2bf4",
   "localOnly": true,
   "imageBuilt": false,
   "liveAcceptance": false,
   "sourceHashConvention": "UTF-8 text normalized to LF",
   "bridgeInputs": {
     "package.json": "08bfae43266504f149cc1f1d7e9087bdbbce5702bdd991a52cec484be8067fd4",
-    "package-lock.json": "578c64b31716a894e32c654a29a4252c3a5be8e412a9bc8e497496f6e3938239",
+    "package-lock.json": "c0a84cac0514ae2e50bfbbef503266f06cc18267bca3d5ab4a75b28925d54e94",
     "src/bounded-state-writes.mjs": "ab6c2b71d25d4934281abf67da6a71b0ce52cad436f63f68215c0599de9e2fd3",
     "src/device-view.mjs": "c1f45b1dca1c285b982e416d5727a6451150e2cfcb1d0c11138e84c34b12eaed",
     "src/pilot-log.mjs": "3611bb525783257246206409b168b3f2cd6db2860a204002485e5bb19baa900e",
@@ -24,13 +24,11 @@
   },
   "validation": {
     "node": "v24.15.0",
-    "focusedCommand": "node --test test/t9000-settings-manifest.test.mjs",
-    "focusedPassed": 12,
     "fullCommand": "$env:EUFY_TEST_SDK_SHA256 = (Get-FileHash -Algorithm SHA256 node_modules/@mega-yfue/eufy-sdk/dist/index.js).Hash.ToLowerInvariant(); npm test",
-    "fullPassed": 1451,
+    "fullPassed": 1463,
     "fullFailed": 0,
-    "fullSkipped": 65,
-    "scope": "Network entry points disabled before module loading; existing no-socket/process guards retained. The loopback socket-test skip flag was set globally, adding 12 skips. No live-device acceptance."
+    "fullSkipped": 53,
+    "scope": "Full suite with external network entry points blocked before module loading and loopback sockets permitted. Existing per-test no-socket/process guards retained. No global socket-test skip flag. No live-device acceptance."
   },
   "sdkFindings": [
     "SDK commit 6fea9a759379bd7ae8406c7e2e01adc2b7f024c9 promotes retained unknown configs when station context resolves, preserving observation timestamps; cold and fresh facade reads/writes no longer need a later report.",
@@ -38,7 +36,8 @@
     "Verified-parameter allowlist withholds unverified T9000 setters; composite SDK writes are serialized. Bridge full suite passes without code or test changes.",
     "Per-field patches retain the original baseline and ordered ACKed values for 120 seconds. Confirmation, the baseline and any unexpired ACKed value preserve the latest ACK; only a third observed value or TTL expiry retires the field. Queue bounds are per device and parameter; reset releases active ownership safely and enqueue timers are unreferenced. Superseded writes use a typed non-send error, mapped to successful bridge receipts without failure telemetry. Quick-response quarantine and signaling identity redaction are unchanged.",
     "Reviewed T9000 applicability: no non-doorbell loitering, accessory ringtone selection or unwritable light setters; doorbell recording quality withheld. Installed write-only volume settings are projected without invoking actions; T9000 prompt writes include mValue3 zero. Motion-light duration bounds use upstream timer metadata; intermediate-second firmware acceptance remains unproven.",
-    "AI detection writes on T9000 use the uniquely assigned device channel in both the portal header and payload. The former outer-channel-zero override failed dispatch preparation for nonzero targets. Missing, invalid or duplicate channel evidence withholds the AI setter and writable metadata; other station envelopes remain unchanged. Constructor-free facade regressions cover seven model shapes, four channels, all four bits and restores. Hardware acceptance of the corrected nonzero route remains pending."
+    "AI detection writes on T9000 use the uniquely assigned device channel in both the portal header and payload. The former outer-channel-zero override failed dispatch preparation for nonzero targets. Missing, invalid or duplicate channel evidence withholds the AI setter and writable metadata; other station envelopes remain unchanged. Constructor-free facade regressions cover seven model shapes, four channels, all four bits and restores. Hardware acceptance of the corrected nonzero route remains pending.",
+    "T9000-attached T8416 recording tier 3 is labeled 2K in both property and decoded manifests. Named 2K writes map to raw tier 3 through the unchanged base64 raw-text capture-config path; 3K and unverified 4K are refused for this model. Other models retain their maps. Offline SDK validation: 7777 passed, 8 skipped; compiler, build, ESM, examples, snippets and all five guards passed. Verified motion-light timer choices retain the existing composite 1422 time writes."
   ],
   "publicationReceipts": "Existing .15 source/publication manifests remain historical. This receipt identifies the unbuilt .16 local candidate."
 }
