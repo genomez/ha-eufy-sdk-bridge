@@ -174,3 +174,47 @@ test("sanitized RTC errors retain their finite command outcome", () => {
   ])
     assert.equal(commandFailureEvent(new Error(message)), outcome);
 });
+
+test("reviewed T9000 controls have usable topology gates and compatible volume reads", async () => {
+  for (const [model, type] of [
+    ["T8134", 19],
+    ["T8214", 93],
+  ]) {
+    const { eufy, dev, view } = await sdkFixture(model, type);
+    try {
+      const reads = view.decodedProperties(dev).details.flatMap((d) => d.reads);
+      assert.equal(reads.find((r) => r.property === "light")?.writable, false);
+      assert.equal((await view.describeDevice("fixture-station")).canReboot, false);
+      if (model === "T8214") {
+        assert.equal(reads.find((r) => r.property === "recordingQuality")?.writable, false);
+        assert.equal(reads.find((r) => r.property === "ringtoneVolume")?.writable, true);
+        assert.equal(dev.getPropertyValue("ringtoneVolume"), 50);
+        const ringtone = view.propertySpecs(dev).find((p) => p.name === "ringtoneVolume");
+        assert.equal(ringtone.writeOnly, undefined);
+        assert.deepEqual([ringtone.min, ringtone.max], [0, 100]);
+      }
+      const station = await view.getDevice("fixture-station");
+      const prompt = view.propertySpecs(station).find((p) => p.name === "promptVolume");
+      assert.equal(prompt.writeOnly, true);
+      assert.deepEqual([prompt.min, prompt.max], [0, 100]);
+    } finally {
+      await eufy.disconnect();
+    }
+  }
+});
+
+test("legacy station reboot and light controls remain available", async () => {
+  const { eufy, dev, view } = await sdkFixture("T8134", 19, "T8030");
+  try {
+    assert.equal((await view.describeDevice("fixture-station")).canReboot, true);
+    assert.equal(
+      view
+        .decodedProperties(dev)
+        .details.flatMap((d) => d.reads)
+        .find((r) => r.property === "light")?.writable,
+      true,
+    );
+  } finally {
+    await eufy.disconnect();
+  }
+});

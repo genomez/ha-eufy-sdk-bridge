@@ -217,7 +217,11 @@ export function createDeviceView(ctx) {
       streaming: isCamera ? streaming.has(m.sn) : undefined, // live P2P feed active right now?
       // Share the SDK media budget's hardware classification, independent of a level/charging reading.
       power: isCamera ? (onBatteryPower(m.model, m.capabilities) ? "battery" : "wired") : undefined,
-      canReboot: m.codec === "station", // HomeBase-only; drives a Reboot button in HA
+      canReboot:
+        m.codec === "station" &&
+        !String(m.model ?? "")
+          .toUpperCase()
+          .startsWith("T9000"), // HomeBase-only; drives a Reboot button in HA
     };
   }
 
@@ -317,7 +321,10 @@ export function createDeviceView(ctx) {
       details: (manifest.details ?? []).map(({ capability, accessor, reads, actions, undescribedActions }) => ({
         capability,
         accessor,
-        reads,
+        reads: (reads ?? []).map((read) => {
+          const setting = (dev.writeOnlySettings ?? []).find((candidate) => candidate.name === read.property);
+          return setting ? { ...read, writable: true } : read;
+        }),
         actions,
         undescribedActions,
       })),

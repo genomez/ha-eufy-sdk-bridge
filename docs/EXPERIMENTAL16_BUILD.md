@@ -1,6 +1,6 @@
 # Experimental.16 local build inputs
 
-Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `edfc2433fb52037d98808a8728e0f0959ad4b18d`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
+Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `8a3a7052fb8840b90597061f6ab4d1f6d4d8ffff`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
 
 ## Reproduce the SDK dependency
 
@@ -40,3 +40,22 @@ The schedule service uses the latest retained SDK config and has no compare-and-
 Current local repack: verified-parameter setter allowlist and composite-write serialization included; bridge full suite: 1,461 passed, 53 skipped, zero failed.
 
 The current SDK retains each field's original baseline and ordered ACKed values for 120 seconds. Baseline or retained-value reports preserve the latest ACK, including confirmation followed by stale cloud reads and lagging polls of earlier writes. Only third values or expiry retire a patch. An app edit back to an ACKed value is indistinguishable from lag and the latest SDK write wins until expiry. Queues coalesce explicit fields with a 32-intent cap per device and parameter, a 60-second unreferenced enqueue deadline, and generation-safe reset ownership. Superseded slider writes return successful unsent receipts and do not enter failure telemetry. Quick-response quarantine, failure isolation and signaling identity redaction remain intact. SDK validation: 7,674 passed / 8 skipped; focused 40 passed; typecheck, build, ESM and all five guards passed. Bridge validation after the offline repack: 1,461 passed / 53 skipped, zero failed; focused routes and request evidence: 19 passed. No integration runtime files changed.
+
+
+## Reviewed entity audit bundle
+
+The current local SDK input is pinned above and in `EXPERIMENTAL16_ARTIFACT.json`.
+The bridge does not offer station reboot on T9000 while no RTC reboot route exists.
+The SDK owns non-doorbell loitering, accessory ringtone, doorbell recording-quality and
+light-write applicability gates. Other station topologies retain their existing behavior.
+The bridge joins installed SDK write-only settings to a reported property of the same name,
+so doorbell ringtone volume remains readable and becomes writable. It also exposes prompt
+volume as a write-only percentage setting. No getter or setter is invoked to build metadata.
+The integration retains the existing ringtone sensors alongside the new volume numbers.
+
+The refreshed package was built, packed with lifecycle scripts disabled, and installed with
+`npm install --offline --ignore-scripts --no-audit --no-fund @mega-yfue/eufy-sdk@file:eufy-sdk-local.tgz`.
+Runtime, tarball and LF-normalized input hashes are in the receipt. Validation of this bundle:
+SDK 7,748 passed / 8 skipped, all required compiler/build/example/snippet/ESM and five guards
+passed (guards used installed Git Bash); bridge 1,463 passed / 53 skipped; integration 1,253
+passed / 1 skipped. These are offline results. This source candidate has not been deployed.
