@@ -9,7 +9,7 @@ import { pilotLog, publicError, commandFailureEvent } from "./pilot-log.mjs";
 // client set and the two fan-out helpers (`send`, `broadcast`) that the rest of the bridge publishes
 // through — returned so server.mjs can hang them on ctx for auth.mjs / boot.mjs / http-routes.mjs.
 import { WebSocketServer } from "ws";
-import { listLightEffects } from "@mega-yfue/eufy-sdk";
+import { CompositeWriteSupersededError, listLightEffects } from "@mega-yfue/eufy-sdk";
 import { SOLIX_CONTROLS, SOLIX_DISABLED } from "./solix.mjs";
 import { WEBRTC_ERRORS } from "./webrtc-relay.mjs";
 import { createBoundedStateWrites, boundedStateWritesCapability } from "./bounded-state-writes.mjs";
@@ -115,7 +115,11 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     const replySend = (socket, response) => {
       socketOpenAtReply = socket.readyState === socket.OPEN;
       outcome = response.ok === false ? "failed" : "success";
-      if (response.receipt && !["acknowledged", "pending_accepted"].includes(response.receipt.status))
+      if (
+        response.receipt &&
+        !["acknowledged", "pending_accepted"].includes(response.receipt.status) &&
+        !(response.receipt.status === "superseded_before_send" && response.receipt.sendAttempted === false)
+      )
         outcome = "failed";
       try {
         return send(socket, response);
@@ -451,6 +455,12 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
             ctx.recordCommand?.("completed");
             dbg("device.set completed");
           } catch (e) {
+            if (e instanceof CompositeWriteSupersededError) {
+              pilotLog("command_superseded_before_send");
+              return reply({
+                receipt: { status: "superseded_before_send", sendAttempted: false, effect: "unconfirmed" },
+              });
+            }
             pilotLog("ws_server_2");
             commandErrorCode =
               e?.code === "guard_dispatch_rejected" ? "guard_dispatch_rejected" : commandFailureEvent(e);

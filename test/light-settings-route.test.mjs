@@ -5,9 +5,11 @@ import http from "node:http";
 import { createWsServer } from "../src/ws-server.mjs";
 import { createState } from "../src/state.mjs";
 import { createT9000Settings, publicSchedule, validateSchedule } from "../src/t9000-settings.mjs";
+import { CompositeWriteSupersededError } from "@mega-yfue/eufy-sdk";
 function fixture(t, model = "T9000") {
   const calls = [],
-    logs = [];
+    logs = [],
+    commandStates = [];
   const specs = [
     { name: "brightness", writable: true },
     { name: "spotlightEnabled", writable: true },
@@ -36,6 +38,7 @@ function fixture(t, model = "T9000") {
       state,
       eufy,
       dbg: (line) => logs.push(line),
+      recordCommand: (status) => commandStates.push(status),
       propertySpecs: () => specs,
       decodedProperties: () => ({ details: [] }),
     },
@@ -57,8 +60,29 @@ function fixture(t, model = "T9000") {
     );
     return reply;
   }
-  return { calls, logs, specs, light, doorbell, state, rpc };
+  return { calls, logs, specs, light, doorbell, state, rpc, eufy, commandStates, ws };
 }
+
+test("a superseded slider write is a successful unsent receipt without failure telemetry", async (t) => {
+  const f = fixture(t);
+  f.eufy.setProperty = async () => {
+    throw new CompositeWriteSupersededError();
+  };
+  const reply = await f.rpc({ cmd: "device.set", name: "motionLightBrightness", value: 70 });
+  assert.equal(reply.ok, true);
+  assert.deepEqual(reply.receipt, { status: "superseded_before_send", sendAttempted: false, effect: "unconfirmed" });
+  assert.equal(f.commandStates.includes("failed"), false);
+  assert.equal(f.ws.getRequestEvidence().failedRequests.length, 0);
+});
+
+test("an ordinary slider rejection still reports failure", async (t) => {
+  const f = fixture(t);
+  f.eufy.setProperty = async () => {
+    throw new Error("Synthetic rejection");
+  };
+  assert.equal((await f.rpc({ cmd: "device.set", name: "motionLightBrightness", value: 70 })).ok, false);
+  assert.equal(f.commandStates.includes("failed"), true);
+});
 for (const model of ["T9000", "T8030"])
   test(`${model} scalar settings follow SDK flags`, async (t) => {
     const f = fixture(t, model);

@@ -7,6 +7,7 @@ const forbidden = () => { throw new Error("SDK calls forbidden in relay proof te
 export {
   ForbiddenSdk as EufyMega, ForbiddenSdk as FileSessionStore, ForbiddenSdk as FileFcmStore,
   ForbiddenSdk as ConsoleLogger, ForbiddenSdk as SolixClient, ForbiddenSdk as SolixMqtt,
+  ForbiddenSdk as CompositeWriteSupersededError,
   forbidden as cameraPowerTier,
   forbidden as listLightEffects, forbidden as discoverSolixDevices, forbidden as solarbankSceneReadings,
 };
