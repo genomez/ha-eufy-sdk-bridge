@@ -211,6 +211,15 @@ for (const [model, type] of [
       output.length = 0;
       eufy.applyRealtimeState("fixture-camera", { 1422: JSON.stringify(config) });
       assert.equal(output.length, 0);
+      // RTC receipts project through the same function and must keep the switch value.
+      for (const enabled of [true, false]) {
+        const receipt = view.propertyEvent({
+          deviceSn: "fixture-camera",
+          property: "motionLightEnabled",
+          value: enabled,
+        });
+        assert.equal(receipt.value, enabled);
+      }
     } finally {
       stop();
       await eufy.disconnect();

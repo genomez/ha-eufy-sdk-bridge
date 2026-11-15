@@ -153,7 +153,13 @@ export function wireDeviceEvents(ctx, now = Date.now) {
       ctx.bumpActivity();
       if (event === "propertyChanged") {
         const projected = ctx.propertyEvent?.(payload);
-        if (projected) ctx.broadcast({ event, ...projected });
+        if (projected) {
+          // A 1422 composite change announces only its primary getter, even when just a sibling
+          // (mode, timer, brightness) changed. Omit the value so HA refreshes every sibling.
+          // RTC receipts (propertiesObserved) keep the value for the switch's prompt update.
+          if (projected.property === "motionLightEnabled") delete projected.value;
+          ctx.broadcast({ event, ...projected });
+        }
         return;
       }
       const detection = DETECTION_EVENTS.has(event);
