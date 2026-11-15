@@ -1,6 +1,6 @@
 # Experimental.16 local build inputs
 
-Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `8a3a7052fb8840b90597061f6ab4d1f6d4d8ffff`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
+Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `d96b7c5141db7054ceed0c81aa4a05eb3de948c3`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
 
 ## Reproduce the SDK dependency
 
@@ -59,3 +59,25 @@ Runtime, tarball and LF-normalized input hashes are in the receipt. Validation o
 SDK 7,748 passed / 8 skipped, all required compiler/build/example/snippet/ESM and five guards
 passed (guards used installed Git Bash); bridge 1,463 passed / 53 skipped; integration 1,253
 passed / 1 skipped. These are offline results. This source candidate has not been deployed.
+
+## AI detection channel routing
+
+SDK input `d96b7c5141db7054ceed0c81aa4a05eb3de948c3` removes the AI detection outer-channel-zero override
+for T9000-attached devices. The facade validates the command channel against the intended
+device before transport handoff; a nonzero device previously failed at dispatch preparation.
+The corrected envelope uses the roster-assigned device channel in both header and payload,
+retaining command 1298, mValue3 zero and the existing mask. Other stations retain their envelope.
+Missing, invalid or duplicate channel evidence withholds the setter and writable metadata,
+so callers do not create AI bit switches for an unsafe target.
+
+Constructor-free facade regressions cover T8134, T8425, T8170, T8171, T8416, T8426 and T8214
+on channels zero and nonzero, all four bits and restores, unsafe-channel refusals and unchanged
+P2P routing. The former channel choice reproduces the exact pre-dispatch error in seven cases.
+SDK validation: 7,765 passed / 8 skipped; typecheck, build, ESM, examples, snippets and five
+guards passed. The packed runtime matches the installed bridge dependency. Bridge validation:
+1,451 passed / 65 skipped. Network entry points were disabled before module loading; the
+existing loopback skip flag added 12 skips to the prior 53. Per-test no-socket/process guards
+remained active. The integration classifier now retains read-only AI masks as sensors and
+creates per-bit switches only when the SDK advertises write permission. Integration input:
+`632e4f978df48effcefff0c7ee7ad6cacfc0fa7b`; offline validation: 1,256 passed / 1 skipped.
+The production channel inventory and corrected firmware behavior were not tested here.
