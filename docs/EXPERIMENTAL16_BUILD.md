@@ -1,6 +1,6 @@
 # Experimental.16 local build inputs
 
-Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `dbdbd6db84bb73d994e6d773314d58fe7da89541`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
+Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `797ff74fe7aca2648c05246cf708d24a39a0db96`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
 
 ## Reproduce the SDK dependency
 
@@ -33,8 +33,10 @@ The HA custom component is delivered separately: replace the complete `custom_co
 
 `Device.describe()` now includes station context when choosing labels. The bridge forwards its recording-quality labels directly; the property-enum workaround was removed. Other station labels remain unchanged.
 
-SDK commit `dbdbd6db84bb73d994e6d773314d58fe7da89541` fixes cold indexing by promoting retained unknown parameters when station context resolves, preserving their observation timestamps. Binding also resolves supplied station context. Reported 1421/1422 getters and composite writes work on cold construction and every fresh `getDevice()` without another report. Raw config aliases remain excluded from bridge state/events. Projection tests now use cold and fresh facade models without a synthetic later report.
+SDK commit `797ff74fe7aca2648c05246cf708d24a39a0db96` fixes cold indexing by promoting retained unknown parameters when station context resolves, preserving their observation timestamps. Binding also resolves supplied station context. Reported 1421/1422 getters and composite writes work on cold construction and every fresh `getDevice()` without another report. Raw config aliases remain excluded from bridge state/events. Projection tests now use cold and fresh facade models without a synthetic later report.
 
 The schedule service uses the latest retained SDK config and has no compare-and-swap guarantee against concurrent app changes. Recording-quality reads describe the active mode, while writes edit mode 0. 720P and all new controls still require separately authorized hardware acceptance. No hosts, Docker, HA or devices were touched.
 
 Current local repack: verified-parameter setter allowlist and composite-write serialization included; bridge full suite: 1,459 passed, 53 skipped, zero failed.
+
+The current SDK uses field-baseline ACK patches with a 120-second TTL, coalesced unsent fields, a 32-intent queue cap and a 60-second enqueue deadline. Changed observed fields supersede only their own pending patches. Quick-response queries recover after a bounded 45-second quarantine or a matching late reply; station-session renewal is unnecessary. Signaling debug/warn diagnostics and sign errors omit station identity. SDK validation: 7,652 passed / 8 skipped; focused 329 passed; typecheck, build, ESM and all five guards passed, with no flakes observed. Bridge validation after this offline repack: 1,459 passed / 53 skipped, zero failed.
