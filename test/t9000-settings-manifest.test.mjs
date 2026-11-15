@@ -93,7 +93,13 @@ for (const [model, type] of [
     const { dev, view } = await sdkFixture(model, type);
     const manifest = view.decodedProperties(dev);
     const reads = manifest.details.flatMap((c) => c.reads);
-    const qualityLabels = { 1: "720P", 2: "1080P", 3: model === "T8416" ? "2K" : "3K" };
+    // App-verified extra tiers: T8416 Ultra 4K = 4, T8170 Auto = 0.
+    const qualityLabels =
+      model === "T8416"
+        ? { 1: "720P", 2: "1080P", 3: "2K", 4: "4K" }
+        : model === "T8170"
+          ? { 0: "Auto", 1: "720P", 2: "1080P", 3: "3K" }
+          : { 1: "720P", 2: "1080P", 3: "3K" };
     assert.deepEqual(reads.find((r) => r.property === "recordingQuality").labels, qualityLabels);
     assert.deepEqual(view.propertySpecs(dev).find((p) => p.name === "recordingQuality").enumValues, qualityLabels);
     assert.equal(typeof dev.camera().setPrivacy, "undefined");
