@@ -22,6 +22,7 @@ import { failure as recordingsFailure } from "./recordings-policy.mjs";
 const AUTHED_COMMANDS = new Set([
   "devices.list",
   "device.state",
+  "device.query",
   "light.setSchedule",
   "doorbell.quickResponses",
   "doorbell.playQuickResponse",
@@ -53,8 +54,8 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     available: () => flags.ready && !flags.sessionLost && !flags.stopping && !ctx.authPolicy?.blocked,
   });
 
-  const send = (ws, obj) => {
-    if (ws.readyState === ws.OPEN) ws.send(redactSecrets(JSON.stringify(obj)));
+  const send = (ws, obj, rawPayload = false) => {
+    if (ws.readyState === ws.OPEN) ws.send(rawPayload ? JSON.stringify(obj) : redactSecrets(JSON.stringify(obj)));
   };
   const broadcast = (obj) => {
     if (ctx.filterBroadcast && !ctx.filterBroadcast(obj)) return;
@@ -112,7 +113,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     let outcome = "handler_failed";
     let socketOpenAtReply = null;
     let replyFailed = false;
-    const replySend = (socket, response) => {
+    const replySend = (socket, response, rawPayload = false) => {
       socketOpenAtReply = socket.readyState === socket.OPEN;
       outcome = response.ok === false ? "failed" : "success";
       if (
@@ -122,7 +123,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
       )
         outcome = "failed";
       try {
-        return send(socket, response);
+        return send(socket, response, rawPayload);
       } catch (error) {
         replyFailed = true;
         throw error;
@@ -327,7 +328,7 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
     }
     if (allowCommand && !allowCommand(msg)) return send(ws, { id, ok: false, error: "command denied" });
     if (ctx.logging?.effective("debug") ?? ctx.DEBUG) dbg("ws recv");
-    const reply = (extra) => send(ws, { id, ok: true, ...extra });
+    const reply = (extra, rawPayload = false) => send(ws, { id, ok: true, ...extra }, rawPayload);
     const fail = (error, code) =>
       send(ws, {
         id,
@@ -409,6 +410,18 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
         }
         case "device.state":
           return reply({ device: await ctx.describeDevice(msg.sn) });
+        case "device.query": {
+          if (msg.queryCmd !== 6482) return reply({ ok: false, error: "Diagnostic command is not allowed" });
+          if (typeof msg.sn !== "string" || !msg.sn.trim())
+            return reply({ ok: false, error: "Diagnostic query requires a device" });
+          if (typeof eufy.diagnosticQuery !== "function")
+            return reply({ ok: false, error: "Diagnostic query is unavailable" });
+          try {
+            return reply(await eufy.diagnosticQuery(msg.sn, msg.queryCmd), true);
+          } catch {
+            return reply({ ok: false, error: "Diagnostic query failed" });
+          }
+        }
         case "device.properties": {
           const dev = await (ctx.getDevice?.(msg.sn) ?? eufy.getDevice(msg.sn));
           return reply({
