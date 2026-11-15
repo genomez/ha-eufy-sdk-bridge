@@ -3,20 +3,20 @@
   "status": "local-source-candidate",
   "branch": "s1-experimental16-dev",
   "baseCommit": "d3b0d3f4d04ca5f63b03946622be1266eafe5069",
-  "sdkCommit": "6fea9a759379bd7ae8406c7e2e01adc2b7f024c9",
+  "sdkCommit": "dbdbd6db84bb73d994e6d773314d58fe7da89541",
   "sdkVersion": "0.2.1-s1.experimental.16",
   "tarball": "eufy-sdk-local.tgz",
-  "sha256": "ed96087ce7556c913aaa63c3a047038341ccaaa3139672ca596d25e2f090253c",
-  "runtimeSha256": "2ae962b709679402b96b05ef173eb22eb79b41a257c7f2a11de9e8dc984ab72b",
+  "sha256": "6eea4551e245906a168ac18a148975c1f2eb726e2c4f5d90e0d255d2e3d93b6c",
+  "runtimeSha256": "6ccf04fda5530879daf19bd552f2b11c5feca4b4cb91364e67422f0cfcf87e76",
   "localOnly": true,
   "imageBuilt": false,
   "liveAcceptance": false,
   "sourceHashConvention": "UTF-8 text normalized to LF",
   "bridgeInputs": {
     "package.json": "08bfae43266504f149cc1f1d7e9087bdbbce5702bdd991a52cec484be8067fd4",
-    "package-lock.json": "af44083f4cdeb295e15754e036ac1efb590566f9b987dee30e02e8908ca230f0",
+    "package-lock.json": "d3d03dde18ee0e33a0b65970f4da908186f7b2b8b524306068bc05025e881f2a",
     "src/bounded-state-writes.mjs": "ab6c2b71d25d4934281abf67da6a71b0ce52cad436f63f68215c0599de9e2fd3",
-    "src/device-view.mjs": "fbfc704ba87b27b6366c5ea368a6d67ca9d26152f404fe8c6e47fea045adc626",
+    "src/device-view.mjs": "5beffb67f5ef9129e9ca45fa7e1dbc9776ce96aa77d66017d131daacce959964",
     "src/pilot-log.mjs": "3611bb525783257246206409b168b3f2cd6db2860a204002485e5bb19baa900e",
     "src/request-evidence.mjs": "eb8a6e2c8740241217e9d6121353246045c0baf5c670168ecf8cc3d03c7cf89d",
     "src/t9000-settings.mjs": "dafb4ac916f9df68cf55df31c489475aab36c9f04404ad9ad35aff2ffc9f508a",
@@ -27,14 +27,15 @@
     "focusedCommand": "node --test test/light-settings-route.test.mjs test/t9000-settings-manifest.test.mjs test/numeric-metadata.test.mjs test/flc-pending.test.mjs",
     "focusedPassed": 25,
     "fullCommand": "$env:EUFY_TEST_SDK_SHA256 = (Get-FileHash -Algorithm SHA256 node_modules/@mega-yfue/eufy-sdk/dist/index.js).Hash.ToLowerInvariant(); npm test",
-    "fullPassed": 1457,
+    "fullPassed": 1459,
     "fullFailed": 0,
     "fullSkipped": 53,
     "scope": "Existing suite no-socket/process guards and gated cases retained; no live-device acceptance."
   },
   "sdkFindings": [
     "SDK commit 6fea9a759379bd7ae8406c7e2e01adc2b7f024c9 promotes retained unknown configs when station context resolves, preserving observation timestamps; cold and fresh facade reads/writes no longer need a later report.",
-    "Device.describe() resolves recording-quality labels with station context; the bridge now forwards these labels directly without the property-enum workaround."
+    "Device.describe() resolves recording-quality labels with station context; the bridge now forwards these labels directly without the property-enum workaround.",
+    "Verified-parameter allowlist withholds unverified T9000 setters; composite SDK writes are serialized. Bridge full suite passes without code or test changes."
   ],
   "publicationReceipts": "Existing .15 source/publication manifests remain historical. This receipt identifies the unbuilt .16 local candidate."
 }
