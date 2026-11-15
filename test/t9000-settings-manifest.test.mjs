@@ -122,8 +122,16 @@ for (const [model, type] of [
       assert.deepEqual(JSON.parse(summary.decodedState.light.lightSchedule), [{ day: 1, nested: { start: 2 } }]);
     }
     if (["T8134", "T8170"].includes(model)) assert.equal(reads.find((r) => r.property === "light")?.writable, false);
-    for (const name of ["enabled", "statusLed", "imageFlipped"])
+    for (const name of ["enabled", "statusLed"])
       assert.equal(reads.find((r) => r.property === name)?.writable, true, name);
+    if (model === "T8171") {
+      // The station never reports 1207 for this model, so the flip is offered as a write-only setting.
+      assert.equal(reads.find((r) => r.property === "imageFlipped"), undefined);
+      assert.deepEqual(
+        view.propertySpecs(dev).filter((p) => p.name === "imageFlipped").map((p) => [p.writable, p.writeOnly]),
+        [[true, true]],
+      );
+    } else assert.equal(reads.find((r) => r.property === "imageFlipped")?.writable, true, "imageFlipped");
   });
 test("non-T9000 recording options remain the SDK's legacy labels", async () => {
   const { dev, view } = await sdkFixture("T8425", 47, "T8030");
