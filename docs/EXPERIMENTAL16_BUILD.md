@@ -1,6 +1,6 @@
 # Experimental.16 local build inputs
 
-Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `daeb1751839989cb0a14b8ee6d300a99b3cdb28b`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
+Bridge and integration branch: `s1-experimental16-dev`, created from each `s1-experimental15-release`, excluding `t9000-settings-probe`. SDK input: `48e687ef7ccc14ede3a2140e5db3bc80223432b5`, version `0.2.1-s1.experimental.16`. The artifact receipt pins the tarball and emitted runtime. Existing .15 publication/source manifests and post-repack receipts are historical, not receipts for this unbuilt candidate.
 
 ## Reproduce the SDK dependency
 
@@ -98,3 +98,26 @@ blocked before module loading; loopback-only socket tests ran without a global s
 flag. Integration validation: 1,260 passed / 1 skipped; ruff passed on changed Python
 files. These results supersede earlier validation counts for this local candidate.
 No external service, device or live HA was contacted. No image was built or deployed.
+
+
+## Review fixes
+
+The SDK pin above includes night-vision resolved-channel routing and unsafe-channel
+setter withholding, the light on/off alias gate, T9000 reboot rejection and capability
+flag, integer prompt volume and model-only availability. Internal write-only discovery
+is limited to promptVolume 1292 on T9000 and ringtoneVolume 1708 on attached T8214.
+Dingdong ringtone selection is withheld on T9000. The bridge's writable join requires
+the reported parameter to match; SDK reboot eligibility is honored by canReboot.
+
+Required SDK validation: 7,801 passed / 8 skipped, typecheck, build, ESM, examples,
+snippets and all five guards passed. The package was packed with scripts disabled
+and installed offline with scripts, audit and funding disabled. Full bridge validation
+against the installed runtime: 1,464 passed / 0 failed / 53 skipped. External network
+entry points were blocked before loading modules; loopback socket tests ran.
+The integration's full offline suite passed 1,269 / 1 skipped; changed Python files
+passed ruff. Its real setup ordering covers newly hidden controls and admin release.
+
+A held SDK handle can retain channel evidence after a roster change. The dispatch
+preparation check remains the final target guard; rebinding held handles is deferred.
+No live client, external request, HA/device/phone contact, push or deployment was
+performed by this remediation. Firmware acceptance remains pending.

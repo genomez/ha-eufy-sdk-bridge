@@ -3,20 +3,20 @@
   "status": "local-source-candidate",
   "branch": "s1-experimental16-dev",
   "baseCommit": "d3b0d3f4d04ca5f63b03946622be1266eafe5069",
-  "sdkCommit": "daeb1751839989cb0a14b8ee6d300a99b3cdb28b",
+  "sdkCommit": "48e687ef7ccc14ede3a2140e5db3bc80223432b5",
   "sdkVersion": "0.2.1-s1.experimental.16",
   "tarball": "eufy-sdk-local.tgz",
-  "sha256": "220af2f027ace61b20df79ca6fe8090dae02c263b8ca8be6afbd20e02063d819",
-  "runtimeSha256": "edd37d3fd9a8859c652cd5992f3e2cf1ad0a9a007e3b9aebd186494454ef2bf4",
+  "sha256": "c5335598a192ba76d1884d17bf8f8fd40b80421fceeeece8bc9bb86ddd67e15f",
+  "runtimeSha256": "2ccd428f3d92848987da54f6af51f6a4104ff92e27797650fdb1143eb681072f",
   "localOnly": true,
   "imageBuilt": false,
   "liveAcceptance": false,
   "sourceHashConvention": "UTF-8 text normalized to LF",
   "bridgeInputs": {
     "package.json": "08bfae43266504f149cc1f1d7e9087bdbbce5702bdd991a52cec484be8067fd4",
-    "package-lock.json": "c0a84cac0514ae2e50bfbbef503266f06cc18267bca3d5ab4a75b28925d54e94",
+    "package-lock.json": "c8fc5204c0bd8481d4f4ca718b2054166f8da53955f510f6c0698d1b071359bb",
     "src/bounded-state-writes.mjs": "ab6c2b71d25d4934281abf67da6a71b0ce52cad436f63f68215c0599de9e2fd3",
-    "src/device-view.mjs": "c1f45b1dca1c285b982e416d5727a6451150e2cfcb1d0c11138e84c34b12eaed",
+    "src/device-view.mjs": "b5075afa735eb06fd5cfe68c2274416ce1bb1850d1cd87cb13e5dc666cdcb22e",
     "src/pilot-log.mjs": "3611bb525783257246206409b168b3f2cd6db2860a204002485e5bb19baa900e",
     "src/request-evidence.mjs": "eb8a6e2c8740241217e9d6121353246045c0baf5c670168ecf8cc3d03c7cf89d",
     "src/t9000-settings.mjs": "dafb4ac916f9df68cf55df31c489475aab36c9f04404ad9ad35aff2ffc9f508a",
@@ -25,7 +25,7 @@
   "validation": {
     "node": "v24.15.0",
     "fullCommand": "$env:EUFY_TEST_SDK_SHA256 = (Get-FileHash -Algorithm SHA256 node_modules/@mega-yfue/eufy-sdk/dist/index.js).Hash.ToLowerInvariant(); npm test",
-    "fullPassed": 1463,
+    "fullPassed": 1464,
     "fullFailed": 0,
     "fullSkipped": 53,
     "scope": "Full suite with external network entry points blocked before module loading and loopback sockets permitted. Existing per-test no-socket/process guards retained. No global socket-test skip flag. No live-device acceptance."
@@ -37,7 +37,8 @@
     "Per-field patches retain the original baseline and ordered ACKed values for 120 seconds. Confirmation, the baseline and any unexpired ACKed value preserve the latest ACK; only a third observed value or TTL expiry retires the field. Queue bounds are per device and parameter; reset releases active ownership safely and enqueue timers are unreferenced. Superseded writes use a typed non-send error, mapped to successful bridge receipts without failure telemetry. Quick-response quarantine and signaling identity redaction are unchanged.",
     "Reviewed T9000 applicability: no non-doorbell loitering, accessory ringtone selection or unwritable light setters; doorbell recording quality withheld. Installed write-only volume settings are projected without invoking actions; T9000 prompt writes include mValue3 zero. Motion-light duration bounds use upstream timer metadata; intermediate-second firmware acceptance remains unproven.",
     "AI detection writes on T9000 use the uniquely assigned device channel in both the portal header and payload. The former outer-channel-zero override failed dispatch preparation for nonzero targets. Missing, invalid or duplicate channel evidence withholds the AI setter and writable metadata; other station envelopes remain unchanged. Constructor-free facade regressions cover seven model shapes, four channels, all four bits and restores. Hardware acceptance of the corrected nonzero route remains pending.",
-    "T9000-attached T8416 recording tier 3 is labeled 2K in both property and decoded manifests. Named 2K writes map to raw tier 3 through the unchanged base64 raw-text capture-config path; 3K and unverified 4K are refused for this model. Other models retain their maps. Offline SDK validation: 7777 passed, 8 skipped; compiler, build, ESM, examples, snippets and all five guards passed. Verified motion-light timer choices retain the existing composite 1422 time writes."
+    "T9000-attached T8416 recording tier 3 is labeled 2K in both property and decoded manifests. Named 2K writes map to raw tier 3 through the unchanged base64 raw-text capture-config path; 3K and unverified 4K are refused for this model. Other models retain their maps. Offline SDK validation: 7777 passed, 8 skipped; compiler, build, ESM, examples, snippets and all five guards passed. Verified motion-light timer choices retain the existing composite 1422 time writes.",
+    "Review fixes: night vision 1277 uses the resolved attached channel in both T9000 header and payload, with unsafe channel evidence withholding the setter; no other remaining attached-device outer-channel-zero payload override was found. Light on/off aliases follow setter admission and use a generic error. T9000 reboot is rejected before context preparation or transport use and Device.canReboot is false. Prompt volume requires integer steps and supports model-only T9000 detection. Internal write-only discovery is limited to reviewed T9000 prompt volume and attached T8214 ringtone volume. Bridge joins require a matching reported parameter. SDK validation: 7801 passed / 8 skipped, all required checks and five guards passed. Held-handle stale channel evidence remains a residual; live acceptance is pending."
   ],
   "publicationReceipts": "Existing .15 source/publication manifests remain historical. This receipt identifies the unbuilt .16 local candidate."
 }

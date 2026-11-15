@@ -75,3 +75,22 @@ test("model-specific and partial metadata pass through without inferred widening
     assert.equal(spec.step, max === undefined ? undefined : 1);
   }
 });
+
+test("write-only joins require the same reported parameter", () => {
+  for (const paramType of [undefined, 1292, 1708]) {
+    const dev = {
+      properties: [{ name: "ringtoneVolume", paramType: 1708 }],
+      writeOnlySettings: [{ name: "ringtoneVolume", paramType }],
+      describe: () => ({
+        details: [
+          {
+            capability: "doorbell",
+            accessor: "doorbell",
+            reads: [{ property: "ringtoneVolume", accessor: "ringtoneVolume", writable: false }],
+          },
+        ],
+      }),
+    };
+    assert.equal(view.decodedProperties(dev).details[0].reads[0].writable, paramType === 1708);
+  }
+});

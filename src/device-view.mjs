@@ -219,6 +219,7 @@ export function createDeviceView(ctx) {
       power: isCamera ? (onBatteryPower(m.model, m.capabilities) ? "battery" : "wired") : undefined,
       canReboot:
         m.codec === "station" &&
+        dev.canReboot !== false &&
         !String(m.model ?? "")
           .toUpperCase()
           .startsWith("T9000"), // HomeBase-only; drives a Reboot button in HA
@@ -322,7 +323,13 @@ export function createDeviceView(ctx) {
         capability,
         accessor,
         reads: (reads ?? []).map((read) => {
-          const setting = (dev.writeOnlySettings ?? []).find((candidate) => candidate.name === read.property);
+          const reported = (dev.properties ?? []).find((candidate) => candidate.name === read.property);
+          const setting = (dev.writeOnlySettings ?? []).find(
+            (candidate) =>
+              candidate.name === read.property &&
+              Number.isInteger(candidate.paramType) &&
+              candidate.paramType === reported?.paramType,
+          );
           return setting ? { ...read, writable: true } : read;
         }),
         actions,
