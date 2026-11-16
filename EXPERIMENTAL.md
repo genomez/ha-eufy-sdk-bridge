@@ -1,8 +1,12 @@
-# S1 experimental.16 local candidate
+# S1 experimental.16 local release candidate
 
-Use the SDK's installed setters and writable flags for HomeBase S1 settings. Add structured schedule and explicit doorbell quick-response RPCs, remove the obsolete floodlight scalar block, protect location-bearing configs and recognize sanitized SDK errors. See `docs/EXPERIMENTAL16_BUILD.md` and `docs/EXPERIMENTAL16_ARTIFACT.json` for inputs, limitations and build guidance. No image, publication or live acceptance is claimed.
+Modified for genomez, 2026-11-15. Project supported settings and installed volume controls; preserve motion-light receipts and expose the on-demand diagnostic query.
 
-## Historical documentation through experimental.15
+Pair SDK 0.2.1-s1.experimental.16, bridge/integration 0.3.1-s1.experimental.16 and add-on 0.4.1-s1.experimental.16.
+
+No publication or live-device acceptance is claimed.
+
+## Historical public documentation through experimental.15
 
 # S1 experimental.15
 

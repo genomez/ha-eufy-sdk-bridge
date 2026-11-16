@@ -1,8 +1,7 @@
 {
   "schemaVersion": 1,
-  "version": "0.3.1-s1.experimental.15",
-  "inputCommit": "816b1e83d3b94b439be9cdfc1716b66c0881c7be",
-  "publicationParent": "bc3c1dca2aba4db3162f7b6537ae39b505f9757c",
+  "version": "0.3.1-s1.experimental.16",
+  "inputCommit": "bcc8ad6913f9278e43ef16422b9560dd0d0f2f2b",
   "files": {
     ".env.example": {
       "bytes": 4167,
@@ -22,23 +21,23 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 262,
-      "sha256": "b7640b7cbcadcea79d50116391e2c4930d4bef95f9e95a2556192236e43a8126"
+      "sha256": "331226501154d97474376f0dde1045c1dd46ebc8b82f19663dec66a313774206"
     },
     "CONTRIBUTING.md": {
       "bytes": 974,
       "sha256": "000a5f67f803460da3e1defa805ffd27035670109c2a4d40f9c6bb6aa6b2a322"
     },
     "EXPERIMENTAL.md": {
-      "bytes": 38948,
-      "sha256": "30cb1d0aa7a767434e98aef49e0d91ebaf79d23ea8053ce839784f1aae2edff3"
+      "bytes": 39392,
+      "sha256": "4a510219711ef1623e0ec3ae9cb2b56b1fb3126a4499ad2501033cb9893713f8"
     },
     "LICENSE": {
       "bytes": 11339,
       "sha256": "b208eae7041fb7818ebd636d0778b49e242543be9a980ac9dcbaf98449660a2b"
     },
     "MODIFICATIONS.md": {
-      "bytes": 57009,
-      "sha256": "fa5dd75e02e4b9ec482e66b2cbba9e372a6d4325f4ae7fd129808afb86e22c19"
+      "bytes": 57453,
+      "sha256": "b6c91c5c608c1b3441dade2a5cf53e10d75cd97fc141c73bb67193e122363fd8"
     },
     "POST_REPACK_BUILD.json": {
       "bytes": 2727,
@@ -46,11 +45,15 @@
     },
     "PUBLICATION.json": {
       "bytes": 262,
-      "sha256": "b7640b7cbcadcea79d50116391e2c4930d4bef95f9e95a2556192236e43a8126"
+      "sha256": "331226501154d97474376f0dde1045c1dd46ebc8b82f19663dec66a313774206"
     },
     "README.md": {
       "bytes": 29045,
       "sha256": "ee141bc9018022aa60347e37f8b80483fc8a4e0349f4caa312751ab32dbfcd65"
+    },
+    "RELEASE_NOTES.md": {
+      "bytes": 2702,
+      "sha256": "ce3c856f5c8659ffb5adc1e653aea12af9628507d93cec76d746ec6989e7c594"
     },
     "bin/event-playback-probe-control.mjs": {
       "bytes": 9853,
@@ -71,6 +74,14 @@
     "bin/start.sh": {
       "bytes": 208,
       "sha256": "95e6b5112662e7e39e2e6da6ac89e1bc60ad0007d019065fcf77f988f6f58310"
+    },
+    "docs/EXPERIMENTAL16_ARTIFACT.json": {
+      "bytes": 5362,
+      "sha256": "a239b044a3fbe22e468c7e18b78ee36692c9b95f8ddca2dd1888b1b71e42fc5e"
+    },
+    "docs/EXPERIMENTAL16_BUILD.md": {
+      "bytes": 11194,
+      "sha256": "03b7c1f7cbea41637642660db9cdd0108a34b93cc8e928fe47c311d5114c984d"
     },
     "docs/bounded-state-writes.md": {
       "bytes": 7610,
@@ -125,12 +136,12 @@
       "sha256": "71b6650327b840fcbeb0ecaa1c54e37c613392d79de9f17e12624019f7c797c1"
     },
     "package-lock.json": {
-      "bytes": 26816,
-      "sha256": "5adc95f3a877d07dc36de21d1d7091ec4b31f749bd553c7c4488f34c539e086d"
+      "bytes": 26652,
+      "sha256": "cd95a6197d5564923c15aa8680c0964fb0dd179e5e343a74627df7cf269389e5"
     },
     "package.json": {
-      "bytes": 1415,
-      "sha256": "ecd3f256ebdd00b4e82a9e2a744e38ab1d1e119e6acb28cfc87846417bac7407"
+      "bytes": 1333,
+      "sha256": "08bfae43266504f149cc1f1d7e9087bdbbce5702bdd991a52cec484be8067fd4"
     },
     "scripts/devices.mjs": {
       "bytes": 1665,
@@ -157,8 +168,8 @@
       "sha256": "a191e32d3128f134159a6d3d2bf458c825181b00896789f3800e5b2327064aa0"
     },
     "src/bounded-state-writes.mjs": {
-      "bytes": 18655,
-      "sha256": "682d899f694669aeb67e7f1ca71e4e1bbf811bf485a1a189a35167cc7e590f72"
+      "bytes": 16996,
+      "sha256": "ab6c2b71d25d4934281abf67da6a71b0ce52cad436f63f68215c0599de9e2fd3"
     },
     "src/cached-property-evidence.mjs": {
       "bytes": 16369,
@@ -189,16 +200,16 @@
       "sha256": "d02259aceaaba058b932676d3203b342ac64970033a550787efc4a2fb016438a"
     },
     "src/device-events.mjs": {
-      "bytes": 7796,
-      "sha256": "2b7aa563b3431fadd98ed2cc40d897dd2ee3afe0a829b311cb08f17d691a7c52"
+      "bytes": 8186,
+      "sha256": "d364d17ffd585e2d2d1c70904ebde5c9a51c48164e0d6138718a1eea7df34b76"
     },
     "src/device-list-evidence.mjs": {
       "bytes": 7470,
       "sha256": "034bc1159ddfa6931728c3bad4a5f7f34e451b70cdae499c07394fe0cd2b089f"
     },
     "src/device-view.mjs": {
-      "bytes": 22534,
-      "sha256": "9565f752ed9c4cac232432e1afb574ab3e1a884bc63fa38a5805835e579cda4e"
+      "bytes": 24254,
+      "sha256": "1044430b06758837c0aa90e84cedfb7fd254eb00b93f4cee9ca4b3de492bb572"
     },
     "src/diagnostics.mjs": {
       "bytes": 41776,
@@ -277,8 +288,8 @@
       "sha256": "efb5b0d1f557451ae5f6774274f83b6b5884389e86150b00b77acdae676f4cf7"
     },
     "src/pilot-log.mjs": {
-      "bytes": 10874,
-      "sha256": "2e1839a063e194a5bd687e0404b7338c662d06a37c1795058f9b2762bf61fa48"
+      "bytes": 11225,
+      "sha256": "3611bb525783257246206409b168b3f2cd6db2860a204002485e5bb19baa900e"
     },
     "src/power.mjs": {
       "bytes": 462,
@@ -357,8 +368,8 @@
       "sha256": "3ba5df1efdffece425e7703d029928c0f9471fd98b9f93ec1147bb2376348bb4"
     },
     "src/request-evidence.mjs": {
-      "bytes": 4738,
-      "sha256": "0025f0cec8367233420a8afc82e3a6f32235da70b95a900ca150db5f5b97b7f8"
+      "bytes": 4822,
+      "sha256": "eb8a6e2c8740241217e9d6121353246045c0baf5c670168ecf8cc3d03c7cf89d"
     },
     "src/rtc-connection-evidence.mjs": {
       "bytes": 6360,
@@ -400,6 +411,10 @@
       "bytes": 10248,
       "sha256": "508c2204caed2acadbd8afacf6c65843652755401942bca43a97a08d9e6bc532"
     },
+    "src/t9000-settings.mjs": {
+      "bytes": 3058,
+      "sha256": "dafb4ac916f9df68cf55df31c489475aab36c9f04404ad9ad35aff2ffc9f508a"
+    },
     "src/transport-evidence.mjs": {
       "bytes": 7747,
       "sha256": "1e005d90595b7a3a5e97315bfa2c8a102e70c098a14529050d815214ca8aec26"
@@ -421,8 +436,8 @@
       "sha256": "8986f17cd215b443abfc24d4670b944ac03b0b8bbb5f2656dd6af5b530285157"
     },
     "src/ws-server.mjs": {
-      "bytes": 26202,
-      "sha256": "3354f3bcd08f862ec743d76abb4e6c4d716b6cdd23a06e5b5f384f2948b80bc7"
+      "bytes": 28153,
+      "sha256": "2664eb95f0ec82c86f919e7719c550a91e3f2245cf8dfbb7c0b20bab177db306"
     },
     "streams.mjs": {
       "bytes": 5520,
@@ -479,6 +494,10 @@
     "test/device-liveness.test.mjs": {
       "bytes": 5192,
       "sha256": "1c544fd42e2402c3412d7d71a6d96c98fd08b5c95ce16d119a4fe07ecf5582b3"
+    },
+    "test/device-query.test.mjs": {
+      "bytes": 3366,
+      "sha256": "3dfd795654ee73c2fe9b738efdd10797498a87cda5ecd3b843257299999def3a"
     },
     "test/doorbell-identity.test.mjs": {
       "bytes": 1136,
@@ -549,8 +568,8 @@
       "sha256": "2d7286515a1c6322cf50558d4c7307a94c044800676e38983680a2ec22ce54b3"
     },
     "test/fixtures/sdk-tripwire.mjs": {
-      "bytes": 830,
-      "sha256": "2a65bb0db684bdd63241a792c5e3ee5d5aec48846552cc7a43bdf2933dbeff93"
+      "bytes": 879,
+      "sha256": "886c6ddf100aa69e71fdfdf59fc0540008d3508b43df7dc10df230a80a74e174"
     },
     "test/fixtures/watchdog-baseline.mjs": {
       "bytes": 2953,
@@ -617,8 +636,8 @@
       "sha256": "9fe12caf8c1ad79def81c76ae9273c46cf65635a48eb9d86bf7a3e33cdf6ee8f"
     },
     "test/light-settings-route.test.mjs": {
-      "bytes": 10171,
-      "sha256": "2ee4a816bf6006152c9bdfd10c671d37af909ca8bc8689d7194099622f0f0060"
+      "bytes": 7611,
+      "sha256": "9535ca8e537346e85a7de774e74225f751922ba03d136746fa6506e2af6e8ba3"
     },
     "test/live-still.test.mjs": {
       "bytes": 6776,
@@ -629,8 +648,8 @@
       "sha256": "f079f4351099e507edca34c4d3d75795accde3f0c7e12ad40887509ae8b923d5"
     },
     "test/numeric-metadata.test.mjs": {
-      "bytes": 2307,
-      "sha256": "d5cd8a0583f575d03e2d3557c146ae555076b5e8a4f0965ebe061cd6a7923ce1"
+      "bytes": 2948,
+      "sha256": "654ff976f18e6b4b5c5a1149a37aef171778a2d32465c31b3c3b8e4af9cfbd89"
     },
     "test/pilot-log-timestamps.test.mjs": {
       "bytes": 4285,
@@ -815,6 +834,10 @@
     "test/t9000-media-diagnostics.test.mjs": {
       "bytes": 5027,
       "sha256": "d90dafd54d26f9e6d68bf5c6561a83a8a86fe1f211e30e35543087faef80c602"
+    },
+    "test/t9000-settings-manifest.test.mjs": {
+      "bytes": 11208,
+      "sha256": "bbddd8208b07f2a022fa17109744cba9aeba7926315a10471d1da234f7a8f02b"
     },
     "test/watchdog-evidence.test.mjs": {
       "bytes": 10330,
