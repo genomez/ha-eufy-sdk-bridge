@@ -58,7 +58,7 @@ The refreshed package was built, packed with lifecycle scripts disabled, and ins
 Runtime, tarball and LF-normalized input hashes are in the receipt. Validation of this bundle:
 SDK 7,748 passed / 8 skipped, all required compiler/build/example/snippet/ESM and five guards
 passed (guards used installed Git Bash); bridge 1,463 passed / 53 skipped; integration 1,253
-passed / 1 skipped. These are offline results. This source candidate has not been deployed.
+passed / 1 skipped. These are offline results.
 
 ## AI detection channel routing
 

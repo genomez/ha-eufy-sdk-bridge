@@ -52,8 +52,8 @@
       "sha256": "ee141bc9018022aa60347e37f8b80483fc8a4e0349f4caa312751ab32dbfcd65"
     },
     "RELEASE_NOTES.md": {
-      "bytes": 2702,
-      "sha256": "ce3c856f5c8659ffb5adc1e653aea12af9628507d93cec76d746ec6989e7c594"
+      "bytes": 2605,
+      "sha256": "3f74812fffb86bd323d238f007c376024bb77044134a246e6008a417249896ab"
     },
     "bin/event-playback-probe-control.mjs": {
       "bytes": 9853,
@@ -80,8 +80,8 @@
       "sha256": "a239b044a3fbe22e468c7e18b78ee36692c9b95f8ddca2dd1888b1b71e42fc5e"
     },
     "docs/EXPERIMENTAL16_BUILD.md": {
-      "bytes": 11194,
-      "sha256": "03b7c1f7cbea41637642660db9cdd0108a34b93cc8e928fe47c311d5114c984d"
+      "bytes": 11149,
+      "sha256": "6cded5686d9cfec2976dc5664ac46b2e2db84b00dafe9ec7521e69fbdda7f173"
     },
     "docs/bounded-state-writes.md": {
       "bytes": 7610,
