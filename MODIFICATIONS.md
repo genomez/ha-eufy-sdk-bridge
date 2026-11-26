@@ -2,6 +2,8 @@
 
 Modified by genomez on 2026-11-25. Projects privacy, guard, floodlight and connection evidence, and skips unchanged recording catalog writes.
 
+The standalone bridge now renews RTC sessions every 270 seconds by default when `BRIDGE_RTC_SESSION_REFRESH_MS` is unset. The add-on image already sets 270,000 ms and keeps that interval.
+
 Changed paths since experimental.16
 
 - `BUILD_PROVENANCE.json`

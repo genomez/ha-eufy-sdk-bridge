@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "version": "0.3.1-s1.experimental.17",
   "publishedBase": "744e986345cab38aa1e40e692f69ee0f1acdf636",
-  "sdkCommit": "d0769144fcd9d33101c275a6ccc183c2e40c2889",
-  "sdkArchiveSha256": "a13c6153af818519851fa257a9a718002abdf732056362f1fc422125e15edf4e",
-  "sdkArchiveIntegrity": "sha512-5jgfZx42q8a9XTQ/bmlMiisNAVJBN1WsnCNBbTLuVmljMA6G3nVdPz2uD+5mrY1M005LEVXnRelcOrTrlWAc1Q==",
-  "sdkBundleSha256": "b03d98d2a0d57f2261940c537eefe078442765f207613c872199176a20566266",
+  "sdkCommit": "31680a941f633b53f187c8503fc01118c0488338",
+  "sdkArchiveSha256": "6dbb25b0224079272cf752600d923d9ba77e69592814bdaac93094fed1f15c9e",
+  "sdkArchiveIntegrity": "sha512-8NxO/z98Czoztwc8siwdNDl+Zw2sjD9S9BF+l7RlYknqObyIWdT+zPbKgV28Iy6kPamdHFAA++aBNOxQEckuQA==",
+  "sdkBundleSha256": "4a0c1a8fc50812e132f7c5b02776c278796bbfa1d18ffc494a725e9577cdc4e5",
   "files": {
     ".env.example": {
       "bytes": 4167,
@@ -25,7 +25,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 575,
-      "sha256": "47869fc771aedb07c9340bda42770340218ef547b83682261372574943032a75"
+      "sha256": "879e599e61a7e4f2352d227e7d6ef16ea62cf9d9b5d693b402a2fc8f8f04a050"
     },
     "CONTRIBUTING.md": {
       "bytes": 974,
@@ -40,8 +40,8 @@
       "sha256": "b208eae7041fb7818ebd636d0778b49e242543be9a980ac9dcbaf98449660a2b"
     },
     "MODIFICATIONS.md": {
-      "bytes": 58542,
-      "sha256": "d00664f2f22c7e4e5ac543a49ad3a8451f86872251ce860e79bfd9eb48b29ecc"
+      "bytes": 58731,
+      "sha256": "68d83bd3b6fddd54a1878b7a7372d78f3e77c13516b3a1fbe5cb5144073cc7a0"
     },
     "POST_REPACK_BUILD.json": {
       "bytes": 2727,
@@ -56,8 +56,8 @@
       "sha256": "0b0e0565934c5fab3c0e013de87782d3b096f020acbccf19c0a53e6a33be6236"
     },
     "RELEASE_NOTES.md": {
-      "bytes": 1846,
-      "sha256": "271e576b5be84019b4e9f1b73277a51774a06e30b3d90a1c12da81fdf40f33bb"
+      "bytes": 2150,
+      "sha256": "20a12c6c25a46061a695aa810b4f26a1a38568d7730a0b47f9acd2d203b110ef"
     },
     "bin/event-playback-probe-control.mjs": {
       "bytes": 9853,
@@ -141,7 +141,7 @@
     },
     "package-lock.json": {
       "bytes": 26652,
-      "sha256": "a7b2aadef58fd1c266d9edc2035228583a4e4a48b3834d3e08d2e750c189736e"
+      "sha256": "f19f9c49d38afdef7070e01b13324eb8c016a0bca7a5e8cb6702dca1e480b571"
     },
     "package.json": {
       "bytes": 1333,
