@@ -560,7 +560,7 @@ import { EventEmitter } from "node:events";
 import { RtcCommandRouter, RtcSession } from "@mega-yfue/eufy-sdk";
 
 async function assertInstalledSdkDeadlines(t, offerWaitMs) {
-  const deadline = offerWaitMs === 0 ? "connection" : "offer";
+  const deadline = offerWaitMs ? "offer" : "connection";
   let now = 0;
   t.mock.method(performance, "now", () => now);
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 100000 });
@@ -690,8 +690,8 @@ async function assertInstalledSdkDeadlines(t, offerWaitMs) {
   await pending;
 }
 
-for (const offerWaitMs of [0, undefined]) {
-  const deadline = offerWaitMs === 0 ? "connection" : "offer";
+for (const offerWaitMs of [undefined, 3000]) {
+  const deadline = offerWaitMs ? "offer" : "connection";
   test(`installed SDK projects the ${deadline} deadline beside relay recovery and grant timeout`, (t) =>
     assertInstalledSdkDeadlines(t, offerWaitMs),
   );

@@ -25,7 +25,7 @@ test("command keepalive config is passed to the SDK without enabling it by defau
     const config = loadConfig({ EUFY_EMAIL: "x@y.z", EUFY_PASSWORD: "pw", BRIDGE_RTC_COMMAND_KEEPALIVE_MS: value });
     const client = createEufy(config, { store: { load: () => undefined }, pushStore: { load: () => undefined } });
     assert.equal(client.opts.rtc.commandKeepaliveMs, value === undefined ? undefined : Number(value));
-    assert.equal(client.opts.rtc.sessionRefreshMs, undefined);
+    assert.equal(client.opts.rtc.sessionRefreshMs, 270_000);
     assert.equal(client.opts.rtc.commandTimeoutMs, 14000);
   }
 });

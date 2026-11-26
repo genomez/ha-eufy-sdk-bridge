@@ -32,6 +32,7 @@ Changed paths since experimental.16
 - `test/ice-establishment-evidence.test.mjs`
 - `test/recordings-store.test.mjs`
 - `test/rtc-connection-evidence.test.mjs`
+- `test/rtc-keepalive.test.mjs`
 - `test/state-evidence.test.mjs`
 - `test/t9000-settings-manifest.test.mjs`
 
