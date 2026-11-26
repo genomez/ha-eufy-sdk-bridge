@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "version": "0.4.1-s1.experimental.17",
+  "version": "0.3.1-s1.experimental.17",
   "publishedBase": "744e986345cab38aa1e40e692f69ee0f1acdf636",
-  "sdkCommit": "4f2bb9b348d4d61fb1b5fd8c468077a263c7df59",
-  "sdkArchiveSha256": "95305c982803085d7ffc981a65371520f70e77d6f8d473ca03fc2b7561f33550",
-  "sdkArchiveIntegrity": "sha512-UJaspkjzCic3TZmLCGLVoT08Fh1M6EcasnpjttuL/aYcCbmC4daUQjTHQpYYUTRd7CG6nTS863JCr0FAYbYUOQ==",
+  "sdkCommit": "d0769144fcd9d33101c275a6ccc183c2e40c2889",
+  "sdkArchiveSha256": "a13c6153af818519851fa257a9a718002abdf732056362f1fc422125e15edf4e",
+  "sdkArchiveIntegrity": "sha512-5jgfZx42q8a9XTQ/bmlMiisNAVJBN1WsnCNBbTLuVmljMA6G3nVdPz2uD+5mrY1M005LEVXnRelcOrTrlWAc1Q==",
   "sdkBundleSha256": "b03d98d2a0d57f2261940c537eefe078442765f207613c872199176a20566266",
   "files": {
     ".env.example": {
@@ -25,7 +25,7 @@
     },
     "BUILD_PROVENANCE.json": {
       "bytes": 575,
-      "sha256": "05ed1811ab82c0cdfb13e98799ff6f4c447878a1b38560d7587e390aebdc55c2"
+      "sha256": "47869fc771aedb07c9340bda42770340218ef547b83682261372574943032a75"
     },
     "CONTRIBUTING.md": {
       "bytes": 974,
@@ -49,7 +49,7 @@
     },
     "PUBLICATION.json": {
       "bytes": 213,
-      "sha256": "3e3f6e7e72427b155f32948c5ea379d0b1229a27eba22278d4c5b3ffccddd616"
+      "sha256": "beaffdb049b6e7377b4920169578564ed750e8f1b72eeeda3e280dc706c31d71"
     },
     "README.md": {
       "bytes": 29954,
@@ -57,7 +57,7 @@
     },
     "RELEASE_NOTES.md": {
       "bytes": 1846,
-      "sha256": "85746323b0aa8524c1f407a41e8453357f5dac739f9558ffdf1c8d0c6c4d5b94"
+      "sha256": "271e576b5be84019b4e9f1b73277a51774a06e30b3d90a1c12da81fdf40f33bb"
     },
     "bin/event-playback-probe-control.mjs": {
       "bytes": 9853,
@@ -141,11 +141,11 @@
     },
     "package-lock.json": {
       "bytes": 26652,
-      "sha256": "ac721aa6baad60fbc3a82c89116e3833a4eed1bf16a568f85dd9b9fb60d32c81"
+      "sha256": "a7b2aadef58fd1c266d9edc2035228583a4e4a48b3834d3e08d2e750c189736e"
     },
     "package.json": {
       "bytes": 1333,
-      "sha256": "059f0cebe2395afcc4d5110b2a692b1f207e849bb677fd7787a1ae3689fd8321"
+      "sha256": "a4427cc8d456ac09296bb9231dc67f8f0c8aafc0d5b3d8e858f24872fdd1245c"
     },
     "scripts/devices.mjs": {
       "bytes": 1665,
