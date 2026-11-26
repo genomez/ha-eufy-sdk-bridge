@@ -363,3 +363,22 @@ thumbnails or play recordings, including retained cache entries.
 Quick-start progressive playback defaults to 15 fps with a 3000 ms playable
 threshold. `RECORDINGS_PROGRESSIVE_FPS=off` disables it; live `progressive.json`
 continues to override startup settings.
+
+### Local SDK test flow
+
+Build the sibling SDK with `npm run build`, then run the bridge suite against its
+exact bundle digest from PowerShell:
+
+```powershell
+$env:EUFY_TEST_SDK_ROOT = (Resolve-Path ../eufy-sdk).Path
+$env:EUFY_TEST_SDK_SHA256 = (Get-FileHash ../eufy-sdk/dist/index.js -Algorithm SHA256).Hash.ToLowerInvariant()
+node --import ./test/helpers/sdk-resolve.mjs --test test/*.test.mjs
+```
+
+The resolver verifies the digest and experimental.17 version. It does not require
+packing or installing a tarball. The generic read-only scalar path advertises and
+forwards `batteryHealth` and `batteryLifeEstimate`; no property-name allow-list is
+needed. To regenerate the synthetic integration battery fixture, set
+`HOMEBASE_BATTERY_FIXTURE_PATH` to
+`../ha-eufy-sdk/tests/fixtures/homebase_battery_manifest.json` and run the same
+command with `test/homebase-battery.test.mjs` instead of `test/*.test.mjs`.

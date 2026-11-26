@@ -1,3 +1,9 @@
+# S1 experimental.17
+
+Projects privacy, guard, floodlight and connection evidence, and skips unchanged recording catalog writes.
+
+## Earlier releases
+
 # S1 experimental.16 local release candidate
 
 Modified for genomez, 2026-11-15. Project supported settings and installed volume controls; preserve motion-light receipts and expose the on-demand diagnostic query.

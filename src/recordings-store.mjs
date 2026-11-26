@@ -4,12 +4,65 @@ import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { LIMITS, validId, failure } from "./recordings-policy.mjs";
 import { opaque, safeSelector, safePlaybackSelector, recordingMac } from "./recordings-adapter.mjs";
 
 export const imageDigest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const hex = (s) => typeof s === "string" && /^[a-f0-9]{64}$/.test(s);
 const timestamp = (v) => (Number.isSafeInteger(v) && v >= 0 && v <= 253402300799999 ? v : null);
+const recordObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const optionalTimestamp = (v) => v == null || timestamp(v) !== null;
+function validStateHistory(history) {
+  return (
+    recordObject(history) &&
+    optionalTimestamp(history.catalog) &&
+    optionalTimestamp(history.coverCompleted) &&
+    (history.covers === undefined || (Array.isArray(history.covers) && history.covers.every(optionalTimestamp))) &&
+    (history.windows === undefined ||
+      (recordObject(history.windows) &&
+        Object.entries(history.windows).every(
+          ([camera, window]) =>
+            validId(camera, "c") &&
+            recordObject(window) &&
+            optionalTimestamp(window.at) &&
+            Array.isArray(window.ids) &&
+            window.ids.every((id) => validId(id, "e")) &&
+            Array.isArray(window.used) &&
+            window.used.every((id) => validId(id, "e")),
+        )))
+  );
+}
+function recoverHistory(catalog, startedAt) {
+  const history = validStateHistory(catalog.history) ? catalog.history : {};
+  const at = (value) => Math.max(startedAt, timestamp(value) ?? 0);
+  // Lost state may have held a full minute of cover attempts.
+  const latestCover = (history.covers ?? []).reduce((latest, value) => Math.max(latest, at(value)), startedAt);
+  const windows = { ...history.windows };
+  const retained = new Map();
+  let coverCompleted = at(history.coverCompleted);
+  for (const row of catalog.rows) {
+    coverCompleted = Math.max(coverCompleted, at(row.cover?.fetchedAtMs));
+    const ids = retained.get(row.cameraId) ?? [];
+    if (ids.length < LIMITS.folderBudget) ids.push(row.eventId);
+    retained.set(row.cameraId, ids);
+  }
+  // A lost window may already have used any of these rows.
+  for (const [cameraId, ids] of retained) windows[cameraId] = { at: at(windows[cameraId]?.at), ids, used: ids };
+  return {
+    catalog: Math.max(at(history.catalog), at(catalog.lastSuccessfulQueryAtMs)),
+    coverCompleted,
+    covers: Array(LIMITS.coverRate).fill(Math.max(latestCover, coverCompleted)),
+    windows,
+  };
+}
+function validRowTimes(times, rows, eligible) {
+  return (
+    recordObject(times) &&
+    Object.keys(times).length <= rows.size &&
+    Object.entries(times).every(([id, time]) => eligible(rows.get(id)) && timestamp(time) !== null)
+  );
+}
 const calendar = (v) => {
   const ms = Date.parse(v + "Z");
   return (
@@ -134,11 +187,28 @@ const newest = (a, b) =>
   (b.startedAtMs ?? -Infinity) - (a.startedAtMs ?? -Infinity) ||
   (a.startedAtMs === null && b.startedAtMs === null ? b.firstObservedAtMs - a.firstObservedAtMs : 0) ||
   a.eventId.localeCompare(b.eventId);
-const empty = () => ({ version: 1, scopeId: null, revision: 0, rows: [], history: {}, lastSuccessfulQueryAtMs: null });
+const empty = () => ({
+  version: 1,
+  scopeId: null,
+  revision: 0,
+  accountNamespace: null,
+  history: {},
+  lastSuccessfulQueryAtMs: null,
+  pathsUncertain: false,
+  rows: [],
+});
 
 export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, timeZone = recordingTimeZone() } = {}) {
   root = path.resolve(root);
   let data = empty(),
+    savedCatalog,
+    savedCatalogBytes,
+    savedRows = new Map(),
+    catalogDigest,
+    catalogNeedsSync = false,
+    savedStateBytes,
+    stateNeedsAnchor = false,
+    writeStats = { catalogPublishes: 0, statePublishes: 0, stateFallbacks: 0 },
     key,
     loaded = false,
     stopped = false,
@@ -211,7 +281,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, tim
       await handle?.close();
     }
   }
-  async function atomic(name, bytes, isCurrent = () => true) {
+  async function atomic(name, bytes, isCurrent = () => true, onRename) {
     await directory(root);
     await directory(file("tmp"));
     await directory(path.dirname(file(name)));
@@ -232,6 +302,7 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, tim
       h = null;
       if (!isCurrent()) return false;
       await io.rename(temp, file(name));
+      onRename?.();
       await syncDirectory(path.dirname(file(name)));
       return true;
     } finally {
@@ -278,14 +349,157 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, tim
       await io.unlink(file(`covers/${name}`));
     }
   }
-  async function commit(next, isCurrent = () => true) {
+  async function commit(next, isCurrent = () => true, recovering = false) {
+    if (catalogNeedsSync) {
+      await syncDirectory(root);
+      catalogNeedsSync = false;
+    }
     trim(next);
+    const checkpoint = {
+      ...next,
+      revision: savedCatalog?.revision ?? next.revision,
+      history: savedCatalog?.history ?? next.history,
+      lastSuccessfulQueryAtMs: savedCatalog?.lastSuccessfulQueryAtMs ?? null,
+      rows: next.rows.map((r) => {
+        const saved = savedRows.get(r.eventId);
+        return {
+          ...r,
+          lastObservedAtMs: saved?.lastObservedAtMs ?? r.lastObservedAtMs,
+          cover:
+            r.cover && r.cover.file === saved?.cover?.file
+              ? { ...r.cover, accessedAtMs: saved.cover.accessedAtMs }
+              : r.cover,
+        };
+      }),
+    };
+    const bytes = Buffer.from(JSON.stringify(checkpoint));
+    // Loaded manifests can have a different property order after validation.
+    const unchanged = savedCatalogBytes?.equals(bytes) || isDeepStrictEqual(checkpoint, savedCatalog);
+    if (unchanged) {
+      try {
+        if (!(await persistState(next, { isCurrent, advanceRevision: !recovering }))) return;
+      } catch {
+        // Startup can rebuild the conservative hold if anchoring is unavailable.
+        if (!recovering) {
+          // The write saving is lost while the sidecar is unwritable; count it.
+          writeStats.stateFallbacks++;
+          if (!(await publishCatalog(next, isCurrent))) return;
+        }
+      }
+    } else {
+      try {
+        if (!(await publishCatalog(next, isCurrent))) return;
+      } catch (error) {
+        // Preserve a reservation against the existing checkpoint if retention
+        // could not publish it. The caller still receives the catalog error.
+        if (!catalogNeedsSync && savedCatalog && !isDeepStrictEqual(next.history, data.history)) {
+          if (!(await persistState({ ...data, history: next.history }, { isCurrent }))) return;
+          data.history = next.history;
+        }
+        throw error;
+      }
+    }
+    data = next;
+    await cleanup(next);
+    if (!unchanged && stateNeedsAnchor) await persistState(next, { isCurrent });
+  }
+  async function publishCatalog(next, isCurrent) {
     next.revision++;
     const bytes = Buffer.from(JSON.stringify(next));
     if (bytes.length > LIMITS.manifestBytes) throw failure("store_unavailable");
-    if (!(await atomic("catalog.json", bytes, isCurrent))) return;
-    data = next;
-    await cleanup(next);
+    const published = await atomic("catalog.json", bytes, isCurrent, () => {
+      // Rename changes the on-disk checkpoint even if the directory sync fails.
+      catalogNeedsSync = true;
+      writeStats.catalogPublishes++;
+      rememberCatalog(bytes, JSON.parse(bytes));
+      stateNeedsAnchor ||= savedStateBytes !== undefined;
+      savedStateBytes = undefined;
+      data = next;
+    });
+    if (published) catalogNeedsSync = false;
+    return published;
+  }
+  function rememberCatalog(bytes, parsed) {
+    savedCatalog = parsed;
+    savedCatalogBytes = bytes;
+    savedRows = new Map(parsed.rows.map((r) => [r.eventId, r]));
+    catalogDigest = imageDigest(bytes);
+  }
+  async function persistState(next, { isCurrent = () => true, advanceRevision = false } = {}) {
+    // Bind metadata to the exact catalog bytes, including its scope and rows.
+    const coverAccesses = Object.fromEntries(
+      next.rows
+        .filter((r) => r.cover && r.cover.accessedAtMs !== savedRows.get(r.eventId)?.cover?.accessedAtMs)
+        .map((r) => [r.eventId, r.cover.accessedAtMs]),
+    );
+    const state = {
+      version: 1,
+      catalogDigest,
+      revision: next.revision,
+      history: next.history,
+      lastSuccessfulQueryAtMs: next.lastSuccessfulQueryAtMs,
+      observations: Object.fromEntries(
+        next.rows
+          .filter((r) => r.lastObservedAtMs !== savedRows.get(r.eventId)?.lastObservedAtMs)
+          .map((r) => [r.eventId, r.lastObservedAtMs]),
+      ),
+      ...(Object.keys(coverAccesses).length ? { coverAccesses } : {}),
+    };
+    const bytes = Buffer.from(JSON.stringify(state));
+    if (savedStateBytes?.equals(bytes)) return isCurrent();
+    const differsFromCatalog =
+      Object.keys(state.observations).length > 0 ||
+      state.coverAccesses !== undefined ||
+      state.lastSuccessfulQueryAtMs !== (savedCatalog.lastSuccessfulQueryAtMs ?? null) ||
+      !isDeepStrictEqual(state.history, savedCatalog.history ?? {});
+    if (!savedStateBytes && !differsFromCatalog) {
+      // The catalog is already complete. Retry a stale or invalid sidecar on
+      // later commits without coupling the rewrite to catalog publication.
+      if (stateNeedsAnchor) await writeState(bytes, isCurrent).catch(() => {});
+      return isCurrent();
+    }
+    if (advanceRevision) state.revision++;
+    if (!(await writeState(advanceRevision ? Buffer.from(JSON.stringify(state)) : bytes, isCurrent))) return false;
+    next.revision = state.revision;
+    return true;
+  }
+  async function writeState(bytes, isCurrent) {
+    if (bytes.length > LIMITS.manifestBytes) throw failure("store_unavailable");
+    if (
+      !(await atomic("catalog-state.json", bytes, isCurrent, () => {
+        savedStateBytes = undefined;
+        stateNeedsAnchor = true;
+        writeStats.statePublishes++;
+      }))
+    )
+      return false;
+    savedStateBytes = bytes;
+    stateNeedsAnchor = false;
+    return true;
+  }
+  async function loadState() {
+    try {
+      const bytes = await regular("catalog-state.json", LIMITS.manifestBytes);
+      const state = JSON.parse(bytes);
+      if (
+        !recordObject(state) ||
+        state.version !== 1 ||
+        state.catalogDigest !== catalogDigest ||
+        !Number.isSafeInteger(state.revision) ||
+        state.revision < savedCatalog.revision ||
+        !optionalTimestamp(state.lastSuccessfulQueryAtMs) ||
+        !validStateHistory(state.history) ||
+        !validRowTimes(state.observations, savedRows, (r) => !!r) ||
+        (state.coverAccesses !== undefined && !validRowTimes(state.coverAccesses, savedRows, (r) => !!r?.cover))
+      )
+        throw failure("store_unavailable");
+      await io.chmod(file("catalog-state.json"), 0o600);
+      savedStateBytes = bytes;
+      return state;
+    } catch {
+      stateNeedsAnchor = true;
+      return null;
+    }
   }
   function normalize(row, scope, previous) {
     if (!scope.sdkScope.cameraSns.has(row?.cameraSn)) return null;
@@ -304,7 +518,12 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, tim
     const end = valid ? timestamp(row.endedAtMs) : null;
     const duration =
       start !== null && end !== null && end >= start && end - start <= 86_400_000 ? (end - start) / 1000 : null;
-    const selector = safeSelector(row.coverSelector, row, scope, key);
+    let selector = safeSelector(row.coverSelector, row, scope, key);
+    if (selector && previous?.selector?.thumbPath === selector.thumbPath) {
+      // The SDK signs observation time with the path but does not expire the
+      // signature. Keep a verified selector for the same path across polls.
+      selector = safeSelector(previous.selector, row, scope, key) ?? selector;
+    }
     const pathKeys = new Set(previous?.pathKeys ?? []);
     if (hex(row.coverPathKey)) pathKeys.add(row.coverPathKey);
     if (previous?.selector) pathKeys.add(pathKey(scope, previous.selector));
@@ -358,6 +577,8 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, tim
   return {
     async load() {
       return serial(async () => {
+        const startedAt = clock();
+        let recovering = false;
         await directory(root, true);
         await directory(file("covers"), true);
         await directory(file("tmp"), true);
@@ -373,6 +594,15 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, tim
           manifest = await regular("catalog.json", LIMITS.manifestBytes);
         } catch (e) {
           if (e.code !== "ENOENT") throw e;
+        }
+        let orphanState = false;
+        if (!manifest) {
+          try {
+            await io.lstat(file("catalog-state.json"));
+            orphanState = true;
+          } catch (e) {
+            if (e.code !== "ENOENT") throw e;
+          }
         }
         try {
           key = await regular("identity-key", 32);
@@ -423,45 +653,59 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, tim
             )
               throw failure("store_unavailable");
           }
+          rememberCatalog(manifest, parsed);
+          const state = await loadState();
+          recovering = !state;
           // Treat disk metadata as untrusted. Reuse the public allowlist for
           // display values and retain only the explicitly needed private fields.
           data = {
             version: 1,
             scopeId: parsed.scopeId,
-            revision: parsed.revision,
+            revision: state?.revision ?? parsed.revision,
             accountNamespace: /^a_[a-f0-9]{64}$/.test(parsed.accountNamespace ?? "") ? parsed.accountNamespace : null,
-            history: parsed.history ?? {},
-            lastSuccessfulQueryAtMs: timestamp(parsed.lastSuccessfulQueryAtMs),
+            history: state?.history ?? recoverHistory(parsed, startedAt),
+            lastSuccessfulQueryAtMs: timestamp(state ? state.lastSuccessfulQueryAtMs : parsed.lastSuccessfulQueryAtMs),
             pathsUncertain: parsed.pathsUncertain === true,
-            rows: parsed.rows.map((r) => ({
-              ...publicRecording(r),
-              sourceKey: r.sourceKey,
-              selector: r.selector ?? null,
-              playbackSelector: r.playbackSelector ?? null,
-              pathKeys: r.pathKeys,
-              pathHistoryFull: r.pathHistoryFull === true,
-              pathAmbiguous: r.pathAmbiguous === true,
-              coverEvicted: r.coverEvicted === true,
-              negativeUntilMs: timestamp(r.negativeUntilMs),
-              coverFailures:
-                Number.isSafeInteger(r.coverFailures) && r.coverFailures >= 0
-                  ? Math.min(LIMITS.coverFailures, r.coverFailures)
-                  : 0,
-              cover: r.cover
-                ? {
-                    file: r.cover.file,
-                    sha256: r.cover.sha256,
-                    bytes: r.cover.bytes,
-                    fetchedAtMs: r.cover.fetchedAtMs,
-                    accessedAtMs: timestamp(r.cover.accessedAtMs) ?? r.cover.fetchedAtMs,
-                  }
-                : null,
-            })),
+            rows: parsed.rows.map((r) => {
+              const { coverState, coverRevision, playable, recordingAvailable, ...display } = publicRecording(r);
+              return {
+                ...display,
+                lastObservedAtMs: state?.observations[r.eventId] ?? display.lastObservedAtMs,
+                sourceKey: r.sourceKey,
+                selector: r.selector ?? null,
+                playbackSelector: r.playbackSelector ?? null,
+                pathKeys: r.pathKeys,
+                pathHistoryFull: r.pathHistoryFull === true,
+                pathAmbiguous: r.pathAmbiguous === true,
+                coverEvicted: r.coverEvicted === true,
+                negativeUntilMs: timestamp(r.negativeUntilMs),
+                coverFailures:
+                  Number.isSafeInteger(r.coverFailures) && r.coverFailures >= 0
+                    ? Math.min(LIMITS.coverFailures, r.coverFailures)
+                    : 0,
+                cover: r.cover
+                  ? {
+                      file: r.cover.file,
+                      sha256: r.cover.sha256,
+                      bytes: r.cover.bytes,
+                      fetchedAtMs: r.cover.fetchedAtMs,
+                      accessedAtMs:
+                        state?.coverAccesses?.[r.eventId] ?? timestamp(r.cover.accessedAtMs) ?? r.cover.fetchedAtMs,
+                    }
+                  : null,
+              };
+            }),
           };
           await io.chmod(file("catalog.json"), 0o600);
+        } else if (orphanState) {
+          // A sidecar without its catalog may hold recent reservations. Start
+          // empty with a conservative hold and re-anchor the sidecar.
+          data.history = recoverHistory({ history: {}, rows: [] }, startedAt);
+          recovering = true;
+          stateNeedsAnchor = true;
         }
         loaded = true;
-        await commit(structuredClone(data));
+        await commit(structuredClone(data), undefined, recovering);
         return key;
       });
     },
@@ -472,11 +716,15 @@ export function createRecordingsStore(root, { clock = Date.now, fs: io = fs, tim
     get snapshot() {
       return structuredClone(data);
     },
+    get writeStats() {
+      return { ...writeStats };
+    },
     bind(scope) {
       return serial(async () => {
         if (data.scopeId !== scope.scopeId) {
           const next = empty();
           next.scopeId = scope.scopeId;
+          next.revision = data.revision;
           next.accountNamespace = scope.accountNamespace;
           next.history = data.history;
           await commit(next);

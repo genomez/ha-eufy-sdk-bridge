@@ -50,6 +50,107 @@ function snapshot(eufy) {
   return createDiagnostics({ eufy, state: createState() }).diagnostics(false);
 }
 
+function failureHistory() {
+  const recent = Array.from({ length: 32 }, (_, i) => ({
+    ...sample().terminal[0],
+    generation: i + 1,
+    role: "candidate",
+    connectFailureCategory: null,
+    connectLastStage: "ice_checking",
+    signalingBoundary: null,
+    failureSequence: i + 2,
+    renewal: { originalSessionGeneration: 1, attemptOrdinal: 1, failureSequence: 1 },
+    renewalLink: "linked",
+    stages: {
+      events: Array.from({ length: 64 }, () => ({ stage: "signaling_auth", status: "observed", atMs: 5 })),
+      evicted: 2,
+      lastFailure: null,
+    },
+  }));
+  return {
+    cap: 32, eventCap: 64, retainedCount: 32, totalRecorded: 33, evicted: 1, oldestFailureSequence: 2,
+    lastEviction: { failureSequence: 1, endedAtMs: 10, evictedAtMs: 15 },
+    recent,
+  };
+}
+
+test("projects bounded failed history and both sides of a renewal link", () => {
+  const raw = { ...sample(), failed: failureHistory() };
+  const row = {
+    outcome: "failed", candidateSessionGeneration: 1, candidateConnectionEpoch: 1,
+    candidateConnectionFailureSequence: 2, candidateConnected: false, informationVerified: false,
+  };
+  const retention = {
+    version: 1, ownerIncarnation: 1, ownerEpoch: 1, failedCompletions: 1, cancelledCompletions: 0,
+    evictedFailures: 0, recentFailures: [{ ...row, sequence: 1 }],
+  };
+  const result = snapshot({
+    getRtcConnectionDiagnostics: () => raw,
+    getRtcSessionRefreshDiagnostics: () => ({ lastAttempt: row, lastFailure: row, recent: [row], failureRetention: retention }),
+  });
+  assert.deepEqual(result.rtcConnections, raw);
+  result.rtcConnections.failed.recent[0].renewal.attemptOrdinal = 2;
+  assert.equal(raw.failed.recent[0].renewal.attemptOrdinal, 1);
+  for (const entry of [
+    result.rtcRenewals.lastFailure,
+    result.rtcRenewals.lastAttempt,
+    result.rtcRenewals.recent[0],
+    result.rtcRenewals.failureRetention.recentFailures[0],
+  ]) {
+    assert.equal(entry.candidateConnectionEpoch, 1);
+    assert.equal(entry.candidateConnectionFailureSequence, 2);
+  }
+  assert.equal(result.rtcRenewals.failureRetention.recentFailures[0].sequence, 1);
+});
+
+test("preserves active and terminal evidence when failed history is malformed", () => {
+  const valid = sample();
+  for (const contaminate of [
+    (failed) => { failed.recent.push(failed.recent[0]); },
+    (failed) => { failed.recent[0].stages.events.push(failed.recent[0].stages.events[0]); },
+    (failed) => { failed.recent[0].stages.events.pop(); },
+    (failed) => { failed.recent[0].outcome = "connected"; },
+    (failed) => { failed.recent[0].failureSequence = Number.MAX_SAFE_INTEGER + 1; },
+    (failed) => { failed.recent[0].renewal.failureSequence = -1; },
+    (failed) => { failed.recent[0].renewalLink = "not_renewal"; },
+    (failed) => { failed.oldestFailureSequence = 1; },
+    (failed) => { failed.evicted = 2; },
+    (failed) => { failed.lastEviction.unknown = "CANARY"; },
+    (failed) => { failed.recent[0].renewal.unknown = "CANARY"; },
+    (failed) => { failed.recent[0].stages.events[0].unknown = "CANARY"; },
+    (failed) => { failed.unknown = "CANARY"; },
+  ]) {
+    const failed = failureHistory();
+    contaminate(failed);
+    const raw = { ...valid, failed };
+    assert.deepEqual(rtcConnectionEvidence(raw), { ...valid, failed: null });
+    assert.deepEqual(snapshot({ getRtcConnectionDiagnostics: () => raw }).rtcConnections, {
+      ...valid,
+      failed: null,
+    });
+  }
+});
+
+test("ignores unsafe renewal link fields without reading accessors", () => {
+  let accessorRead = false;
+  const raw = {
+    get candidateConnectionEpoch() { accessorRead = true; return 2; },
+    outcome: "failed", candidateSessionGeneration: 1, candidateConnectionFailureSequence: Number.MAX_SAFE_INTEGER + 1,
+    unexpected: "CANARY",
+  };
+  const { rtcRenewals } = snapshot({
+    getRtcSessionRefreshDiagnostics: () => ({ lastFailure: raw, lastAttempt: {
+      candidateSessionGeneration: 1, candidateConnectionEpoch: 0, candidateConnectionFailureSequence: 0,
+    } }),
+  });
+  assert.equal(accessorRead, false);
+  assert.equal(rtcRenewals.lastFailure.candidateConnectionEpoch, null);
+  assert.equal(rtcRenewals.lastFailure.candidateConnectionFailureSequence, null);
+  assert.equal(rtcRenewals.lastFailure.unexpected, undefined);
+  assert.equal(rtcRenewals.lastAttempt.candidateConnectionEpoch, 0);
+  assert.equal(rtcRenewals.lastAttempt.candidateConnectionFailureSequence, null);
+});
+
 test("projects renewal refresh retries and their finite client outcome", () => {
   const result = snapshot({
     getStateRefreshDiagnostics: () => ({
@@ -458,7 +559,8 @@ test("state refresh retry projection contains descriptor failures to the affecte
 import { EventEmitter } from "node:events";
 import { RtcCommandRouter, RtcSession } from "@mega-yfue/eufy-sdk";
 
-test("installed SDK router and real sessions project terminal all timeout beside relay recovery and grant timeout", async (t) => {
+async function assertInstalledSdkDeadlines(t, offerWaitMs) {
+  const deadline = offerWaitMs === 0 ? "connection" : "offer";
   let now = 0;
   t.mock.method(performance, "now", () => now);
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 100000 });
@@ -516,6 +618,7 @@ test("installed SDK router and real sessions project terminal all timeout beside
     findDevice: () => ({ sn: "offline-station", model: "T9000", deviceClass: "homebase" }),
     icePolicy: "all",
     connectTimeoutMs: 12000,
+    offerWaitMs,
     createSession(opts) {
       const session = new RtcSession({
         ...opts,
@@ -545,15 +648,22 @@ test("installed SDK router and real sessions project terminal all timeout beside
   natives[0].callbacks.ice("checking");
   natives[0].callbacks.connection("connecting");
   natives[0].callbacks.candidate("candidate:1 1 udp 1 192.0.2.1 1 typ host");
+  signals[0].emit("message", { dataType: "info", data: JSON.stringify({ candidate: "synthetic-candidate" }) });
+  await flush();
   deps.connectTimeoutMs = 20000;
-  now = 12000;
-  t.mock.timers.tick(12000);
+  now = deadline === "offer" ? 3000 : 12000;
+  t.mock.timers.tick(now);
   await flush();
   const first = router.getConnectionDiagnostics();
   assert.equal(first.active.length, 1);
   assert.equal(first.active[0].stages.establishment.policy, "relay");
   assert.equal(first.terminal[0].stages.establishment.policy, "all");
-  assert.deepEqual(first.terminal[0].stages.establishment.deadlines, [{ kind: "connection", atMs: 12000 }]);
+  const expectedDeadline =
+    deadline === "offer"
+      ? { kind: "offer", atMs: now, waitMs: 3000, remoteCandidatesReceived: true }
+      : { kind: "connection", atMs: now };
+  assert.deepEqual(first.terminal[0].stages.establishment.deadlines, [expectedDeadline]);
+  assert.equal(first.failed.recent[0].outcome, deadline === "offer" ? "offer_timeout" : "connect_timeout");
   assert.ok(first.terminal[0].stages.establishment.transitions.length >= 2);
   assert.deepEqual(rtcConnectionEvidence(first), first);
   // A candidate's grant timeout preserves grant_timeout: a current relay is instead
@@ -564,7 +674,7 @@ test("installed SDK router and real sessions project terminal all timeout beside
   await flush();
   signals[2].emit("message", { dataType: "info", data: JSON.stringify({ sdp: "v=0\r\n" }) });
   await flush();
-  now = 27000;
+  now += 15000;
   t.mock.timers.tick(15000);
   await flush();
   assert.ok((await candidateDone) instanceof Error);
@@ -578,4 +688,11 @@ test("installed SDK router and real sessions project terminal all timeout beside
   assert.ok(realSessions.every((session) => session instanceof RtcSession));
   router.close();
   await pending;
-});
+}
+
+for (const offerWaitMs of [0, undefined]) {
+  const deadline = offerWaitMs === 0 ? "connection" : "offer";
+  test(`installed SDK projects the ${deadline} deadline beside relay recovery and grant timeout`, (t) =>
+    assertInstalledSdkDeadlines(t, offerWaitMs),
+  );
+}

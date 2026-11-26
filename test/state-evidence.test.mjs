@@ -3,7 +3,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import http from "node:http";
-import { EufyMega, Device, stateEvidenceCapability } from "@mega-yfue/eufy-sdk";
+import {
+  Device,
+  EufyMega,
+  PtcsChannel,
+  PtcsReassembler,
+  buildPortalHeader,
+  linkTypeForChannel,
+  packetize,
+  parsePortalPacket,
+  stateEvidenceCapability,
+} from "@mega-yfue/eufy-sdk";
 import { createDeviceView } from "../src/device-view.mjs";
 import { createState } from "../src/state.mjs";
 import { wireDeviceEvents } from "../src/device-events.mjs";
@@ -247,6 +257,116 @@ test("a failed evidence snapshot cannot suppress legacy summary values", async (
   }
 });
 
+test("device.state forwards a segmented privacy report beyond 128 cloud properties", async () => {
+  const sn = "T8416P0000000000";
+  const eufy = new EufyMega({ email: "test@example.com", password: "synthetic", autoRealtime: false, pollMs: 0 });
+  const cloudParams = Object.fromEntries(Array.from({ length: 142 }, (_, index) => [10_000 + index, "0"]));
+  eufy.registry.devices = [
+    { sn: station, model: "T9000", params: {}, raw: {} },
+    { sn, model: "T8416", stationSn: station, params: cloudParams, raw: { device_channel: 14 } },
+  ];
+  eufy.registry.getDevices = async () => eufy.registry.devices;
+  eufy.mega.getDeviceParamList = async () => ({
+    params: Object.entries(cloudParams).map(([id, param_value]) => ({ param_type: Number(id), param_value })),
+  });
+  const view = createDeviceView({ eufy, state: createState() });
+  try {
+    const body = Buffer.from(
+      JSON.stringify({
+        params: [
+          ...Array.from({ length: 24 }, (_, index) => ({
+            dev_type: 0,
+            param_type: 10_000 + index,
+            param_value: "0",
+          })),
+          { dev_type: 14, param_type: 6250, param_value: "0" },
+        ],
+      }),
+    );
+    const packets = packetize(Buffer.concat([buildPortalHeader(1103, body.length, 255, 7, 0), body]), {
+      channel: PtcsChannel.NOTIFY,
+      frameId: 1,
+    });
+    const receiver = new PtcsReassembler((bytes, channel) => {
+      const parsed = parsePortalPacket(bytes, linkTypeForChannel(channel));
+      eufy.rtc.deps.onFrame(station, parsed, { sessionGeneration: 1, sequence: 1, receivedAtMonotonicMs: 100 });
+    });
+    assert.ok(packets.length > 1);
+    for (const packet of packets) assert.equal(receiver.push(packet), true);
+    const summary = await view.describeDevice(sn);
+    assert.ok(Object.keys(summary.state).indexOf("privacy") > 128);
+    assert.equal(summary.state.privacy, false);
+    const sdkEvidence = eufy.getStateEvidence(sn).privacy;
+    assert.equal(sdkEvidence.source, "rtc_push");
+    assert.equal(sdkEvidence.status, "current");
+    assert.deepEqual(summary.stateEvidence.privacy, sdkEvidence);
+    assert.equal(Object.keys(summary.stateEvidence).length, 128);
+  } finally {
+    await eufy.disconnect();
+  }
+});
+
+test("snapshot evidence reserves safety properties and prioritizes current and confirmed records", async () => {
+  const f = await fixture();
+  try {
+    f.report(false);
+    const advisory = { ...f.eufy.getStateEvidence(camera).light, offProof: null };
+    const current = { ...advisory, status: "current", decision: "current", reason: "qualified_sample" };
+    const confirmed = {
+      ...current,
+      decision: "confirmation-of-command",
+      confirmationEligible: true,
+      intentGeneration: 1,
+      dispatchRevision: 1,
+    };
+    const raw = {
+      ...Object.fromEntries(Array.from({ length: 142 }, (_, index) => [`unknown_${index}`, advisory])),
+      otherCurrent: current,
+      otherConfirmed: confirmed,
+      privacy: current,
+      light: advisory,
+      armingMode: advisory,
+      evidenceOnly: confirmed,
+    };
+    const { evidenceOnly, ...stateRows } = raw;
+    const state = Object.fromEntries(Object.keys(stateRows).map((name) => [name, false]));
+    const projected = evidenceMap(raw, state, advisory.runtimeGeneration);
+    for (const name of ["privacy", "light", "armingMode", "otherCurrent", "otherConfirmed"])
+      assert.deepEqual(projected[name], raw[name]);
+    assert.equal(projected.evidenceOnly, undefined);
+    assert.equal(Object.keys(projected).length, 128);
+  } finally {
+    await f.close();
+  }
+});
+
+test("invalid and unreadable evidence does not use the 128-record allowance", async () => {
+  const f = await fixture();
+  try {
+    f.report(false);
+    const record = f.eufy.getStateEvidence(camera).light;
+    const valid = Object.fromEntries(Array.from({ length: 128 }, (_, index) => [`valid_${index}`, record]));
+    const raw = {
+      nullRecord: null,
+      invalidVersion: { ...record, version: 2 },
+      invalidScope: { ...record, runtimeGeneration: "b6a3d6bf-68c1-47ef-84dc-ed95d83dfdfb" },
+      get unreadable() {
+        throw new Error("unreadable evidence");
+      },
+      hostileRecord: new Proxy({}, {
+        get() {
+          throw new Error("unreadable record");
+        },
+      }),
+      ...valid,
+    };
+    const properties = Object.fromEntries(Object.keys(raw).map((name) => [name, false]));
+    assert.deepEqual(evidenceMap(raw, properties, record.runtimeGeneration), valid);
+  } finally {
+    await f.close();
+  }
+});
+
 test("malformed version, enum, bounds, scope and private extensions do not alter old values", async () => {
   const f = await fixture();
   try {
@@ -257,7 +377,7 @@ test("malformed version, enum, bounds, scope and private extensions do not alter
       { source: "private-source" },
       { revision: -1 },
       { producerSequence: "9".repeat(41) },
-      { runtimeGeneration: "other-runtime" },
+      { runtimeGeneration: "not-a-uuid" },
       { privateBody: "private-payload" },
       { offProof: { eligible: true, reason: "qualified_sample" } },
     ]) {
@@ -268,6 +388,10 @@ test("malformed version, enum, bounds, scope and private extensions do not alter
         false,
       );
     }
+    const otherRuntime = "b6a3d6bf-68c1-47ef-84dc-ed95d83dfdfb";
+    assert.notEqual(raw.runtimeGeneration, otherRuntime);
+    assert.ok(stateEvidence({ ...raw, runtimeGeneration: otherRuntime }));
+    assert.equal(stateEvidence({ ...raw, runtimeGeneration: otherRuntime }, raw.runtimeGeneration), null);
     assert.deepEqual(evidenceMap({ light: raw, other: raw }, { light: false }, raw.runtimeGeneration), { light: raw });
   } finally {
     await f.close();

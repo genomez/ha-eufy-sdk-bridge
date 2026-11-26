@@ -104,7 +104,6 @@ export function createHttpHandler(ctx) {
   return async function handleHttp(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const [, kind, sn] = url.pathname.split("/");
-
     if (kind === "recordings") {
       const assetMatch = /^\/recordings\/v1\/playback\/(p_[A-Za-z0-9_-]{22})\/([a-f0-9-]{36})\/([0-9]{1,4})\.ts$/.exec(
         url.pathname,

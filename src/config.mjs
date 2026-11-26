@@ -92,6 +92,9 @@ export const STREAM_FAIL_BACKOFF_MAX_MS = 5 * 60_000; // cap on the exponential 
 export function loadConfig(env = process.env) {
   const playbackModels = playbackModelDefaults(env);
   const skipCameras = recordingSkipCameras(env.RECORDINGS_SKIP_CAMERAS);
+  const rawOfferWait = env.EUFY_RTC_OFFER_WAIT_MS;
+  const offerWaitMs = typeof rawOfferWait === "string" && /^\d+$/.test(rawOfferWait) ? Number(rawOfferWait) : NaN;
+  const rtcOfferWaitMs = Number.isSafeInteger(offerWaitMs) && offerWaitMs <= 2_147_483_647 ? offerWaitMs : undefined;
   const cfg = {
     email: env.EUFY_EMAIL,
     password: env.EUFY_PASSWORD,
@@ -118,7 +121,9 @@ export function loadConfig(env = process.env) {
     rtcShard: env.BRIDGE_RTC_SHARD || undefined,
     recordingTimeZone: recordingTimeZone(env.TZ),
     rtcIcePolicy: env.BRIDGE_RTC_ICE_POLICY || undefined,
-    rtcSessionRefreshMs: env.BRIDGE_RTC_SESSION_REFRESH_MS ? Number(env.BRIDGE_RTC_SESSION_REFRESH_MS) : undefined,
+    rtcOfferWaitMs,
+    rtcOfferWaitRejected: rawOfferWait != null && rtcOfferWaitMs === undefined,
+    rtcSessionRefreshMs: env.BRIDGE_RTC_SESSION_REFRESH_MS ? Number(env.BRIDGE_RTC_SESSION_REFRESH_MS) : 270_000,
     rtcCommandKeepaliveMs: env.BRIDGE_RTC_COMMAND_KEEPALIVE_MS
       ? Number(env.BRIDGE_RTC_COMMAND_KEEPALIVE_MS)
       : undefined,

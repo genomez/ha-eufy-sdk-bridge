@@ -227,3 +227,124 @@ test("HTTP diagnostics alone contains all four new sanitized evidence sections",
   assert.equal(body.requests.failedRequests[0].method, "devices.list");
   assert.equal(body.requests.failedRequests[0].socketOpenAtReply, false);
 });
+
+test("HTTP diagnostics exposes five sanitized missed RTC reply failures", async () => {
+  const recentFailures = Array.from({ length: 6 }, (_, otherCommandFrames) => ({
+    sendToAckMs: 12,
+    ackToFinishMs: 7990,
+    wrappedSeen: true,
+    otherCommandFrames,
+    pendingFragments: 2,
+    payload: "synthetic-private-canary",
+  }));
+  recentFailures[5].sendToAckMs = Infinity;
+  recentFailures[5].ackToFinishMs = -1;
+  const ctx = {
+    cfg: {},
+    state: createState(),
+    eufy: {
+      getRtcReadDiagnostics: () => ({
+        missedReplies: {
+          wrappedInformationExchanges: 6,
+          failedOtherCommandFrames: 15,
+          failedPendingFragments: 12,
+          recentFailures,
+        },
+      }),
+    },
+  };
+  Object.assign(ctx, createDiagnostics(ctx));
+  let body;
+  await createHttpHandler(ctx)(
+    { url: "/diagnostics", headers: {} },
+    {
+      writeHead(code) {
+        assert.equal(code, 200);
+      },
+      end(text) {
+        body = JSON.parse(text);
+      },
+    },
+  );
+  const missed = body.rtcReads.missedReplies;
+  assert.equal(missed.wrappedInformationExchanges, 6);
+  assert.equal(missed.failedOtherCommandFrames, 15);
+  assert.equal(missed.failedPendingFragments, 12);
+  assert.deepEqual(
+    missed.recentFailures.map((row) => row.otherCommandFrames),
+    [1, 2, 3, 4, 5],
+  );
+  assert.deepEqual(missed.recentFailures[0], {
+    sendToAckMs: 12,
+    ackToFinishMs: 7990,
+    wrappedSeen: true,
+    otherCommandFrames: 1,
+    pendingFragments: 2,
+  });
+  assert.equal(missed.recentFailures[4].sendToAckMs, null);
+  assert.equal(missed.recentFailures[4].ackToFinishMs, null);
+  assert.equal(JSON.stringify(missed).includes("synthetic-private-canary"), false);
+
+  ctx.eufy.getRtcReadDiagnostics = () => ({});
+  assert.equal(ctx.diagnostics(false).rtcReads.missedReplies, null);
+});
+
+test("HTTP diagnostics correlates a station exchange with its owner and joined requests", async () => {
+  const readEpoch = "00000000-0000-4000-8000-000000000123";
+  const operations = Array.from({ length: 18 }, () => ({ acquisitionId: 1, outcome: "failed" }));
+  operations.push(
+    { acquisitionId: 23, source: "cloud_poll", joined: false, phase: "exchange", outcome: "success" },
+    { acquisitionId: 23, source: "guard_confirmation", joined: true, phase: "queue", outcome: "success" },
+    { acquisitionId: 0, source: "synthetic-private-canary", joined: "yes" },
+  );
+  const ctx = {
+    cfg: {},
+    state: createState(),
+    eufy: {
+      getRtcReadDiagnostics: () => ({
+        readEpoch,
+        operations,
+        recent: [{ acquisitionId: 23, source: "cloud_poll", outcome: "success", currentAtArrival: true }],
+      }),
+      getStateRefreshDiagnostics: () => ({
+        operations: [{ acquisitionId: 23, parameters: 8, outcome: "success" }],
+        recent: [{ acquisitionIds: [23, 23, -1, "synthetic-private-canary"], trigger: "scheduled", cloudPollJoins: 1 }],
+      }),
+    },
+  };
+  Object.assign(ctx, createDiagnostics(ctx));
+  let body;
+  await createHttpHandler(ctx)(
+    { url: "/diagnostics", headers: {} },
+    {
+      writeHead(code) {
+        assert.equal(code, 200);
+      },
+      end(text) {
+        body = JSON.parse(text);
+      },
+    },
+  );
+  assert.equal(body.rtcReads.readEpoch, readEpoch);
+  assert.equal(body.rtcReads.operations.length, 20);
+  const [owner, joiner, invalid] = body.rtcReads.operations.slice(-3);
+  assert.equal(owner.acquisitionId, 23);
+  assert.equal(owner.source, "cloud_poll");
+  assert.equal(owner.joined, false);
+  assert.equal(joiner.acquisitionId, 23);
+  assert.equal(joiner.source, "guard_confirmation");
+  assert.equal(joiner.joined, true);
+  assert.equal(body.rtcReads.recent[0].acquisitionId, owner.acquisitionId);
+  assert.equal(body.rtcReads.recent[0].source, owner.source);
+  assert.equal(body.stateRefresh.operations[0].acquisitionId, owner.acquisitionId);
+  assert.equal(body.stateRefresh.operations[0].parameters, 8);
+  assert.deepEqual(body.stateRefresh.recent[0].acquisitionIds, [23]);
+  assert.equal(body.stateRefresh.recent[0].cloudPollJoins, 1);
+  for (const key of ["acquisitionId", "source", "joined"]) assert(!Object.hasOwn(invalid, key));
+  assert(!JSON.stringify(body).includes("synthetic-private-canary"));
+
+  ctx.eufy.getRtcReadDiagnostics = () => ({ readEpoch: "synthetic-private-canary", operations: [{}] });
+  const old = ctx.diagnostics(false).rtcReads;
+  assert(!Object.hasOwn(old, "readEpoch"));
+  assert(!Object.hasOwn(old.operations[0], "acquisitionId"));
+});

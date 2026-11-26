@@ -9,7 +9,15 @@ import { createCommandWindows } from "./command-windows.mjs";
 import { eventLoopEvidence } from "./event-loop-evidence.mjs";
 import { transportEvidence, postTimeoutEvidence, commandStageTimingEvidence } from "./transport-evidence.mjs";
 import { boundedStatuses } from "./bounded-state-writes.mjs";
-import { rtcConnectionEvidence, ownCloudPollEvidence } from "./rtc-connection-evidence.mjs";
+import {
+  connectFailureCategory,
+  connectLastStage,
+  rtcConnectionEvidence,
+  rtcOwnerSessionEndEvidence,
+  signalingBoundaryEvidence,
+  offerTimeoutEvidence,
+  ownCloudPollEvidence,
+} from "./rtc-connection-evidence.mjs";
 import { requestEvidence } from "./request-evidence.mjs";
 import { deviceListEvidence } from "./device-list-evidence.mjs";
 import { cloudHttpEvidence, propertyPreparationEvidence } from "./cloud-work-evidence.mjs";
@@ -378,12 +386,65 @@ function commandFailureRetention(raw) {
   };
 }
 
+function missedReplyFailure(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const wrappedSeen = boolean(ownDataValue(raw, "wrappedSeen"));
+  const otherCommandFrames = number(ownDataValue(raw, "otherCommandFrames"));
+  const pendingFragments = number(ownDataValue(raw, "pendingFragments"));
+  if (wrappedSeen === null || otherCommandFrames === null || pendingFragments === null) return null;
+  return {
+    sendToAckMs: number(ownDataValue(raw, "sendToAckMs")),
+    ackToFinishMs: number(ownDataValue(raw, "ackToFinishMs")),
+    wrappedSeen,
+    otherCommandFrames,
+    pendingFragments,
+  };
+}
+
+function missedReplyEvidence(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const recent = ownDataValue(raw, "recentFailures");
+  return {
+    wrappedInformationExchanges: number(ownDataValue(raw, "wrappedInformationExchanges")),
+    failedOtherCommandFrames: number(ownDataValue(raw, "failedOtherCommandFrames")),
+    failedPendingFragments: number(ownDataValue(raw, "failedPendingFragments")),
+    recentFailures: Array.isArray(recent)
+      ? Array.from({ length: Math.min(recent.length, 5) }, (_, index) =>
+          missedReplyFailure(ownDataValue(recent, Math.max(0, recent.length - 5) + index)),
+        ).filter(Boolean)
+      : [],
+  };
+}
+
+const readSources = new Set([
+  "startup",
+  "scheduled",
+  "cloud_poll",
+  "guard_confirmation",
+  "guard_recovery",
+  "report_refresh",
+  "late_effect",
+  "post_command",
+  "explicit",
+  "unknown",
+]);
+
+/** Correlation values are finite, local to the SDK instance, and optional on old snapshots. */
+function readProvenance(raw, result) {
+  const id = number(ownDataValue(raw, "acquisitionId"));
+  if (!id) return;
+  result.acquisitionId = id;
+  const source = ownDataValue(raw, "source");
+  if (readSources.has(source)) result.source = source;
+}
+
 function exchange(raw) {
   if (!raw || typeof raw !== "object") return null;
   const result = {
     outcome: exchangeOutcomes.has(raw.outcome) ? raw.outcome : null,
     purpose: ["current", "replacement"].includes(raw.purpose) ? raw.purpose : null,
   };
+  readProvenance(raw, result);
   for (const key of [
     "startedAtMs",
     "finishedAtMs",
@@ -409,7 +470,7 @@ function exchange(raw) {
   return result;
 }
 
-/** Finite replacement evidence only; arbitrary strings and nested data are discarded. */
+/** Finite replacement evidence. Closing counts cover disposal of local SDK session wrappers. */
 function renewalEvidence(raw) {
   if (!raw || typeof raw !== "object") return null;
   const result = {};
@@ -419,6 +480,14 @@ function renewalEvidence(raw) {
     "elapsedMs",
     "originalSessionAgeMs",
     "originalLeasesAtFinish",
+    "localSessionsOpenAtStart",
+    "localSessionsConnectingAtStart",
+    "localSessionsClosingAtStart",
+    "localActiveLeasesAtStart",
+    "localSessionsOpenAtFinish",
+    "localSessionsConnectingAtFinish",
+    "localSessionsClosingAtFinish",
+    "localActiveLeasesAtFinish",
     "attemptOrdinal",
     "retryProofStartedAtMs",
     "retryProofFinishedAtMs",
@@ -428,6 +497,12 @@ function renewalEvidence(raw) {
     "adoptedAtMs",
   ])
     result[key] = number(raw[key]);
+  result.candidateConnectionEpoch = result.candidateSessionGeneration > 0
+    ? number(ownDataValue(raw, "candidateConnectionEpoch"))
+    : null;
+  const candidateFailureSequence = number(ownDataValue(raw, "candidateConnectionFailureSequence"));
+  result.candidateConnectionFailureSequence =
+    result.candidateConnectionEpoch !== null && candidateFailureSequence > 0 ? candidateFailureSequence : null;
   for (const key of ["candidateConnected", "informationVerified"]) result[key] = raw[key] === true;
   result.candidateCloseOrigin = [
     "local",
@@ -437,6 +512,7 @@ function renewalEvidence(raw) {
     "peer_failed",
     "peer_closed",
     "grant_timeout",
+    "offer_timeout",
   ].includes(raw.candidateCloseOrigin)
     ? raw.candidateCloseOrigin
     : null;
@@ -446,6 +522,7 @@ function renewalEvidence(raw) {
     "signaling_486",
     "signaling_408",
     "connect_timeout",
+    "offer_timeout",
     "information_timeout",
     "request_rejected",
     "session_closed",
@@ -455,6 +532,10 @@ function renewalEvidence(raw) {
     "other",
   ];
   for (const key of ["failure", "sessionError"]) result[key] = failures.includes(raw[key]) ? raw[key] : null;
+  result.connectFailureCategory = connectFailureCategory(raw.connectFailureCategory);
+  result.connectLastStage = connectLastStage(raw.connectLastStage);
+  result.signalingBoundary = signalingBoundaryEvidence(ownDataValue(raw, "signalingBoundary"));
+  if (result.failure === "offer_timeout") result.offerTimeout = offerTimeoutEvidence(ownDataValue(raw, "offerTimeout"));
   return result;
 }
 
@@ -488,7 +569,7 @@ export function failureRetentionEvidence(raw) {
     const length = Object.getOwnPropertyDescriptor(rows, "length")?.value;
     if (!Number.isSafeInteger(length) || length < 0 || length > 32) return null;
     if (Reflect.ownKeys(rows).length !== length + 1) return null;
-    const keys = ["sequence", ...Object.keys(renewalEvidence({}))];
+    const keys = ["sequence", ...Object.keys(renewalEvidence({})), "offerTimeout"];
     result.recentFailures = [];
     for (let index = 0; index < length; index++) {
       const descriptor = Object.getOwnPropertyDescriptor(rows, String(index));
@@ -540,9 +621,19 @@ function observation(raw, kind) {
       ? raw.outcome
       : null;
     result.failure = refreshKinds.has(raw.failure) ? raw.failure : null;
-    if (kind === "sweep")
+    if (kind === "sweep") {
       result.trigger = ["startup", "scheduled", "cloud_poll"].includes(raw.trigger) ? raw.trigger : null;
-    else
+      const ids = ownDataValue(raw, "acquisitionIds");
+      if (Array.isArray(ids)) {
+        const unique = new Set();
+        const length = number(ownDataValue(ids, "length")) ?? 0;
+        for (let index = Math.max(0, length - 20); index < length; index++) {
+          const id = number(ownDataValue(ids, String(index)));
+          if (id) unique.add(id);
+        }
+        result.acquisitionIds = [...unique];
+      }
+    } else
       result.phase = (kind === "transport"
         ? ["acquisition", "queue", "exchange"]
         : ["validation", "transport", "processing"]
@@ -561,6 +652,13 @@ function observation(raw, kind) {
       });
       result.sessionError = finite.sessionError;
       result.closeOriginAtFinish = finite.candidateCloseOrigin;
+      readProvenance(raw, result);
+      const joined = ownDataValue(raw, "joined");
+      if (result.acquisitionId && typeof joined === "boolean") result.joined = joined;
+    } else if (kind === "client") {
+      readProvenance(raw, result);
+      const parameters = number(ownDataValue(raw, "parameters"));
+      if (parameters !== null) result.parameters = parameters;
     }
   }
   return result;
@@ -577,7 +675,7 @@ const observations = (raw, kind) =>
 export function sdkErrorKind(error) {
   if (error?.name === "SessionExpiredError") return "session_expired";
   const message = typeof error?.message === "string" ? error.message : "";
-  if (/^rtc: .+ did not come up within \d+ms$/.test(message)) return "connect_timeout";
+  if (/^rtc: (?:.+ did not come up|remote offer did not arrive) within \d+ms$/.test(message)) return "connect_timeout";
   if (
     message === "RTC session closed while opening" ||
     /^rtc: .+ session closed before the command channel opened$/.test(message)
@@ -1008,8 +1106,12 @@ export function createDiagnostics(ctx, now = Date.now) {
       const thumbnail = ctx.eufy.getThumbnailDiagnostics?.();
       const flags = ctx.state.flags;
       const reads = ctx.eufy.getRtcReadDiagnostics?.();
+      const readEpoch = ownDataValue(reads, "readEpoch");
       const rtcReads = reads
         ? {
+            ...(typeof readEpoch === "string" &&
+              readEpoch.length === 36 &&
+              /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(readEpoch) && { readEpoch }),
             operations: observations(reads.operations, "transport"),
             lastOperationFailure: observation(reads.lastOperationFailure, "transport"),
             exchanges: number(reads.exchanges),
@@ -1017,6 +1119,7 @@ export function createDiagnostics(ctx, now = Date.now) {
             failures: number(reads.failures),
             recent: Array.isArray(reads.recent) ? reads.recent.slice(-20).map(exchange).filter(Boolean) : [],
             lastFailure: exchange(reads.lastFailure),
+            missedReplies: missedReplyEvidence(ownDataValue(reads, "missedReplies")),
           }
         : null;
       let rtcObservationSnapshot;
@@ -1136,6 +1239,13 @@ export function createDiagnostics(ctx, now = Date.now) {
         cameraHealth: camera.snapshot((sn) => ctx.eufy.getRssiSuppressionDiagnostics?.(sn)),
         rtcObservations: rtcObservationSnapshot,
         rtcRenewals,
+        rtcOwnerSessionEnds: (() => {
+          try {
+            return rtcOwnerSessionEndEvidence(ctx.eufy.getRtcOwnerSessionEndDiagnostics?.());
+          } catch {
+            return null;
+          }
+        })(),
         rtcKeepalive,
         rtcPlaybackSafety: (() => {
           try {

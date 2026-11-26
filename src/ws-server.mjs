@@ -476,7 +476,11 @@ export function createWsServer(ctx, httpServer, { allowCommand, requestClocks } 
             }
             pilotLog("ws_server_2");
             commandErrorCode =
-              e?.code === "guard_dispatch_rejected" ? "guard_dispatch_rejected" : commandFailureEvent(e);
+              msg.name === "privacy" && e?.name === "StateConvergenceError" && e?.property === "privacy"
+                ? "privacy_unconfirmed"
+                : e?.code === "guard_dispatch_rejected"
+                  ? "guard_dispatch_rejected"
+                  : commandFailureEvent(e);
             ctx.recordCommand?.("failed", e, { property: msg.name, elapsedMs: Math.max(0, Date.now() - t0) });
             pilotLog(commandErrorCode);
             throw e; // outer catch surfaces it to the frontend (+ triggers session recovery if kicked)

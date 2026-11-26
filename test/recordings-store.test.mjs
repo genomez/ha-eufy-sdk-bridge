@@ -4,8 +4,470 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createRecordingsStore, validRecordingJpeg, imageDigest } from "../src/recordings-store.mjs";
 import { recordingBinding, recordingMac } from "../src/recordings-adapter.mjs";
-import { recordingEnrollment, LIMITS } from "../src/recordings-policy.mjs";
-import { temporary, harness, row, seed, inventory, jpeg } from "./helpers/recordings-fixtures.mjs";
+import { recordingEnrollment, createRecordingsPolicy, LIMITS } from "../src/recordings-policy.mjs";
+import { DEFAULT_PACING } from "../src/recordings-pacing.mjs";
+import { temporary, harness, row, seed, inventory, jpeg, until } from "./helpers/recordings-fixtures.mjs";
+
+async function restartPacing(t, h) {
+  await h.manager.stop();
+  const store = createRecordingsStore(h.root, { clock: h.clocks.now });
+  t.after(() => store.close());
+  await store.load();
+  const history = store.snapshot.history;
+  const policy = createRecordingsPolicy({
+    now: h.clocks.now,
+    monotonic: h.clocks.monotonic,
+    pacing: DEFAULT_PACING,
+  });
+  policy.restore(history);
+  return { history, policy };
+}
+
+test("corrupt sidecar keeps the catalog reservation after an unchanged refresh", async (t) => {
+  const h = await harness(t);
+  const manifest = path.join(h.root, "catalog.json");
+  const refresh = async () => {
+    h.catalog("if_due");
+    await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+    assert.equal(h.manager.diagnostics().lastCatalogAttempt.outcome, "ok");
+  };
+  await refresh();
+  const before = await fs.readFile(manifest);
+  h.clocks.advance(LIMITS.catalogInterval);
+  await refresh();
+  assert.deepEqual(await fs.readFile(manifest), before);
+  await fs.writeFile(path.join(h.root, "catalog-state.json"), "{");
+
+  const { policy } = await restartPacing(t, h);
+  assert.equal(policy.catalogWait(), LIMITS.catalogInterval);
+  assert.equal(policy.coverWait(), 60_000);
+  const { eventId } = h.store.snapshot.rows[0];
+  assert.ok(policy.window(h.cameraId, [eventId]).used.has(eventId));
+  h.clocks.advance(60_000);
+  assert.equal(policy.catalogWait(), 0);
+  assert.equal(policy.coverWait(), 0);
+  assert.ok(!policy.window(h.cameraId, [eventId]).used.has(eventId));
+});
+
+test("orphan sidecar without a catalog starts empty with a conservative hold", async (t) => {
+  const root = await temporary(t);
+  const now = 1_800_000_000_000;
+  const clock = () => now;
+  await fs.writeFile(path.join(root, "catalog-state.json"), "{}");
+  const store = createRecordingsStore(root, { clock });
+  t.after(() => store.close());
+  await store.load();
+  assert.equal(store.snapshot.rows.length, 0);
+  const policy = createRecordingsPolicy({ now: clock, monotonic: clock, pacing: DEFAULT_PACING });
+  policy.restore(store.snapshot.history);
+  assert.equal(policy.catalogWait(), LIMITS.catalogInterval);
+  assert.equal(policy.coverWait(), 60_000);
+  // The sidecar is re-anchored to the new catalog, so the next start loads it.
+  const catalog = await fs.readFile(path.join(root, "catalog.json"));
+  const state = JSON.parse(await fs.readFile(path.join(root, "catalog-state.json"), "utf8"));
+  assert.equal(state.catalogDigest, imageDigest(catalog));
+  await store.close();
+  const second = createRecordingsStore(root, { clock });
+  t.after(() => second.close());
+  await second.load();
+  assert.equal(second.snapshot.history.catalog, now);
+});
+
+test("write counters show sidecar-only minutes and catalog fallbacks", async (t) => {
+  let denySidecar = false;
+  const io = {
+    ...fs,
+    async rename(from, to) {
+      if (denySidecar && path.basename(to) === "catalog-state.json")
+        throw Object.assign(new Error(), { code: "EACCES" });
+      return fs.rename(from, to);
+    },
+  };
+  const h = await harness(t, { storeOptions: { fs: io } });
+  const refresh = async () => {
+    h.catalog("if_due");
+    await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+  };
+  await refresh();
+  const first = h.manager.diagnostics().catalogWrites;
+  h.clocks.advance(LIMITS.catalogInterval);
+  await refresh();
+  const unchanged = h.manager.diagnostics().catalogWrites;
+  assert.equal(unchanged.catalogPublishes, first.catalogPublishes);
+  assert.ok(unchanged.statePublishes > first.statePublishes);
+  assert.equal(unchanged.stateFallbacks, 0);
+  denySidecar = true;
+  h.clocks.advance(LIMITS.catalogInterval);
+  await refresh();
+  const fallback = h.manager.diagnostics().catalogWrites;
+  assert.ok(fallback.stateFallbacks > 0);
+  assert.ok(fallback.catalogPublishes > unchanged.catalogPublishes);
+});
+
+test("catalog directory sync failure keeps the renamed digest for the next reservation", async (t) => {
+  let failSync = false,
+    stateAtDispatch;
+  const io = {
+    ...fs,
+    async open(name, flags, ...args) {
+      if (failSync && name === h.root && flags === "r") {
+        failSync = false;
+        return {
+          async sync() {
+            throw Object.assign(new Error(), { code: "EIO" });
+          },
+          async close() {},
+        };
+      }
+      return fs.open(name, flags, ...args);
+    },
+  };
+  let h;
+  h = await harness(t, {
+    storeOptions: { fs: io },
+    async catalog() {
+      stateAtDispatch = JSON.parse(await fs.readFile(path.join(h.root, "catalog-state.json")));
+      return { status: "unavailable", reason: "timeout" };
+    },
+  });
+  await seed(h);
+  await h.store.updateHistory({ catalog: h.clocks.now() });
+  h.clocks.advance(LIMITS.catalogInterval);
+  const manifest = path.join(h.root, "catalog.json");
+  failSync = true;
+  const newRow = row(h.scope, 1);
+  await assert.rejects(h.store.mergeCatalog(h.scope, [newRow]), { code: "recordings_store_unavailable" });
+  const published = await fs.readFile(manifest);
+  assert.ok(JSON.parse(published).rows.some((row) => row.eventId === newRow.eventId));
+
+  h.catalog("if_due");
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+  assert.equal(h.calls.catalog.length, 1);
+  const { policy } = await restartPacing(t, h);
+  assert.equal(policy.catalogWait(), LIMITS.catalogInterval);
+  assert.equal(stateAtDispatch.catalogDigest, imageDigest(published));
+  assert.equal(stateAtDispatch.history.catalog, h.clocks.now());
+});
+
+test("sidecar rename failure persists cover completion with the retained JPEG", async (t) => {
+  let denySidecar = false;
+  const io = {
+    ...fs,
+    async rename(from, to) {
+      if (denySidecar && path.basename(to) === "catalog-state.json")
+        throw Object.assign(new Error(), { code: "ENOSPC" });
+      await fs.rename(from, to);
+      if (to.endsWith(".jpg")) denySidecar = true;
+    },
+  };
+  const h = await harness(t, { storeOptions: { fs: io } });
+  await seed(h);
+  h.ctx.state.flags.ready = false;
+  const page = h.catalog("if_due");
+  const { eventId } = page.events[0];
+  h.ctx.state.flags.ready = true;
+  await h.manager.cover(h.owner, {
+    cameraId: h.cameraId,
+    eventId,
+    browseId: page.browseId,
+    mode: "request_if_admitted",
+  });
+  await until(() => h.manager.diagnostics().coverCache.pending === 0);
+  assert.equal(h.calls.cover.length, 1);
+  assert.deepEqual((await h.store.readCover(h.cameraId, eventId)).jpeg, jpeg);
+  const checkpoint = JSON.parse(await fs.readFile(path.join(h.root, "catalog.json")));
+  denySidecar = false;
+  const { policy } = await restartPacing(t, h);
+  assert.equal(policy.coverWait(), 60_000);
+  assert.equal(checkpoint.history.coverCompleted, h.clocks.now());
+});
+
+test("sidecar-only write failure reserves an unchanged refresh before SDK dispatch", async (t) => {
+  let denySidecar = false,
+    historyAtDispatch;
+  const io = {
+    ...fs,
+    async rename(from, to) {
+      if (denySidecar && path.basename(to) === "catalog-state.json")
+        throw Object.assign(new Error(), { code: "ENOSPC" });
+      await fs.rename(from, to);
+    },
+  };
+  let h;
+  h = await harness(t, {
+    storeOptions: { fs: io },
+    async catalog() {
+      historyAtDispatch = JSON.parse(await fs.readFile(path.join(h.root, "catalog.json"))).history;
+      return { status: "ok", rows: [row(h.scope)] };
+    },
+  });
+  h.catalog("if_due");
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+  assert.equal(h.manager.diagnostics().lastCatalogAttempt.outcome, "ok");
+
+  h.clocks.advance(LIMITS.catalogInterval);
+  denySidecar = true;
+  h.catalog("if_due");
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+  assert.equal(h.calls.catalog.length, 2);
+  assert.equal(historyAtDispatch.catalog, h.clocks.now());
+  assert.equal(h.manager.diagnostics().lastCatalogAttempt.outcome, "ok");
+});
+
+test("unchanged catalog skips disk writes and observation-only refreshes survive restart", async (t) => {
+  const temporaryWrites = [],
+    publications = [];
+  const io = {
+    ...fs,
+    async open(name, flags, ...args) {
+      if (flags === "wx" && name.endsWith(".tmp")) temporaryWrites.push(name);
+      return fs.open(name, flags, ...args);
+    },
+    async rename(from, to) {
+      await fs.rename(from, to);
+      publications.push(path.basename(to));
+    },
+  };
+  const h = await harness(t, { storeOptions: { fs: io } });
+  const original = row(h.scope);
+  await h.store.mergeCatalog(h.scope, [original]);
+  const manifest = path.join(h.root, "catalog.json");
+  const before = await fs.readFile(manifest);
+  const revision = h.store.snapshot.revision;
+  temporaryWrites.length = publications.length = 0;
+
+  await h.store.mergeCatalog(h.scope, [original]);
+  await h.store.updateHistory(h.store.snapshot.history);
+  await h.store.prune();
+  assert.equal(temporaryWrites.length, 0);
+
+  h.clocks.advance(60_000);
+  const time = h.clocks.now();
+  const history = { catalog: time, covers: [], windows: {} };
+  await h.store.updateHistory(history);
+  const observed = row(h.scope);
+  const selector = observed.coverSelector;
+  selector.observedAtMs = time;
+  selector.selectorMac = recordingMac(
+    h.store.key,
+    "recordings.selector.v1",
+    h.scope.accountNamespace,
+    selector.sourceKey,
+    selector.cameraSn,
+    selector.stationBinding,
+    selector.thumbPath,
+    time,
+  );
+  await h.store.mergeCatalog(h.scope, [observed]);
+  assert.deepEqual(publications, ["catalog-state.json", "catalog-state.json"]);
+  assert.deepEqual(await fs.readFile(manifest), before);
+  assert.equal(h.catalog().lastSuccessfulQueryAtMs, time);
+  assert.equal(h.catalog().events[0].lastObservedAtMs, time);
+  assert.equal(h.store.snapshot.revision, revision + 2);
+  temporaryWrites.length = 0;
+  await h.store.mergeCatalog(h.scope, [observed]);
+  assert.equal(temporaryWrites.length, 0);
+  assert.equal(h.store.snapshot.revision, revision + 2);
+
+  await h.manager.stop();
+  const second = createRecordingsStore(h.root, { clock: h.clocks.now, fs: io });
+  t.after(() => second.close());
+  publications.length = 0;
+  await second.load();
+  assert.deepEqual(publications, []);
+  assert.deepEqual(second.snapshot.history, history);
+  assert.equal(second.snapshot.revision, revision + 2);
+  assert.equal(second.snapshot.lastSuccessfulQueryAtMs, time);
+  assert.equal(second.snapshot.rows[0].lastObservedAtMs, time);
+
+  const sidecar = path.join(h.root, "catalog-state.json");
+  const staleState = await fs.readFile(sidecar);
+  h.clocks.advance(60_000);
+  const freshHistory = {
+    catalog: h.clocks.now() + 2_000,
+    coverCompleted: h.clocks.now() + 1_000,
+    covers: [h.clocks.now() + 1_000],
+    windows: {},
+  };
+  await second.updateHistory(freshHistory);
+  await second.mergeCatalog(h.scope, [observed, row(h.scope, 1)]);
+  assert.equal(publications.filter((name) => name === "catalog.json").length, 1);
+  assert.equal(second.snapshot.revision, revision + 4);
+  assert.equal(JSON.parse(await fs.readFile(manifest)).rows.length, 2);
+  assert.deepEqual(JSON.parse(await fs.readFile(sidecar)).observations, {});
+
+  // Simulate interruption after publishing the new manifest but before clearing
+  // the sidecar. Older pacing, rows and observation deltas must be ignored,
+  // including when the pacing checkpoint is ahead of the startup clock.
+  await second.close();
+  await fs.writeFile(sidecar, staleState);
+  const third = createRecordingsStore(h.root, { clock: h.clocks.now, fs: io });
+  t.after(() => third.close());
+  await third.load();
+  const recovered = third.snapshot.history;
+  assert.equal(recovered.catalog, freshHistory.catalog);
+  assert.equal(recovered.coverCompleted, freshHistory.coverCompleted);
+  assert.deepEqual(recovered.covers, Array(LIMITS.coverRate).fill(freshHistory.covers[0]));
+  assert.equal(third.snapshot.revision, revision + 4);
+  assert.equal(third.snapshot.lastSuccessfulQueryAtMs, h.clocks.now());
+  assert.ok(third.snapshot.rows.every((r) => r.lastObservedAtMs === h.clocks.now()));
+  const reanchored = JSON.parse(await fs.readFile(sidecar));
+  assert.equal(reanchored.catalogDigest, imageDigest(await fs.readFile(manifest)));
+  assert.deepEqual(reanchored.history, recovered);
+  assert.deepEqual(reanchored.observations, {});
+});
+
+for (const corrupt of ["malformed JSON", "invalid history", "a missing file"]) {
+  test(`startup falls back to the catalog with ${corrupt} in the sidecar`, async (t) => {
+    const h = await harness(t);
+    const history = { catalog: h.clocks.now(), covers: [], windows: {} };
+    await h.store.updateHistory(history);
+    await seed(h);
+    const checkpoint = h.store.snapshot;
+    const sidecar = path.join(h.root, "catalog-state.json");
+    const state = JSON.parse(await fs.readFile(sidecar));
+    await h.manager.stop();
+    if (corrupt === "a missing file") await fs.unlink(sidecar);
+    else
+      await fs.writeFile(
+        sidecar,
+        corrupt === "malformed JSON" ? "{" : JSON.stringify({ ...state, history: { covers: 42 } }),
+      );
+    let rejectReanchor = true;
+    const second = createRecordingsStore(h.root, {
+      clock: h.clocks.now,
+      fs: {
+        ...fs,
+        async rename(from, to) {
+          if (to === sidecar && rejectReanchor) throw Object.assign(new Error(), { code: "ENOSPC" });
+          await fs.rename(from, to);
+        },
+      },
+    });
+    t.after(() => second.close());
+    await second.load();
+    const recovered = second.snapshot.history;
+    assert.deepEqual(second.snapshot, { ...checkpoint, history: recovered });
+    assert.equal(recovered.catalog, history.catalog);
+    assert.equal(recovered.coverCompleted, h.clocks.now());
+    assert.deepEqual(recovered.covers, Array(LIMITS.coverRate).fill(h.clocks.now()));
+    rejectReanchor = false;
+    await second.prune();
+    assert.deepEqual(JSON.parse(await fs.readFile(sidecar)), {
+      ...state,
+      revision: second.snapshot.revision,
+      history: recovered,
+    });
+  });
+}
+
+test("a refresh notifies success when sidecar rename fails after catalog publication", async (t) => {
+  const publications = [];
+  let refreshing = false,
+    rejectReanchor = false;
+  const io = {
+    ...fs,
+    async rename(from, to) {
+      const name = path.basename(to);
+      if (name === "catalog-state.json" && rejectReanchor) throw Object.assign(new Error(), { code: "ENOSPC" });
+      await fs.rename(from, to);
+      publications.push(name);
+      if (refreshing && name === "catalog.json") rejectReanchor = true;
+    },
+  };
+  const h = await harness(t, { storeOptions: { fs: io } });
+  const manifest = path.join(h.root, "catalog.json");
+  const sidecar = path.join(h.root, "catalog-state.json");
+  publications.length = 0;
+  refreshing = true;
+  h.catalog("if_due");
+  await until(() => h.manager.diagnostics().lastCatalogAttempt?.finishedAtMs != null);
+  const published = await fs.readFile(manifest);
+  const checkpoint = JSON.parse(published);
+  assert.equal(checkpoint.rows.length, 1);
+  assert.equal(h.manager.diagnostics().lastCatalogAttempt.outcome, "ok");
+  h.clocks.advance(1_000);
+  assert.ok(
+    h.events.some(
+      (event) =>
+        event.event === "recordings.changed" &&
+        event.reason === "catalog" &&
+        event.revision === String(checkpoint.revision),
+    ),
+  );
+  assert.equal(h.store.snapshot.revision, checkpoint.revision);
+  assert.notEqual(JSON.parse(await fs.readFile(sidecar)).catalogDigest, imageDigest(published));
+
+  await h.store.prune();
+  assert.deepEqual(publications, ["catalog-state.json", "catalog-state.json", "catalog.json"]);
+  rejectReanchor = false;
+  await h.store.prune();
+  assert.deepEqual(publications, ["catalog-state.json", "catalog-state.json", "catalog.json", "catalog-state.json"]);
+  assert.equal(JSON.parse(await fs.readFile(sidecar)).catalogDigest, imageDigest(published));
+  assert.equal(h.store.snapshot.revision, checkpoint.revision);
+  assert.deepEqual(await fs.readdir(path.join(h.root, "tmp")), []);
+});
+
+test("a reservation survives pruning when sidecar rename is unavailable before catalog publication", async (t) => {
+  const attempts = [];
+  let rejectCatalog = false,
+    rejectSidecar = false;
+  const io = {
+    ...fs,
+    async rename(from, to) {
+      const name = path.basename(to);
+      attempts.push(name);
+      if ((name === "catalog.json" && rejectCatalog) || (name === "catalog-state.json" && rejectSidecar))
+        throw Object.assign(new Error(), { code: "ENOSPC" });
+      await fs.rename(from, to);
+    },
+  };
+  const h = await harness(t, { storeOptions: { fs: io } });
+  await seed(h);
+  const staleHistory = { catalog: h.clocks.now(), covers: [], windows: {} };
+  await h.store.updateHistory(staleHistory);
+  h.clocks.advance(LIMITS.ttl);
+  const history = { catalog: h.clocks.now(), covers: [h.clocks.now()], windows: {} };
+  attempts.length = 0;
+  rejectCatalog = true;
+  rejectSidecar = true;
+  await assert.rejects(h.store.updateHistory(history), { code: "recordings_store_unavailable" });
+  assert.deepEqual(attempts, ["catalog.json", "catalog-state.json"]);
+  assert.deepEqual(h.store.snapshot.history, staleHistory);
+  assert.equal(h.store.snapshot.rows.length, 1);
+
+  attempts.length = 0;
+  rejectCatalog = false;
+  await h.store.updateHistory(history);
+  assert.deepEqual(attempts, ["catalog.json", "catalog-state.json"]);
+  await h.manager.stop();
+  const second = createRecordingsStore(h.root, { clock: h.clocks.now, fs: io });
+  t.after(() => second.close());
+  await second.load();
+  const checkpoint = JSON.parse(await fs.readFile(path.join(h.root, "catalog.json")));
+  assert.deepEqual(checkpoint.history, history);
+  assert.equal(second.snapshot.history.catalog, history.catalog);
+  assert.deepEqual(second.snapshot.rows, []);
+});
+
+test("a cached cover access survives restart without rewriting the catalog", async (t) => {
+  const h = await harness(t);
+  await seed(h);
+  const { eventId } = h.store.snapshot.rows[0];
+  await h.store.putCover(h.scope, h.cameraId, eventId, jpeg);
+  const manifest = path.join(h.root, "catalog.json");
+  const before = await fs.readFile(manifest);
+  h.clocks.advance(1_000);
+  assert.ok(await h.store.readCover(h.cameraId, eventId));
+  await h.store.prune();
+  assert.deepEqual(await fs.readFile(manifest), before);
+  await h.manager.stop();
+  const second = createRecordingsStore(h.root, { clock: h.clocks.now });
+  t.after(() => second.close());
+  await second.load();
+  assert.equal(second.snapshot.rows[0].cover.accessedAtMs, h.clocks.now());
+  assert.deepEqual(await fs.readFile(manifest), before);
+});
 
 test("store key and IDs survive restart and camera rename", async (t) => {
   const h = await harness(t);
@@ -144,11 +606,12 @@ test("missing key with existing catalog fails closed", async (t) => {
 test("permissions are restricted on supported platforms", async (t) => {
   const h = await harness(t);
   await seed(h);
+  await h.store.updateHistory({ catalog: h.clocks.now() });
   if (process.platform === "win32") {
     t.skip("Windows requires deployment filesystem ACL qualification");
     return;
   }
-  for (const name of ["identity-key", "catalog.json"])
+  for (const name of ["identity-key", "catalog.json", "catalog-state.json"])
     assert.equal((await fs.stat(path.join(h.root, name))).mode & 0o777, 0o600);
   for (const name of ["", "covers", "tmp"]) assert.equal((await fs.stat(path.join(h.root, name))).mode & 0o777, 0o700);
 });

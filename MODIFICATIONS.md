@@ -1,3 +1,42 @@
+# S1 experimental.17 modifications
+
+Modified by genomez on 2026-11-25. Projects privacy, guard, floodlight and connection evidence, and skips unchanged recording catalog writes.
+
+Changed paths since experimental.16
+
+- `BUILD_PROVENANCE.json`
+- `EXPERIMENTAL.md`
+- `MODIFICATIONS.md`
+- `PUBLICATION.json`
+- `README.md`
+- `RELEASE_NOTES.md`
+- `SOURCE_MANIFEST.json`
+- `package-lock.json`
+- `package.json`
+- `server.mjs`
+- `src/client.mjs`
+- `src/config.mjs`
+- `src/diagnostics.mjs`
+- `src/http-routes.mjs`
+- `src/pilot-log.mjs`
+- `src/recordings-store.mjs`
+- `src/recordings.mjs`
+- `src/rtc-connection-evidence.mjs`
+- `src/state-evidence.mjs`
+- `src/ws-server.mjs`
+- `test/cloud-work-evidence.test.mjs`
+- `test/config.test.mjs`
+- `test/fixtures/homebase-battery.mjs`
+- `test/helpers/sdk-resolve.mjs`
+- `test/homebase-battery.test.mjs`
+- `test/ice-establishment-evidence.test.mjs`
+- `test/recordings-store.test.mjs`
+- `test/rtc-connection-evidence.test.mjs`
+- `test/state-evidence.test.mjs`
+- `test/t9000-settings-manifest.test.mjs`
+
+## Earlier modifications
+
 # S1 experimental.16 local release candidate
 
 Modified for genomez, 2026-11-15. Project supported settings and installed volume controls; preserve motion-light receipts and expose the on-demand diagnostic query.

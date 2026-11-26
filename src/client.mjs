@@ -33,6 +33,7 @@ export function createEufy({ cfg }, options = {}) {
       commandTimeoutMs: 14000,
       stateRefreshMs: cfg.rtcStateRefreshMs,
       sessionRefreshMs: cfg.rtcSessionRefreshMs,
+      offerWaitMs: cfg.rtcOfferWaitMs,
       recordingTimeZone: cfg.recordingTimeZone ?? recordingTimeZone(process.env.TZ),
       commandKeepaliveMs: cfg.rtcCommandKeepaliveMs,
       ...options.rtc,

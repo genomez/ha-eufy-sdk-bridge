@@ -16,6 +16,7 @@ import path from "node:path";
 
 const config = loadConfig();
 setPilotLogTimestamps(config.cfg.logTimestamps);
+if (config.cfg.rtcOfferWaitRejected) pilotLog("invalid_rtc_offer_wait_ms");
 if (!config.cfg.email || !config.cfg.password) {
   pilotLog("server_1");
   process.exit(1);

@@ -1129,6 +1129,7 @@ export function createRecordings(
         clips: clips.diagnostics(),
         ...windowContract(),
         catalogSettings: catalogSettings(),
+        catalogWrites: loaded && !storeFailed ? store.writeStats : null,
         playbackModelPolicy: playbackModelPolicy(),
         skipCameraPolicy: skipCameraPolicy(),
         rowsKeptPerCamera: cameras.map((c) => ({

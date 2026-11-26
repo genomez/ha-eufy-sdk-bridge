@@ -73,14 +73,30 @@ test("openudid is undefined by default and taken from BRIDGE_OPENUDID when set",
 test("RTC command keepalive defaults off and parses like the session refresh interval", () => {
   assert.equal(loadConfig(base).cfg.rtcCommandKeepaliveMs, undefined);
   for (const value of ["", "29000", "0", "-1", "1.5", "invalid"]) {
-    const { cfg } = loadConfig({
-      ...base,
-      BRIDGE_RTC_COMMAND_KEEPALIVE_MS: value,
-      BRIDGE_RTC_SESSION_REFRESH_MS: value,
-    });
-    assert.equal(cfg.rtcCommandKeepaliveMs, cfg.rtcSessionRefreshMs);
+    const { cfg } = loadConfig({ ...base, BRIDGE_RTC_COMMAND_KEEPALIVE_MS: value });
+    assert.equal(cfg.rtcCommandKeepaliveMs, value ? Number(value) : undefined);
   }
   assert.equal(loadConfig({ ...base, BRIDGE_RTC_COMMAND_KEEPALIVE_MS: "29000" }).cfg.rtcCommandKeepaliveMs, 29_000);
+});
+
+test("RTC session renewal runs at 270 seconds without an environment override", () => {
+  assert.equal(loadConfig({}).cfg.rtcSessionRefreshMs, 270_000);
+  assert.equal(loadConfig({ ...base, BRIDGE_RTC_SESSION_REFRESH_MS: "300000" }).cfg.rtcSessionRefreshMs, 300_000);
+  assert.equal(loadConfig({ ...base, BRIDGE_RTC_SESSION_REFRESH_MS: "0" }).cfg.rtcSessionRefreshMs, 0);
+});
+
+test("SDK offer wait leaves unset or invalid overrides to the SDK and accepts zero", () => {
+  const read = (value) => loadConfig({ ...base, EUFY_RTC_OFFER_WAIT_MS: value }).cfg;
+  assert.equal(read(undefined).rtcOfferWaitMs, undefined);
+  assert.equal(read(undefined).rtcOfferWaitRejected, false);
+  for (const value of ["", " ", "-1", "1.5", "1e3", "2147483648", "invalid"]) {
+    assert.equal(read(value).rtcOfferWaitMs, undefined);
+    assert.equal(read(value).rtcOfferWaitRejected, true);
+  }
+  for (const value of ["0", "2500", "2147483647"]) {
+    assert.equal(read(value).rtcOfferWaitMs, Number(value));
+    assert.equal(read(value).rtcOfferWaitRejected, false);
+  }
 });
 
 test("progressive playable threshold accepts only integer milliseconds in range", () => {

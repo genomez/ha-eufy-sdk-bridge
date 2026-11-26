@@ -1,4 +1,7 @@
 export const stateEvidenceCapability = Object.freeze({ version: 1, mode: "shadow" });
+const maxForwardedEvidence = 128;
+// Home Assistant consumes these receipts in privacy.py, guard_confirmation.py, and switch.py.
+const safetyEvidenceProperties = new Set(["privacy", "armingMode", "light"]);
 const sources = new Set(["rtc_push", "rtc_readback", "cloud_poll", "command_echo", "snapshot", "legacy_unknown"]);
 const statuses = new Set(["current", "uncertain", "retained", "stale"]);
 const decisions = new Set(["current", "confirmation-of-command", "retained", "uncertain"]);
@@ -140,14 +143,31 @@ export function evidenceRuntime(eufy) {
 export function evidenceMap(raw, properties, runtime) {
   try {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-    return Object.fromEntries(
-      Object.keys(properties)
-        .slice(0, 128)
-        .flatMap((property) => {
-          const record = stateEvidence(raw[property], runtime);
-          return record ? [[property, record]] : [];
-        }),
-    );
+    const safety = [];
+    const confirmed = [];
+    const current = [];
+    const advisory = [];
+    for (const property of Object.keys(properties)) {
+      try {
+        if (!Object.hasOwn(raw, property)) continue;
+        const record = raw[property];
+        const entry = [property, record];
+        if (safetyEvidenceProperties.has(property)) safety.push(entry);
+        else if (record?.confirmationEligible === true) confirmed.push(entry);
+        else if (record?.status === "current") current.push(entry);
+        else advisory.push(entry);
+      } catch {
+        // An unreadable property must not suppress receipts for other properties.
+      }
+    }
+    const projected = [];
+    for (const [property, rawRecord] of [...safety, ...confirmed, ...current, ...advisory]) {
+      const record = stateEvidence(rawRecord, runtime);
+      if (!record) continue;
+      projected.push([property, record]);
+      if (projected.length === maxForwardedEvidence) break;
+    }
+    return Object.fromEntries(projected);
   } catch {
     return {};
   }

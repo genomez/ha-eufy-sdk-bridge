@@ -79,6 +79,7 @@ const events = new Set([
   "boot_7",
   "config_1",
   "config_2",
+  "invalid_rtc_offer_wait_ms",
   "faces_1",
   "service_1",
   "sdk_connect_timeout",
@@ -315,7 +316,8 @@ export function commandFailureEvent(error) {
   if (/^rtc: .+ command channel not open, cmd \d+ not sent$/.test(message)) return "command_not_sent";
   if (/^rtc: .+ session closed (before command send|while waiting for cmd \d+ ACK)$/.test(message))
     return "command_session_closed";
-  if (/^rtc: .+ did not come up within \d+ms$/.test(message)) return "command_connect_timeout";
+  if (/^rtc: (?:.+ did not come up|remote offer did not arrive) within \d+ms$/.test(message))
+    return "command_connect_timeout";
   if (
     /^rtc: [a-z-]+ is not routable over the T9000 control channel yet \(only set-payload or set-json\)$/.test(message)
   )

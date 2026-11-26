@@ -13,7 +13,7 @@ const digest = createHash("sha256")
   .digest("hex");
 if (process.env.EUFY_TEST_SDK_ROOT && digest !== process.env.EUFY_TEST_SDK_SHA256)
   throw new Error("Local SDK build pin mismatch");
-if (pkg.version !== "0.2.1-s1.experimental.12") throw new Error("Unexpected SDK version");
+if (pkg.version !== "0.2.1-s1.experimental.17") throw new Error("Unexpected SDK version");
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === "@mega-yfue/eufy-sdk") return { url: new URL("dist/index.js", root).href, shortCircuit: true };
